@@ -13,7 +13,7 @@
 |---|---|
 | fnOS 版本 | |
 | 设备型号 / CPU | x86 |
-| 应用版本（服务状态卡片） | 0.1.0 |
+| 应用版本（服务状态卡片） | 0.1.1 |
 | 安装是否被签名拦截 | 否 / 是（原文：） |
 | 测试账号是否 VIP | |
 | 测试目录（授权目录） | |
@@ -70,3 +70,32 @@
 - 安装/启动过程中的报错原文：
 - 页面上其它异常：
 - 对 M1 的建议：
+
+---
+
+## 实测记录（2026-11-21，应用 0.1.0，真机 x86）
+
+导出报告汇总：`pass 5 / warn 1 / fail 1`。逐项对应：
+
+| 编号 | 本次结论 | 证据 |
+|---|---|---|
+| 1 网关路径前缀 | 未采集（该卡片不在导出报告里） | — |
+| 2 伪造身份头 | 未采集 | — |
+| 3 网关 Origin | 未采集 | — |
+| 4 Range 流式 | 未采集 | — |
+| 5 pickUserFile + ACL | ACL 可用：`/vol1/1001/private/pikpak` 读/写/删均为 true，授权集合内 true；`convertPath` 返回**裸数组**而不是 `{status,result}`，0.1.0 解析失败 | 文件授权探针卡片 |
+| 6 搜索端点 | `?q=` 返回 200 但**未过滤**（结果含不含关键词的文件）；只带 `name` 的 filters 被 404 `file_invalid_file_filters`；`/drive/v1/search` 404；`/drive/v1/files:search` 400。0.1.0 的 `pass` 是误判 | 报告 `pikpak.search` |
+| 7 列表排序 | `name`、`-size`、`-modified_time`、`-created_time` 四种裸值全部 400 `invalid_argument`，未拿到任何一种可用写法 | 报告 `pikpak.order` |
+| 8 REST 上传 | 未采集 | — |
+| 其它 | `fnos.platform` 403：飞牛不把 `trim.system.getPlatformConfig` 授权给三方应用；只影响语言/版本显示 | 报告 `fnos.platform` |
+
+### 0.1.1 的改动（对应上面的发现）
+
+- `convertPath` 同时接受裸数组与 `{status, result}`；字段名对不上时把原始形状回填到错误里，方便定位。
+- `pikpak.order` 探针改试 JSON 字符串编码（`"name"`、`"-size"`…）和分享页词表（`name_asc`、`size_desc`、`mod_desc`）。
+- `pikpak.search` 探针要求返回的每个文件名都包含关键词才算命中，并改用带 `phase`/`trashed` 的完整 `filters`。
+- `fnos.platform` 的 403 记为 warn，不再计入失败。
+
+### 0.1.1 需要复跑
+
+5（显示路径一栏应出现语义路径）、6、7；以及尚未采集的 1–4、8。

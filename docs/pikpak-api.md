@@ -327,6 +327,20 @@ GET https://api-drive.mypikpak.com/drive/v1/files
 | `modified_time` | `gt` / `lt` | RFC3339 时间 |
 | `system_tag` | `in` | `{"system_tag":{"in":"STAR"}}` |
 
+#### 4.1.1 排序参数（0.1.0 实测）
+
+2026-11-21 在真机用 `order=name`、`-size`、`-modified_time`、`-created_time` 请求 `/drive/v1/files`，四种写法**全部返回 400 `invalid_argument`**，说明裸值不是合法编码。分享页的排序参数用的是另一套词表（`name_asc` / `size_desc` / `mod_desc` 等，见 PikPak 帮助中心分享设置页），而 drive 列表接口是否接受同一套词表尚未验证。
+
+0.1.1 的 `pikpak.order` 探针改为逐个尝试：
+
+| 写法 | 含义 |
+|---|---|
+| `"name"` / `"-size"` / `"-modified_time"` / `"-created_time"` | JSON 字符串编码（`order=%22name%22`） |
+| `name_asc` / `size_desc` / `mod_desc` | 分享页词表 |
+| `name` | 裸值，保留作为对照（已知 400） |
+
+在结果确认前，v1 的排序只在前端对已加载页生效，并在 UI 标注。
+
 ### 4.2 获取文件详情 / 下载链接 ◐
 
 ```http
@@ -471,6 +485,17 @@ GET https://api-drive.mypikpak.com/drive/v1/events?thumbnail_size=SIZE_MEDIUM&li
 1. 发现 PikPak Web 的搜索接口（需要抓包/读前端 JS）。
 2. 逐目录遍历 + 本地索引（大账号成本高）。
 3. 使用 PikPak 官方 MCP/其他连接方式（不适合作为核心依赖）。
+
+2026-11-21 真机实测四个候选：
+
+| 请求 | 结果 |
+|---|---|
+| `/drive/v1/files?filters={"name":{"contains":"test"}}` | 404 `file_invalid_file_filters` |
+| `/drive/v1/files?q=test` | **200，但返回的是目录列表**（结果里有不含 `test` 的文件） |
+| `/drive/v1/search?q=test` | 404 `not_found` |
+| `/drive/v1/files:search?q=test` | 400 `invalid_argument` |
+
+结论：`q` 被忽略，200 不代表搜索生效——0.1.0 的探针把它误判成“可用”。0.1.1 改为要求**返回的每个文件名都包含关键词**才算命中，并新增带 `phase`/`trashed` 的完整 `filters` 候选（只带 `name` 的 filters 被 404，可能就是缺这两个必填项）。
 
 本应用 v1 若无法确认搜索接口，先做“当前目录过滤 + 全局索引（可选后台任务）”，并在文档中标记为待验证。
 

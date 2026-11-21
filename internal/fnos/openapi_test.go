@@ -94,6 +94,53 @@ func TestCheckUserACLParsesArray(t *testing.T) {
 	}
 }
 
+func TestConvertPathParsesArrayResponse(t *testing.T) {
+	socket := fnostest.StartGateway(t, func(req string, data map[string]any) (int, string) {
+		if req != "trim.file.convertPath" {
+			t.Errorf("req = %q", req)
+		}
+		// The real gateway returns the result list directly as data, without
+		// the {status, result} wrapper the M0 probe assumed.
+		return 0, `[{"path":"/vol1/1001/private/pikpak","semanticPath":"/我的文件/pikpak"}]`
+	})
+	c := newTestClient(t, socket)
+
+	got, err := c.ConvertPath(context.Background(), []string{"/vol1/1001/private/pikpak"}, "zh-CN")
+	if err != nil {
+		t.Fatalf("convertPath: %v", err)
+	}
+	if len(got) != 1 || got[0].SemanticPath != "/我的文件/pikpak" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestConvertPathParsesWrappedResponse(t *testing.T) {
+	socket := fnostest.StartGateway(t, func(string, map[string]any) (int, string) {
+		return 0, `{"status":0,"result":[{"path":"/vol1/a","semanticPath":"/文件/a"}]}`
+	})
+	c := newTestClient(t, socket)
+
+	got, err := c.ConvertPath(context.Background(), []string{"/vol1/a"}, "zh-CN")
+	if err != nil {
+		t.Fatalf("convertPath: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != "/vol1/a" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestConvertPathReportsUnrecognizedShape(t *testing.T) {
+	socket := fnostest.StartGateway(t, func(string, map[string]any) (int, string) {
+		return 0, `[{"vol":"/vol1/a","show":"/文件/a"}]`
+	})
+	c := newTestClient(t, socket)
+
+	_, err := c.ConvertPath(context.Background(), []string{"/vol1/a"}, "zh-CN")
+	if err == nil || !strings.Contains(err.Error(), `"vol"`) {
+		t.Fatalf("err = %v, want the raw shape in the message", err)
+	}
+}
+
 func TestMissingTokenFailsWithoutRequest(t *testing.T) {
 	c := &Client{SocketPath: "/nonexistent.sock", AppName: "pikpak", Token: func() string { return "" }}
 	err := c.Call(context.Background(), "x", nil, nil)

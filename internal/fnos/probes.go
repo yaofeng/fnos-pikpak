@@ -23,6 +23,15 @@ func (p platformProbe) Run(ctx context.Context) probe.Result {
 	}
 	cfg, err := p.c.GetPlatformConfig(ctx)
 	if err != nil {
+		if IsForbidden(err) {
+			// Not one of the M0 unknowns: fnOS denies this capability to the
+			// app, and language/version only affect display.
+			return probe.Result{
+				Name:   p.Name(),
+				Status: probe.Warn,
+				Detail: "飞牛未向本应用授权 trim.system.getPlatformConfig（403），语言/版本使用默认值",
+			}
+		}
 		return probe.Result{Name: p.Name(), Status: probe.Fail, Detail: err.Error()}
 	}
 	return probe.Result{

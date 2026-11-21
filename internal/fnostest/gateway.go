@@ -18,20 +18,7 @@ import (
 func StartGateway(t *testing.T, handler func(req string, data map[string]any) (code int, dataJSON string)) (socketPath string) {
 	t.Helper()
 
-	// A Unix socket path must fit in sun_path (~104 bytes on macOS). t.TempDir
-	// embeds the test name under a long TMPDIR, so use a short directory.
-	dir, err := os.MkdirTemp("", "fngw")
-	if err != nil {
-		t.Fatalf("temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socketPath = filepath.Join(dir, "gw.sock")
-	ln, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen unix: %v", err)
-	}
-
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return startGateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -59,7 +46,36 @@ func StartGateway(t *testing.T, handler func(req string, data map[string]any) (c
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
-	})}
+	}))
+}
+
+// StartForbiddenGateway answers every request with HTTP 403, like fnOS does
+// for Open API capabilities a third-party app is not granted.
+func StartForbiddenGateway(t *testing.T) string {
+	t.Helper()
+
+	return startGateway(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+}
+
+func startGateway(t *testing.T, handler http.Handler) (socketPath string) {
+	t.Helper()
+
+	// A Unix socket path must fit in sun_path (~104 bytes on macOS). t.TempDir
+	// embeds the test name under a long TMPDIR, so use a short directory.
+	dir, err := os.MkdirTemp("", "fngw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socketPath = filepath.Join(dir, "gw.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+
+	srv := &http.Server{Handler: handler}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -126,6 +127,13 @@ type PlatformConfig struct {
 	Version  string `json:"version"`
 }
 
+// IsForbidden reports whether the gateway refused a capability with HTTP 403.
+// fnOS answers that way for Open API scopes it does not grant to third-party
+// apps, which is a deployment limit rather than a malformed request.
+func IsForbidden(err error) bool {
+	return err != nil && strings.Contains(err.Error(), ": http 403:")
+}
+
 func (c *Client) GetPlatformConfig(ctx context.Context) (PlatformConfig, error) {
 	var out PlatformConfig
 	err := c.Call(ctx, "trim.system.getPlatformConfig", map[string]any{}, &out)
@@ -163,17 +171,62 @@ type ConvertedPath struct {
 	SemanticPath string `json:"semanticPath"`
 }
 
+// ConvertPath maps storage paths to the names fnOS shows users. Different
+// fnOS builds answer with either the list itself as data or a
+// {status, result} wrapper, so accept both, and surface the raw shape when
+// neither matches (the M0 probe reports it to the page).
 func (c *Client) ConvertPath(ctx context.Context, paths []string, lang string) ([]ConvertedPath, error) {
-	var out struct {
-		Status int             `json:"status"`
-		Result []ConvertedPath `json:"result"`
-	}
-	err := c.Call(ctx, "trim.file.convertPath", map[string]any{"path": paths, "language": lang}, &out)
+	var raw json.RawMessage
+	err := c.Call(ctx, "trim.file.convertPath", map[string]any{"path": paths, "language": lang}, &raw)
 	if err != nil {
 		return nil, err
 	}
-	if out.Status != 0 {
-		return nil, fmt.Errorf("fnos: convertPath status %d", out.Status)
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, nil
 	}
-	return out.Result, nil
+	if trimmed[0] == '[' {
+		var out []ConvertedPath
+		if err := json.Unmarshal(trimmed, &out); err != nil {
+			return nil, fmt.Errorf("fnos: convertPath: %w", err)
+		}
+		if allFieldsUnrecognized(out) {
+			return nil, fmt.Errorf("fnos: convertPath: unrecognized shape: %s", truncateRaw(trimmed))
+		}
+		return out, nil
+	}
+
+	var wrapped struct {
+		Status int             `json:"status"`
+		Result []ConvertedPath `json:"result"`
+	}
+	if err := json.Unmarshal(trimmed, &wrapped); err != nil {
+		return nil, fmt.Errorf("fnos: convertPath: %w", err)
+	}
+	if wrapped.Status != 0 {
+		return nil, fmt.Errorf("fnos: convertPath status %d", wrapped.Status)
+	}
+	return wrapped.Result, nil
+}
+
+// allFieldsUnrecognized reports whether every entry decoded to zero values,
+// which means the payload used field names this build does not know.
+func allFieldsUnrecognized(paths []ConvertedPath) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if p.Path != "" || p.SemanticPath != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func truncateRaw(b []byte) string {
+	const max = 200
+	if len(b) > max {
+		return string(b[:max]) + "…"
+	}
+	return string(b)
 }

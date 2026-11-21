@@ -246,25 +246,29 @@ func TestOrderCandidates(t *testing.T) {
 		seen[order]++
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if order == "-size" {
+		if order == `"-size"` {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":"invalid_request","error_code":1}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"files":[{"id":"f1","name":"first-`+order+`","size":"1"}]}`)
+		name, _ := json.Marshal("first-" + order)
+		_, _ = io.WriteString(w, `{"files":[{"id":"f1","name":`+string(name)+`,"size":"1"}]}`)
 	}))
 	defer srv.Close()
 
 	c := newTestClient(t, srv.URL, &fakeTokens{token: "t"})
 	results := c.OrderCandidates(context.Background())
-	if len(results) != 4 {
-		t.Fatalf("results = %d, want 4", len(results))
+	if len(results) != len(orderCandidates) {
+		t.Fatalf("results = %d, want %d", len(results), len(orderCandidates))
 	}
 	if results[0].Order != "name" || results[0].Status != 200 || results[0].FirstName != "first-name" {
 		t.Fatalf("name candidate = %+v", results[0])
 	}
-	if results[1].Order != "-size" || results[1].Status != 400 || results[1].Err == "" {
-		t.Fatalf("-size candidate = %+v", results[1])
+	if results[1].Order != `"name"` || results[1].Status != 200 || results[1].FirstName != `first-"name"` {
+		t.Fatalf(`"name" candidate = %+v`, results[1])
+	}
+	if results[2].Order != `"-size"` || results[2].Status != 400 || results[2].Err == "" {
+		t.Fatalf(`"-size" candidate = %+v`, results[2])
 	}
 	for order, n := range seen {
 		if n != 1 {
