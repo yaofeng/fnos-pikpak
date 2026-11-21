@@ -248,3 +248,193 @@ button.link {
   color: inherit;
   font-family: inherit;
 }
+
+/* App shell */
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--card);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+  padding: 0 8px;
+  color: var(--accent);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.nav-item:hover {
+  background: var(--bg);
+}
+
+.nav-item.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.nav-item.subtle {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.account-chip {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-chip em {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.notice {
+  margin: 12px 24px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.notice a {
+  color: var(--accent);
+}
+
+.page {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0;
+  padding: 20px 24px 48px;
+}
+
+.quota-bar {
+  position: fixed;
+  left: 220px;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--border);
+}
+
+.quota-bar > div {
+  height: 100%;
+  background: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .app {
+    grid-template-columns: 1fr;
+    padding-bottom: 56px;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 6px;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+    z-index: 10;
+  }
+
+  .brand,
+  .sidebar-foot {
+    display: none;
+  }
+
+  .nav {
+    flex-direction: row;
+    gap: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .nav-item {
+    padding: 8px 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .topbar {
+    padding: 10px 16px;
+  }
+
+  .page {
+    padding: 16px 16px 32px;
+  }
+
+  .notice {
+    margin: 10px 16px 0;
+  }
+
+  .quota-bar {
+    left: 0;
+    bottom: 52px;
+  }
+}
