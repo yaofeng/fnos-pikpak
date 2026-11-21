@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"fnos-pikpak/internal/fnos"
+	"fnos-pikpak/internal/probe"
 )
 
 // Deps carries everything the HTTP layer needs from the rest of the app.
 type Deps struct {
 	Version string
+	Probes  *probe.Registry
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -35,6 +37,10 @@ func NewMux(deps Deps) *http.ServeMux {
 	inner.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})
+
+	if deps.Probes != nil {
+		registerProbeRoutes(inner, deps, newReportStore())
+	}
 
 	inner.Handle("/", spaHandler())
 

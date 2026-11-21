@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"fnos-pikpak/internal/httpapi"
+	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/version"
 )
 
@@ -35,7 +36,11 @@ func main() {
 		return
 	}
 
-	handler := httpapi.NewMux(httpapi.Deps{Version: version.Version, DevUID: *devUID})
+	handler := httpapi.NewMux(httpapi.Deps{
+		Version: version.Version,
+		DevUID:  *devUID,
+		Probes:  probe.NewRegistry(),
+	})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 
