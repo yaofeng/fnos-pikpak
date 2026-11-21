@@ -23,12 +23,13 @@ type output struct {
 	size int
 }
 
+// fnOS substitutes the pixel size for {0} in app/ui/config's icon path, so the
+// UI icons are named icon_64.png and icon_256.png.
 var outputs = []output{
 	{"ICON.PNG", 64},
 	{"ICON_256.PNG", 256},
-	{"app/ui/images/icon_1.png", 64},
-	{"app/ui/images/icon_2.png", 128},
-	{"app/ui/images/icon_3.png", 256},
+	{"app/ui/images/icon_64.png", 64},
+	{"app/ui/images/icon_256.png", 256},
 }
 
 func main() {

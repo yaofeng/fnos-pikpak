@@ -64,6 +64,12 @@ func spaHandler() http.Handler {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		// A missing file is a 404, not the SPA document: answering an image
+		// request with HTML only hides the cause behind a broken image.
+		if path.Ext(p) != "" {
+			http.NotFound(w, r)
+			return
+		}
 		r = r.Clone(r.Context())
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)

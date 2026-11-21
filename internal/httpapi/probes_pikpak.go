@@ -113,16 +113,24 @@ func probeOrder(ctx context.Context, c *pikpak.Client) probe.Result {
 	}
 	data := map[string]any{"results": results}
 	if working == 0 {
-		return probe.Result{Status: probe.Warn, Detail: "4 种排序参数均被拒绝，排序只能在前端已加载页内完成", Data: data}
+		return probe.Result{
+			Status: probe.Warn,
+			Detail: fmt.Sprintf("%d 种排序写法都被拒绝，排序只能在前端已加载页内完成", len(results)),
+			Data:   data,
+		}
 	}
-	return probe.Result{Status: probe.Pass, Detail: fmt.Sprintf("%d/4 种排序参数被接受", working), Data: data}
+	return probe.Result{
+		Status: probe.Pass,
+		Detail: fmt.Sprintf("%d/%d 种排序写法被接受", working, len(results)),
+		Data:   data,
+	}
 }
 
 func probeSearch(ctx context.Context, c *pikpak.Client) probe.Result {
-	results := c.SearchCandidates(ctx, "test")
-	data := map[string]any{"query": "test", "results": results}
+	results := c.SearchCandidates(ctx, pikpak.SearchProbeQuery)
+	data := map[string]any{"query": pikpak.SearchProbeQuery, "results": results}
 	for _, r := range results {
-		if r.LooksLikeFileList {
+		if r.Matched {
 			return probe.Result{
 				Status: probe.Pass,
 				Detail: fmt.Sprintf("可用搜索端点：%s", r.Path),
@@ -130,5 +138,9 @@ func probeSearch(ctx context.Context, c *pikpak.Client) probe.Result {
 			}
 		}
 	}
-	return probe.Result{Status: probe.Warn, Detail: "4 个候选搜索端点都不可用（搜索降级为目录内过滤）", Data: data}
+	return probe.Result{
+		Status: probe.Warn,
+		Detail: "没有候选真正过滤结果（q 被忽略）；搜索降级为目录内过滤",
+		Data:   data,
+	}
 }

@@ -31,6 +31,19 @@ func TestSPAFallbackAndAPI404(t *testing.T) {
 		}
 	})
 
+	t.Run("missing asset is 404 not html", func(t *testing.T) {
+		// A launcher icon that is not embedded must not be answered with the
+		// SPA document: the browser would render a broken image either way,
+		// and the HTML response hides the real cause.
+		req := httptest.NewRequest(http.MethodGet, "/images/icon_64.png", nil)
+		req.Header.Set("X-Trim-Userid", "1000")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status=%d type=%q", rec.Code, rec.Header().Get("Content-Type"))
+		}
+	})
+
 	t.Run("unknown api is json 404", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/nope", nil)
 		req.Header.Set("X-Trim-Userid", "1000")

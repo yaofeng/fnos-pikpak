@@ -100,6 +100,33 @@ func TestSearchCandidatesDetectFiltering(t *testing.T) {
 	}
 }
 
+func TestSearchCandidatesTreatEmptyResultAsFiltered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("q") == "" && r.URL.Query().Get("filters") == "" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, `{"files":[]}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+	results := c.SearchCandidates(context.Background(), "fnos-pikpak-probe-no-such-name")
+
+	sawEmpty := false
+	for _, r := range results {
+		if r.Status == 200 && r.LooksLikeFileList {
+			sawEmpty = true
+			if !r.Matched {
+				t.Fatalf("empty result not marked matched: %+v", r)
+			}
+		}
+	}
+	if !sawEmpty {
+		t.Fatalf("no candidate reached the empty list: %+v", results)
+	}
+}
+
 func TestSearchFilterCandidateCarriesPhaseAndTrashed(t *testing.T) {
 	var mu sync.Mutex
 	var filters []string

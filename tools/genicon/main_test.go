@@ -2,8 +2,56 @@ package main
 
 import (
 	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// fnOS replaces {0} in app/ui/config's icon path with the pixel size, so the
+// UI directory must hold icon_64.png and icon_256.png — icon_1/2/3.png never
+// loads and the launcher shows a broken image.
+func TestGeneratedIconsMatchTheManifestNames(t *testing.T) {
+	want := map[string]int{
+		"ICON.PNG":                   64,
+		"ICON_256.PNG":               256,
+		"app/ui/images/icon_64.png":  64,
+		"app/ui/images/icon_256.png": 256,
+	}
+	got := map[string]int{}
+	for _, out := range outputs {
+		got[out.path] = out.size
+	}
+	for path, size := range want {
+		if got[path] != size {
+			t.Fatalf("outputs lack %s at %dpx: %v", path, size, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("outputs = %v, want exactly %v", got, want)
+	}
+
+	root := filepath.Join("..", "..")
+	for path, size := range want {
+		f, err := os.Open(filepath.Join(root, path))
+		if err != nil {
+			t.Fatalf("open %s: %v", path, err)
+		}
+		cfg, err := png.DecodeConfig(f)
+		f.Close()
+		if err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if cfg.Width != size || cfg.Height != size {
+			t.Fatalf("%s = %dx%d, want %dx%d", path, cfg.Width, cfg.Height, size, size)
+		}
+	}
+	for _, stale := range []string{"icon_1.png", "icon_2.png", "icon_3.png"} {
+		if _, err := os.Stat(filepath.Join(root, "app/ui/images", stale)); err == nil {
+			t.Fatalf("stale %s is still on disk", stale)
+		}
+	}
+}
 
 func TestLoadOfficialSource(t *testing.T) {
 	src, err := loadSource("../../assets/icon-source.png")

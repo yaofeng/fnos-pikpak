@@ -60,8 +60,15 @@ func (c *Client) OrderCandidates(ctx context.Context) []OrderResult {
 	return out
 }
 
+// SearchProbeQuery is a name no real drive contains. An endpoint that filters
+// answers with an empty list; one that ignores the query answers with the
+// folder listing, which is how the probe tells them apart.
+const SearchProbeQuery = "fnos-pikpak-probe-no-such-name"
+
 // SearchResult records what one candidate search endpoint did. The body
-// prefix is redacted before it leaves this package.
+// prefix is redacted before it leaves this package. Matched means the payload
+// is consistent with server-side filtering: every name contains the query, or
+// there are no names at all.
 type SearchResult struct {
 	Path              string   `json:"path"`
 	Status            int      `json:"status"`
@@ -120,17 +127,19 @@ func (c *Client) SearchCandidates(ctx context.Context, q string) []SearchResult 
 			res.LooksLikeFileList = true
 			// A 200 alone proves nothing: the list endpoint ignores q and
 			// returns the folder contents. Only a payload whose every name
-			// contains the query proves the server filtered.
-			res.Matched = len(list.Files) > 0
+			// contains the query (or that is empty, when the query cannot
+			// exist) proves the server filtered.
 			needle := strings.ToLower(q)
+			matched := true
 			for i, f := range list.Files {
 				if i < 5 {
 					res.Names = append(res.Names, f.Name)
 				}
 				if !strings.Contains(strings.ToLower(f.Name), needle) {
-					res.Matched = false
+					matched = false
 				}
 			}
+			res.Matched = matched
 		}
 		out = append(out, res)
 	}

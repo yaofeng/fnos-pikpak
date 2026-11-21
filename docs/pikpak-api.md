@@ -329,17 +329,17 @@ GET https://api-drive.mypikpak.com/drive/v1/files
 
 #### 4.1.1 排序参数（0.1.0 实测）
 
-2026-11-21 在真机用 `order=name`、`-size`、`-modified_time`、`-created_time` 请求 `/drive/v1/files`，四种写法**全部返回 400 `invalid_argument`**，说明裸值不是合法编码。分享页的排序参数用的是另一套词表（`name_asc` / `size_desc` / `mod_desc` 等，见 PikPak 帮助中心分享设置页），而 drive 列表接口是否接受同一套词表尚未验证。
+2026-11-21 在真机用 `order=name`、`-size`、`-modified_time`、`-created_time` 请求 `/drive/v1/files`，四种写法**全部返回 400 `invalid_argument`**，说明裸值不是合法编码。分享页的排序参数用的是另一套词表（`name_asc` / `size_desc` / `mod_desc` 等，见 PikPak 帮助中心分享设置页）。
 
-0.1.1 的 `pikpak.order` 探针改为逐个尝试：
+2026-11-22 用 0.1.1 复测 8 种写法，**仍然全部 400**：
 
-| 写法 | 含义 |
+| 写法 | 结果 |
 |---|---|
-| `"name"` / `"-size"` / `"-modified_time"` / `"-created_time"` | JSON 字符串编码（`order=%22name%22`） |
-| `name_asc` / `size_desc` / `mod_desc` | 分享页词表 |
-| `name` | 裸值，保留作为对照（已知 400） |
+| `name`（裸值） | 400 |
+| `"name"` / `"-size"` / `"-modified_time"` / `"-created_time"`（JSON 字符串） | 400 |
+| `name_asc` / `size_desc` / `mod_desc`（分享页词表） | 400 |
 
-在结果确认前，v1 的排序只在前端对已加载页生效，并在 UI 标注。
+结论：`/drive/v1/files` 不接受 `order` 参数（无论哪种编码都按非法参数拒绝）。**服务端排序不可用**，v1 的排序只在前端对已加载页生效，并在 UI 标注；需要全量排序时改为遍历分页后本地排序。
 
 ### 4.2 获取文件详情 / 下载链接 ◐
 
@@ -495,9 +495,20 @@ GET https://api-drive.mypikpak.com/drive/v1/events?thumbnail_size=SIZE_MEDIUM&li
 | `/drive/v1/search?q=test` | 404 `not_found` |
 | `/drive/v1/files:search?q=test` | 400 `invalid_argument` |
 
-结论：`q` 被忽略，200 不代表搜索生效——0.1.0 的探针把它误判成“可用”。0.1.1 改为要求**返回的每个文件名都包含关键词**才算命中，并新增带 `phase`/`trashed` 的完整 `filters` 候选（只带 `name` 的 filters 被 404，可能就是缺这两个必填项）。
+2026-11-22（0.1.1）补了 `phase`/`trashed` 的完整 filters 后再测，仍是 404；`q` 依旧被忽略。结论：
 
-本应用 v1 若无法确认搜索接口，先做“当前目录过滤 + 全局索引（可选后台任务）”，并在文档中标记为待验证。
+- 只带 `name` 的 filters 和带 `phase`+`trashed` 的完整 filters **都被同一个 `file_invalid_file_filters` 拒绝**，说明这个接口不认 `name.contains` 过滤器，而不是缺字段。
+- `?q=` 不是搜索参数：200 只是普通目录列表，**必须核验返回内容**，否则会把列表误判成搜索结果。
+
+0.1.1 起探针改用一个任何网盘都不可能存在的名字（`fnos-pikpak-probe-no-such-name`）作查询：真正过滤的接口返回空列表，忽略 `q` 的接口会原样返回目录内容，两者可区分。
+
+### 4.10 决策：v1 的搜索怎么做
+
+在上述结果下，v1 采用「当前目录过滤 + 可选的后台全量索引」：
+- 目录内过滤：前端对已加载页按名称过滤，零成本、立即生效；
+- 全局搜索：后台任务遍历 `/drive/v1/files` 建立本地索引（大账号成本高，默认关闭，用户手动开启）。
+
+若后续从 PikPak Web 抓到真正的搜索接口，再替换为服务端搜索。
 
 ---
 
