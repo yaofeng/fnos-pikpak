@@ -2,7 +2,7 @@ GO ?= go
 VERSION ?= 0.1.0
 LDFLAGS := -s -w -X fnos-pikpak/internal/version.Version=$(VERSION)
 
-.PHONY: build build-linux test genicon fpk
+.PHONY: build build-linux test genicon web fpk
 
 build:
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/pikpak ./cmd/pikpak
@@ -17,7 +17,10 @@ test:
 genicon:
 	$(GO) run ./tools/genicon
 
-fpk: build-linux genicon
+web:
+	cd web && npm install --no-audit --no-fund && npm run build
+
+fpk: web build-linux genicon
 	tools/bin/fnpack build --nosign
 	mkdir -p dist
 	f=$$(ls -t *.fpk 2>/dev/null | head -1); \

@@ -36,8 +36,10 @@ func NewMux(deps Deps) *http.ServeMux {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})
 
+	inner.Handle("/", spaHandler())
+
 	root := http.NewServeMux()
-	root.Handle("/", fnos.WithIdentity(deps.DevUID, inner))
+	root.Handle("/", stripGatewayPrefix(gatewayPrefix, fnos.WithIdentity(deps.DevUID, inner)))
 	return root
 }
 
