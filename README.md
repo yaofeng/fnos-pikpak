@@ -14,6 +14,22 @@ make web         # 只构建前端（产物被 go:embed 进二进制）
 
 然后把 `.fpk` 装到飞牛（x86）上，按 [`docs/install-m0.md`](docs/install-m0.md) 操作，按 [`docs/m0-report.md`](docs/m0-report.md) 填结论。
 
+## 发布
+
+推送 `1.0.0` 或 `v1.0.0` 形式的 tag 会触发 [`.github/workflows/build-fpk.yml`](.github/workflows/build-fpk.yml)：
+
+1. 从 tag 解析版本（也接受 `1.0.0-1`），校验格式；
+2. `go test ./...`，构建前端与 linux/amd64 二进制；
+3. 把版本写进 manifest 的 `version`、二进制 `--version`，包名为 `pikpak-<version>-x86.fpk`；
+4. 校验包内版本后上传 Artifact，并创建 GitHub Release。
+
+CI 使用固定版本的 fnpack 并校验 SHA256。包默认未签名；在仓库 Secrets 配置 `FN_DEVELOPER_KEY` 与 `FN_DEVELOPER_CERT`（飞牛开发者证书 PEM）后即为签名包。本地构建同样可以指定版本：
+
+```bash
+make m0 VERSION=1.2.3                # 未签名
+make fpk VERSION=1.2.3 FN_KEY=dev.key FN_CERT=dev.crt   # 签名
+```
+
 ## 设计文档
 
 - 设计：[`docs/superpowers/specs/2026-11-21-fnos-pikpak-design.md`](docs/superpowers/specs/2026-11-21-fnos-pikpak-design.md)
