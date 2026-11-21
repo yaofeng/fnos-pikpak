@@ -60,10 +60,22 @@ web                   React + Vite 前端
 
 ## 开发调试
 
+不需要打包安装到 NAS，本机直接跑：
+
 ```bash
-make build
-./dist/pikpak --listen 127.0.0.1:8787 --dev-uid 1000
-curl -s -H 'X-Trim-Userid: 1000' http://127.0.0.1:8787/api/health
+make dev        # 构建前端 + 本机二进制，监听 http://127.0.0.1:8787
 ```
 
-`--dev-uid` 只在本地调试使用，生产不会设置。
+打开这个地址，就能走完整的绑定流程（设备码）和 PikPak 探针（列表、配额、会员、排序、搜索）。绑定的账号存在 `./.data/`（已 gitignore），重启后仍然有效；`POST /api/auth/logout` 可解绑。
+
+本机没有飞牛网关，所以：
+
+- `fnos.*` 探针显示 `skip`（Open API 客户端未配置）；
+- 文件授权卡片返回 503（飞牛文件服务未配置）；
+- 其余健康检查、探针、导出报告、前端全部可用。
+
+不加 `--listen` 时只监听 `${TRIM_APPDEST}/app.sock`，与生产一致。`--dev-uid` 只在本地调试使用，生产不会设置。
+
+```bash
+curl -s http://127.0.0.1:8787/api/health
+```

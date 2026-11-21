@@ -9,6 +9,23 @@ import (
 	"fnos-pikpak/internal/probe"
 )
 
+func TestProbesSkipWithoutAnFnosClient(t *testing.T) {
+	// Local development has no fnOS gateway socket; the probes must say so
+	// instead of reporting a connection error.
+	reg := &probe.Registry{}
+	RegisterProbes(reg, nil)
+
+	results := reg.Run(context.Background())
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+	for _, r := range results {
+		if r.Status != probe.Skip {
+			t.Fatalf("%s status = %s (%s), want skip", r.Name, r.Status, r.Detail)
+		}
+	}
+}
+
 func TestPlatformProbeWarnsWhenForbidden(t *testing.T) {
 	p := platformProbe{c: newTestClient(t, fnostest.StartForbiddenGateway(t))}
 

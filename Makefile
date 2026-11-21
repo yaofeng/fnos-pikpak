@@ -13,7 +13,7 @@ else
 SIGN_ARGS := --key $(FN_KEY) --cert $(FN_CERT)
 endif
 
-.PHONY: build build-linux test genicon web set-version fpk m0
+.PHONY: build build-linux test genicon web dev set-version fpk m0
 
 build:
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/pikpak ./cmd/pikpak
@@ -30,6 +30,12 @@ genicon:
 
 web:
 	cd web && npm install --no-audit --no-fund && npm run build
+
+# Run the app on this machine instead of reinstalling the fpk on the NAS.
+# Data (bound accounts) lives in ./.data; the fnOS-only probes skip because
+# there is no gateway socket here.
+dev: web build
+	./dist/pikpak --listen 127.0.0.1:8787 --dev-uid 1000
 
 # Keep the manifest's version in step with the binary and the package name, so
 # an installed app reports the same version as the release it came from.

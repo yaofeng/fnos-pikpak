@@ -54,12 +54,18 @@ func main() {
 	}
 	defer st.Close()
 
-	fnosClient := &fnos.Client{
+	// The fnOS Open API gateway only exists on the NAS. In TCP development mode
+// there is nothing to talk to, so the fnOS probes skip and the
+// file-authorization card reports the service as unavailable.
+var fnosClient *fnos.Client
+if *listen == "" {
+	fnosClient = &fnos.Client{
 		SocketPath: "/var/run/trim_open_gateway_apiscope.socket",
 		AppName:    "pikpak",
 	}
-	probes := probe.NewRegistry()
-	fnos.RegisterProbes(probes, fnosClient)
+}
+probes := probe.NewRegistry()
+fnos.RegisterProbes(probes, fnosClient)
 
 	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{}))
 	httpapi.RegisterPikPakProbes(probes, sessions)
