@@ -25,6 +25,9 @@ type Deps struct {
 	Fnos     *fnos.Client
 	Store    *store.Store
 	Sessions *pikpak.SessionStore
+	// Accounts caches per-user quota/VIP summaries. Nil means the default
+	// 60-second cache; tests inject a shorter one.
+	Accounts *accountCache
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -33,6 +36,9 @@ type Deps struct {
 // NewMux builds the API surface. Every /api route requires a gateway identity.
 func NewMux(deps Deps) *http.ServeMux {
 	inner := http.NewServeMux()
+	if deps.Accounts == nil {
+		deps.Accounts = newAccountCache(defaultAccountTTL)
+	}
 
 	inner.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
@@ -55,6 +61,7 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Sessions != nil {
 		registerAuthRoutes(inner, deps)
+		registerAccountRoutes(inner, deps)
 		registerUploadRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)

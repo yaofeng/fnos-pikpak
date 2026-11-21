@@ -29,10 +29,7 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 		if _, err := deps.Sessions.Get(r.Context(), id.UID); err == nil {
 			bound = true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"uid":   id.UID,
-			"bound": bound,
-		})
+		writeJSON(w, http.StatusOK, meResponse(r.Context(), deps, id.UID, bound))
 	})
 
 	mux.HandleFunc("POST /api/auth/device", func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +117,7 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusInternalServerError, "internal", "解绑失败")
 			return
 		}
+		deps.Accounts.drop(id.UID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 }
@@ -165,6 +163,17 @@ func pollAuthFlow(deps Deps, client *pikpak.Client, flow store.Flow) {
 				finishFlow(deps, flow, flowStatusError, "保存凭据失败")
 				return
 			}
+			// The account record powers the app shell (status, display name,
+			// reauth state), so it is written at bind time, not on first use.
+			if err := deps.Store.PutUser(ctx, store.User{
+				UID:       flow.UID,
+				PikPakSub: tok.Sub,
+				Status:    "active",
+			}); err != nil {
+				finishFlow(deps, flow, flowStatusError, "保存账号信息失败")
+				return
+			}
+			deps.Accounts.drop(flow.UID)
 			deps.Sessions.Install(flow.UID, cred)
 			finishFlow(deps, flow, flowStatusBound, "")
 			return
