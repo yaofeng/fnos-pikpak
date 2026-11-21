@@ -11,7 +11,7 @@ type probeFunc struct {
 	run  func() Result
 }
 
-func (p probeFunc) Name() string            { return p.name }
+func (p probeFunc) Name() string               { return p.name }
 func (p probeFunc) Run(context.Context) Result { return p.run() }
 
 func TestRedact(t *testing.T) {

@@ -320,3 +320,47 @@ func TestClientForBindsSession(t *testing.T) {
 		t.Fatalf("Token = %q, %v", tok, err)
 	}
 }
+
+func TestSessionForceRefresh(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		writeJSONBody(w, http.StatusOK, `{"access_token":"at-`+string(rune('0'+n))+`","refresh_token":"rt-`+string(rune('0'+n))+`","expires_in":43200}`)
+	}))
+	defer srv.Close()
+
+	st := testStore(t)
+	ctx := context.Background()
+	if err := st.PutCredential(ctx, store.Credential{
+		UID: 1000, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-old", RefreshToken: "rt-old",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("PutCredential: %v", err)
+	}
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
+	sess, err := ss.Get(ctx, 1000)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if tok, _ := sess.Token(ctx); tok != "at-old" {
+		t.Fatalf("initial token = %q", tok)
+	}
+	if err := sess.ForceRefresh(ctx); err != nil {
+		t.Fatalf("ForceRefresh: %v", err)
+	}
+	if tok, _ := sess.Token(ctx); tok != "at-1" {
+		t.Fatalf("after force token = %q", tok)
+	}
+	if err := sess.ForceRefresh(ctx); err != nil {
+		t.Fatalf("second ForceRefresh: %v", err)
+	}
+	if tok, _ := sess.Token(ctx); tok != "at-2" {
+		t.Fatalf("after second force token = %q", tok)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Fatalf("refresh calls = %d, want 2", n)
+	}
+}

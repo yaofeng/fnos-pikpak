@@ -257,6 +257,21 @@ func (s *Session) ReauthRequired() bool {
 	return s.reauth
 }
 
+// ForceRefresh discards the cached access token and renews it. The client
+// calls it when PikPak rejects a token the clock still considers valid.
+func (s *Session) ForceRefresh(ctx context.Context) error {
+	s.mu.Lock()
+	if s.reauth {
+		s.mu.Unlock()
+		return ErrReauthRequired
+	}
+	s.access = ""
+	s.mu.Unlock()
+
+	_, err := s.Token(ctx)
+	return err
+}
+
 func (s *Session) refreshOnce(ctx context.Context) error {
 	s.mu.Lock()
 	rt := s.refreshToken
@@ -362,6 +377,8 @@ func (s *SessionStore) ClientFor(ctx context.Context, uid int) (*Client, error) 
 	c := *s.client
 	c.DeviceID = sess.client.DeviceID
 	c.Session = sess
+	// The rate limit is per user, not per process.
+	c.limiter = newLimiter()
 	return &c, nil
 }
 

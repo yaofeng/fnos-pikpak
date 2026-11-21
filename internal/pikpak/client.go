@@ -25,6 +25,7 @@ type ClientOptions struct {
 	ClientVersion string
 	DeviceID      string
 	HTTP          *http.Client
+	Session       TokenSource
 }
 
 // Client talks to PikPak. One instance is per fnOS user once a Session is
@@ -38,7 +39,9 @@ type Client struct {
 	HTTP          *http.Client
 
 	// Session is set by SessionStore.ClientFor; requests sign with it.
-	Session *Session
+	Session TokenSource
+
+	limiter *limiter
 }
 
 func NewClient(o ClientOptions) *Client {
@@ -64,5 +67,7 @@ func NewClient(o ClientOptions) *Client {
 		ClientVersion: o.ClientVersion,
 		DeviceID:      o.DeviceID,
 		HTTP:          o.HTTP,
+		Session:       o.Session,
+		limiter:       newLimiter(),
 	}
 }

@@ -62,6 +62,7 @@ func main() {
 	fnos.RegisterProbes(probes, fnosClient)
 
 	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{}))
+	httpapi.RegisterPikPakProbes(probes, sessions)
 
 	handler := httpapi.NewMux(httpapi.Deps{
 		Version:  version.Version,

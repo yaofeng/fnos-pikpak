@@ -21,7 +21,7 @@ func newAuthTestDeps(t *testing.T, pikpakURL string) (Deps, *store.Store) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{BaseUser: pikpakURL}))
+	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{BaseUser: pikpakURL, BaseDrive: pikpakURL}))
 	return Deps{Version: "test", Store: st, Sessions: sessions}, st
 }
 
