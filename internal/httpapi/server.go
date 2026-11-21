@@ -16,6 +16,7 @@ import (
 type Deps struct {
 	Version string
 	Probes  *probe.Registry
+	Fnos    *fnos.Client
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -40,6 +41,9 @@ func NewMux(deps Deps) *http.ServeMux {
 
 	if deps.Probes != nil {
 		registerProbeRoutes(inner, deps, newReportStore())
+	}
+	if deps.Fnos != nil {
+		registerFSRoutes(inner, deps)
 	}
 
 	inner.Handle("/", spaHandler())
@@ -85,4 +89,14 @@ func writeError(w http.ResponseWriter, code int, errCode, message string) {
 	writeJSON(w, code, map[string]any{
 		"error": map[string]any{"code": errCode, "message": message},
 	})
+}
+
+// decodeJSON reads a small JSON body and writes a 400 on failure.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON")
+		return err
+	}
+	return nil
 }

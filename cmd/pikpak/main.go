@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/httpapi"
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/version"
@@ -36,10 +37,18 @@ func main() {
 		return
 	}
 
+	fnosClient := &fnos.Client{
+		SocketPath: "/var/run/trim_open_gateway_apiscope.socket",
+		AppName:    "pikpak",
+	}
+	probes := probe.NewRegistry()
+	fnos.RegisterProbes(probes, fnosClient)
+
 	handler := httpapi.NewMux(httpapi.Deps{
 		Version: version.Version,
 		DevUID:  *devUID,
-		Probes:  probe.NewRegistry(),
+		Probes:  probes,
+		Fnos:    fnosClient,
 	})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
