@@ -36,6 +36,9 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("POST /api/auth/device", func(w http.ResponseWriter, r *http.Request) {
+		if !requireJSONBody(w, r) {
+			return
+		}
 		id, _ := fnos.IdentityFrom(r.Context())
 		client := deps.Sessions.Client()
 		bound := *client
@@ -109,6 +112,9 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("POST /api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if !requireJSONBody(w, r) {
+			return
+		}
 		id, _ := fnos.IdentityFrom(r.Context())
 		if err := deps.Sessions.Drop(r.Context(), id.UID); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "解绑失败")
@@ -139,6 +145,12 @@ func pollAuthFlow(deps Deps, client *pikpak.Client, flow store.Flow) {
 		tok, err := client.PollDeviceToken(ctx, flow.DeviceCode)
 		switch {
 		case err == nil:
+			// Logout cancels pending flows; a token that arrives afterwards
+			// must not rebind the account.
+			current, ferr := deps.Store.GetAuthFlow(ctx, flow.ID)
+			if ferr != nil || current.Status != flowStatusPending {
+				return
+			}
 			cred := store.Credential{
 				UID:             flow.UID,
 				AuthType:        "oauth",

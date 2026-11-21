@@ -30,6 +30,7 @@ func registerGatewayRoutes(mux *http.ServeMux) {
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"path":              r.URL.Path,
+			"original_path":     OriginalPath(r.Context()),
 			"raw_query":         rawQuery,
 			"origin":            r.Header.Get("Origin"),
 			"referer":           probe.Redact(r.Header.Get("Referer")),

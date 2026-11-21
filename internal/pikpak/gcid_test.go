@@ -76,11 +76,11 @@ func TestBlockSize(t *testing.T) {
 	}{
 		{0, 0x40000},
 		{1, 0x40000},
-		{512 * 0x40000, 0x40000},  // exactly 512 blocks
-		{513 * 0x40000, 0x80000},  // 513 > 512 doubles
-		{200 << 20, 0x80000},      // 800 -> 400 blocks
-		{1 << 30, 0x200000},       // capped at 2 MiB
-		{1 << 40, 0x200000},       // still capped
+		{512 * 0x40000, 0x40000}, // exactly 512 blocks
+		{513 * 0x40000, 0x80000}, // 513 > 512 doubles
+		{200 << 20, 0x80000},     // 800 -> 400 blocks
+		{1 << 30, 0x200000},      // capped at 2 MiB
+		{1 << 40, 0x200000},      // still capped
 	}
 	for _, tc := range cases {
 		if got := blockSize(tc.size); got != tc.want {

@@ -25,6 +25,7 @@ func TestProbeRunStoresReport(t *testing.T) {
 
 	run := httptest.NewRequest(http.MethodPost, "/api/probes/run", nil)
 	run.Header.Set("X-Trim-Userid", "1000")
+	run.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, run)
 
@@ -68,6 +69,7 @@ func TestReportIsPerUser(t *testing.T) {
 
 	run := httptest.NewRequest(http.MethodPost, "/api/probes/run", nil)
 	run.Header.Set("X-Trim-Userid", "1000")
+	run.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(httptest.NewRecorder(), run)
 
 	other := httptest.NewRequest(http.MethodGet, "/api/report", nil)

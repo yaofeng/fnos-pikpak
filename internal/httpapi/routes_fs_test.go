@@ -40,6 +40,7 @@ func TestProbeACL(t *testing.T) {
 	body := strings.NewReader(`{"paths":["/vol1/home/me"]}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/probe-acl", body)
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -87,6 +88,7 @@ func TestProbeACLRejectsEmptyPaths(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/probe-acl", strings.NewReader(`{"paths":[]}`))
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

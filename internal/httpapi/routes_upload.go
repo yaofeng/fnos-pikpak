@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -181,6 +182,16 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 		}
 
 		file := ticket.File
+		if !instant && (file == nil || file.ID == "") {
+			// The resumable response does not always include the file; look it
+			// up so completion is still verified rather than assumed.
+			found, err := findUploadedFile(r.Context(), client, body.ParentID, filepath.Base(path))
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
+				return
+			}
+			file = found
+		}
 		if !instant && file != nil && file.ID != "" {
 			waitStart := time.Now()
 			done, err := client.WaitFileComplete(ctx, file.ID, 90*time.Second)
@@ -216,6 +227,20 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
+}
+
+// findUploadedFile lists the target folder and matches by exact name.
+func findUploadedFile(ctx context.Context, c *pikpak.Client, parentID, name string) (*pikpak.File, error) {
+	page, err := c.ListFiles(ctx, parentID, pikpak.ListOptions{Limit: 100})
+	if err != nil {
+		return nil, err
+	}
+	for i := range page.Items {
+		if page.Items[i].Name == name {
+			return &page.Items[i], nil
+		}
+	}
+	return nil, nil
 }
 
 func sortedParamKeys(params map[string]string) []string {

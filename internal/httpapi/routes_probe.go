@@ -41,6 +41,9 @@ func registerProbeRoutes(mux *http.ServeMux, deps Deps, reports *reportStore) {
 	})
 
 	mux.HandleFunc("POST /api/probes/run", func(w http.ResponseWriter, r *http.Request) {
+		if !requireJSONBody(w, r) {
+			return
+		}
 		id, _ := fnos.IdentityFrom(r.Context())
 		ctx := probe.WithUID(r.Context(), id.UID)
 		results := deps.Probes.Run(ctx)

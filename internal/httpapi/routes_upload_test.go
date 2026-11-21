@@ -91,6 +91,7 @@ func TestUploadProbeConfigAndGeneratedFile(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"local_path": genPath})
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/probe", strings.NewReader(string(body)))
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -151,6 +152,7 @@ func TestUploadProbeRejectsPathOutsideACL(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"local_path": outside})
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/probe", strings.NewReader(string(body)))
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -170,6 +172,7 @@ func TestUploadProbeRequiresBinding(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"local_path": genPath})
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/probe", strings.NewReader(string(body)))
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -185,10 +188,73 @@ func TestUploadProbeValidatesBody(t *testing.T) {
 	for _, body := range []string{`{}`, `{"local_path":"relative/x.bin"}`, `not json`} {
 		req := httptest.NewRequest(http.MethodPost, "/api/upload/probe", strings.NewReader(body))
 		req.Header.Set("X-Trim-Userid", "1000")
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("body %q status=%d, want 400", body, rec.Code)
 		}
+	}
+}
+
+// PikPak's resumable response may omit `file`; the probe must still upload with
+// multipart semantics and verify the final phase by looking the file up.
+func TestUploadProbeVerifiesWhenResponseLacksFile(t *testing.T) {
+	t.Setenv("TRIM_PKGTMP", t.TempDir())
+	oss := fakeOSSServer(t)
+	defer oss.Close()
+
+	drive := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drive/v1/files":
+			_, _ = io.WriteString(w, `{"resumable":{"provider":"PROVIDER_ALIYUN","params":{
+				"access_key_id":"id","access_key_secret":"s","bucket":"bkt",
+				"endpoint":"`+oss.URL+`","key":"k","security_token":"sts"}}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/files":
+			_, _ = io.WriteString(w, `{"files":[{"id":"f9","name":"pikpak-probe-20m.bin","size":"20971520","phase":"PHASE_TYPE_COMPLETE"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/files/f9":
+			_, _ = io.WriteString(w, `{"id":"f9","name":"pikpak-probe-20m.bin","phase":"PHASE_TYPE_COMPLETE","size":"20971520"}`)
+		default:
+			t.Errorf("unexpected drive request %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer drive.Close()
+
+	deps, st := newAuthTestDeps(t, drive.URL)
+	if err := st.PutCredential(t.Context(), store.Credential{
+		UID: 1000, AuthType: "oauth", ClientID: pikpak.DefaultClientID,
+		AccessToken: "at", RefreshToken: "rt",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("PutCredential: %v", err)
+	}
+	h := NewMux(deps)
+
+	_, cfg := getJSON(t, h, "/api/upload/probe/config", "1000")
+	genPath, _ := cfg["generated_path"].(string)
+	body, _ := json.Marshal(map[string]string{"local_path": genPath})
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/probe", strings.NewReader(string(body)))
+	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+
+	var out struct {
+		File struct {
+			ID    string `json:"id"`
+			Phase string `json:"phase"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.File.ID != "f9" || out.File.Phase != "PHASE_TYPE_COMPLETE" {
+		t.Fatalf("file = %+v", out.File)
 	}
 }

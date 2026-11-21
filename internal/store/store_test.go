@@ -233,3 +233,35 @@ func isLowerHex(s string) bool {
 	}
 	return true
 }
+
+func TestCancelPendingFlows(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	mk := func(id string, uid int, status string) {
+		t.Helper()
+		if err := s.PutAuthFlow(ctx, Flow{
+			ID: id, UID: uid, DeviceCode: "d", UserCode: "U",
+			VerifyURL: "https://mypikpak.com/x", IntervalSec: 1,
+			ExpiresAt: time.Now().Add(time.Minute), Status: status,
+		}); err != nil {
+			t.Fatalf("put flow %s: %v", id, err)
+		}
+	}
+	mk("pending-1", 10, "pending")
+	mk("bound-1", 10, "bound")
+	mk("pending-2", 11, "pending")
+
+	if err := s.CancelPendingFlows(ctx, 10); err != nil {
+		t.Fatalf("CancelPendingFlows: %v", err)
+	}
+
+	if f, _ := s.GetAuthFlow(ctx, "pending-1"); f.Status != "cancelled" {
+		t.Fatalf("pending-1 status = %q", f.Status)
+	}
+	if f, _ := s.GetAuthFlow(ctx, "bound-1"); f.Status != "bound" {
+		t.Fatalf("bound-1 status = %q", f.Status)
+	}
+	if f, _ := s.GetAuthFlow(ctx, "pending-2"); f.Status != "pending" {
+		t.Fatalf("pending-2 status = %q", f.Status)
+	}
+}

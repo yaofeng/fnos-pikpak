@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 )
+
+var errUnsupportedMediaType = errors.New("httpapi: unsupported media type")
 
 // Deps carries everything the HTTP layer needs from the rest of the app.
 type Deps struct {
@@ -108,7 +112,21 @@ func writeError(w http.ResponseWriter, code int, errCode, message string) {
 }
 
 // decodeJSON reads a small JSON body and writes a 400 on failure.
+// requireJSONBody is the CSRF barrier for state-changing endpoints: a
+// cross-site form cannot declare application/json without a CORS preflight.
+func requireJSONBody(w http.ResponseWriter, r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "请求必须使用 application/json")
+		return false
+	}
+	return true
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	if !requireJSONBody(w, r) {
+		return errUnsupportedMediaType
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON")

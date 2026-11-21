@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,6 +87,7 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -127,6 +129,7 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 
 	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 	logout.Header.Set("X-Trim-Userid", "1000")
+	logout.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, logout)
 	if rec.Code != http.StatusOK {
@@ -148,6 +151,7 @@ func TestAuthFlowIsScopedToItsUser(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	var start struct {
@@ -170,6 +174,7 @@ func TestAuthFlowDenied(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	var start struct {
@@ -194,6 +199,7 @@ func TestAuthDeviceUpstreamFailure(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/device", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
@@ -207,5 +213,65 @@ func TestMeRequiresIdentity(t *testing.T) {
 	rec, _ := getJSON(t, h, "/api/me", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d, want 401", rec.Code)
+	}
+}
+
+func TestLogoutCancelsPendingFlow(t *testing.T) {
+	release := make(chan struct{})
+	tokenServed := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/auth/device/code" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"device_code":"dc","user_code":"U","expires_in":300,"interval":1}`)
+			return
+		}
+		// Hold the token response until after logout.
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"at","refresh_token":"rt","expires_in":43200}`)
+		close(tokenServed)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	h := NewMux(deps)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/device", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("device status=%d body=%s", rec.Code, rec.Body)
+	}
+	var start struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &start)
+
+	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logout.Header.Set("X-Trim-Userid", "1000")
+	logout.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, logout)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout status=%d", rec.Code)
+	}
+	close(release)
+	<-tokenServed
+
+	// Give the poller time to (wrongly) persist and flip the flow.
+	time.Sleep(300 * time.Millisecond)
+
+	_, flow := getJSON(t, h, "/api/auth/flow/"+start.ID, "1000")
+	if flow["status"] != "cancelled" {
+		t.Fatalf("flow status after logout = %v", flow["status"])
+	}
+	if _, err := st.GetCredential(t.Context(), 1000); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("credential after cancelled flow: err=%v, want ErrNotFound", err)
+	}
+	_, me := getJSON(t, h, "/api/me", "1000")
+	if me["bound"] != false {
+		t.Fatalf("me after logout = %v", me)
 	}
 }

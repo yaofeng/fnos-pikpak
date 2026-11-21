@@ -364,3 +364,88 @@ func TestSessionForceRefresh(t *testing.T) {
 		t.Fatalf("refresh calls = %d, want 2", n)
 	}
 }
+
+func TestClientForReusesPerUserLimiter(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	for _, uid := range []int{7, 8} {
+		if err := st.PutCredential(ctx, store.Credential{
+			UID: uid, AuthType: "oauth", ClientID: DefaultClientID,
+			AccessToken: "at", RefreshToken: "rt",
+			DeviceID:        "0123456789abcdef0123456789abcdef",
+			AccessExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("PutCredential: %v", err)
+		}
+	}
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://user.test", BaseDrive: "http://drive.test"}))
+	c1, err := ss.ClientFor(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := ss.ClientFor(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c3, err := ss.ClientFor(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if c1.limiter == nil || c1.limiter != c2.limiter {
+		t.Fatal("the same user must share one rate limiter")
+	}
+	if c1.limiter == c3.limiter {
+		t.Fatal("different users must not share a rate limiter")
+	}
+}
+
+func TestDropStopsInFlightRefresh(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(started) })
+		<-release
+		writeJSONBody(w, http.StatusOK, `{"access_token":"at-new","refresh_token":"rt-new","expires_in":43200}`)
+	}))
+	defer srv.Close()
+
+	st := testStore(t)
+	ctx := context.Background()
+	if err := st.PutCredential(ctx, store.Credential{
+		UID: 1000, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-old", RefreshToken: "rt-old",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("PutCredential: %v", err)
+	}
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
+	sess, err := ss.Get(ctx, 1000)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := sess.Token(ctx)
+		done <- err
+	}()
+	<-started
+
+	if err := ss.Drop(ctx, 1000); err != nil {
+		t.Fatalf("Drop: %v", err)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("in-flight refresh should fail after Drop")
+	}
+
+	// The refresh response must not resurrect the credential.
+	if _, err := st.GetCredential(ctx, 1000); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("credential after Drop: err=%v, want ErrNotFound", err)
+	}
+}

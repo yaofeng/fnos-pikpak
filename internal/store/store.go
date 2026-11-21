@@ -320,3 +320,11 @@ func (s *Store) DeriveDeviceID(uid int) string {
 	mac.Write([]byte("device:" + strconv.Itoa(uid)))
 	return hex.EncodeToString(mac.Sum(nil))[:32]
 }
+
+// CancelPendingFlows marks every still-pending authorization flow of a user as
+// cancelled, so a poller that finishes after logout cannot bind the account.
+func (s *Store) CancelPendingFlows(ctx context.Context, uid int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE auth_flows SET status = 'cancelled' WHERE uid = ? AND status = 'pending'`, uid)
+	return err
+}

@@ -50,6 +50,9 @@ type Resumable struct {
 type UploadTicket struct {
 	File      *File
 	Resumable *Resumable
+	// Size is the size that was requested. PikPak sometimes omits `file` from
+	// the resumable response, and the upload still needs to know the size.
+	Size int64
 }
 
 type UploadRequest struct {
@@ -84,7 +87,7 @@ func (c *Client) RequestUpload(ctx context.Context, in UploadRequest) (UploadTic
 		return UploadTicket{}, err
 	}
 
-	ticket := UploadTicket{File: raw.File}
+	ticket := UploadTicket{File: raw.File, Size: in.Size}
 	if raw.Resumable != nil {
 		ticket.Resumable = &Resumable{Provider: raw.Resumable.Provider, Params: raw.Resumable.Params}
 	}
@@ -120,8 +123,8 @@ func (c *Client) CompleteUpload(ctx context.Context, ticket UploadTicket, src io
 		return fmt.Errorf("pikpak: oss bucket: %w", err)
 	}
 
-	var size int64
-	if ticket.File != nil {
+	size := ticket.Size
+	if ticket.File != nil && ticket.File.Size > 0 {
 		size = ticket.File.Size
 	}
 	key := params["key"]

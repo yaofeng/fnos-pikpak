@@ -117,8 +117,8 @@ func TestCompleteUploadUnsupportedProvider(t *testing.T) {
 
 func TestNormalizeOSSEndpoint(t *testing.T) {
 	cases := map[string]string{
-		"https://vip-lixian-07.mypikpak.net": "https://mypikpak.net",
-		"vip-lixian-07.mypikpak.net":         "https://mypikpak.net",
+		"https://vip-lixian-07.mypikpak.net":   "https://mypikpak.net",
+		"vip-lixian-07.mypikpak.net":           "https://mypikpak.net",
 		"https://oss-cn-hangzhou.aliyuncs.com": "https://oss-cn-hangzhou.aliyuncs.com",
 		"oss-cn-hangzhou.aliyuncs.com":         "https://oss-cn-hangzhou.aliyuncs.com",
 	}
@@ -309,5 +309,44 @@ func TestWaitFileCompleteTimesOut(t *testing.T) {
 	c := newTestClient(t, srv.URL, &fakeTokens{token: "t"})
 	if _, err := c.WaitFileComplete(t.Context(), "f1", 20*time.Millisecond); err == nil {
 		t.Fatal("expected timeout error")
+	}
+}
+
+func TestRequestUploadCarriesRequestedSize(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"resumable":{"provider":"PROVIDER_ALIYUN","params":{"bucket":"b","endpoint":"https://oss","key":"k"}}}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "t"})
+	const size = 13 << 20
+	ticket, err := c.RequestUpload(t.Context(), UploadRequest{Name: "big.bin", Size: size, GCID: "x"})
+	if err != nil {
+		t.Fatalf("RequestUpload: %v", err)
+	}
+	if ticket.File != nil {
+		t.Fatalf("file = %+v, want nil", ticket.File)
+	}
+	if ticket.Size != size {
+		t.Fatalf("ticket.Size = %d, want %d", ticket.Size, size)
+	}
+}
+
+func TestCompleteUploadUsesRequestedSizeWithoutFile(t *testing.T) {
+	fake := &fakeOSS{}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+
+	const size = 13 << 20
+	ticket := ossTicket(srv.URL, size)
+	ticket.File = nil
+	ticket.Size = size
+
+	c := NewClient(ClientOptions{})
+	if err := c.CompleteUpload(t.Context(), ticket, io.LimitReader(zeroReader{}, size)); err != nil {
+		t.Fatalf("CompleteUpload: %v", err)
+	}
+	if fake.uploads != 1 || len(fake.parts) != 3 {
+		t.Fatalf("uploads=%d parts=%v, want multipart", fake.uploads, fake.parts)
 	}
 }

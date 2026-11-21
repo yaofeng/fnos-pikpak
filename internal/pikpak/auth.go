@@ -196,6 +196,7 @@ type Session struct {
 	expiresAt    time.Time
 	refreshing   chan struct{}
 	reauth       bool
+	disabled     bool
 }
 
 func NewSession(c *Client, st *store.Store, uid int, cred store.Credential) *Session {
@@ -214,6 +215,10 @@ func NewSession(c *Client, st *store.Store, uid int, cred store.Credential) *Ses
 func (s *Session) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	for {
+		if s.disabled {
+			s.mu.Unlock()
+			return "", ErrNotBound
+		}
 		if s.reauth {
 			s.mu.Unlock()
 			return "", ErrReauthRequired
@@ -290,6 +295,14 @@ func (s *Session) refreshOnce(ctx context.Context) error {
 	}
 
 	expiresAt := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+
+	// Hold the session lock through persistence so Drop (which disables the
+	// session under the same lock) cannot interleave and be undone.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.disabled {
+		return ErrNotBound
+	}
 	if s.st != nil {
 		// Persist the rotated refresh token before the new access token is
 		// used; losing the rotation would strand the session.
@@ -308,12 +321,18 @@ func (s *Session) refreshOnce(ctx context.Context) error {
 		}
 	}
 
-	s.mu.Lock()
 	s.access = tok.AccessToken
 	s.refreshToken = tok.RefreshToken
 	s.expiresAt = expiresAt
-	s.mu.Unlock()
 	return nil
+}
+
+// disable makes the session unusable and prevents any in-flight refresh from
+// writing credentials back after a logout.
+func (s *Session) disable() {
+	s.mu.Lock()
+	s.disabled = true
+	s.mu.Unlock()
 }
 
 func (s *Session) markReauth() {
@@ -329,10 +348,16 @@ type SessionStore struct {
 
 	mu       sync.Mutex
 	sessions map[int]*Session
+	limiters map[int]*limiter
 }
 
 func NewSessionStore(st *store.Store, client *Client) *SessionStore {
-	return &SessionStore{st: st, client: client, sessions: map[int]*Session{}}
+	return &SessionStore{
+		st:       st,
+		client:   client,
+		sessions: map[int]*Session{},
+		limiters: map[int]*limiter{},
+	}
 }
 
 // Client returns the shared base configuration. It carries no session and
@@ -342,12 +367,13 @@ func (s *SessionStore) Client() *Client {
 }
 
 func (s *SessionStore) Get(ctx context.Context, uid int) (*Session, error) {
+	// Held across the DB read so a concurrent Drop (same lock) cannot be
+	// undone by a stale session being cached afterwards.
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if sess, ok := s.sessions[uid]; ok {
-		s.mu.Unlock()
 		return sess, nil
 	}
-	s.mu.Unlock()
 
 	cred, err := s.st.GetCredential(ctx, uid)
 	if errors.Is(err, store.ErrNotFound) {
@@ -358,11 +384,6 @@ func (s *SessionStore) Get(ctx context.Context, uid int) (*Session, error) {
 	}
 
 	sess := NewSession(sessionClient(s.client, cred), s.st, uid, cred)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if existing, ok := s.sessions[uid]; ok {
-		return existing, nil
-	}
 	s.sessions[uid] = sess
 	return sess, nil
 }
@@ -377,9 +398,20 @@ func (s *SessionStore) ClientFor(ctx context.Context, uid int) (*Client, error) 
 	c := *s.client
 	c.DeviceID = sess.client.DeviceID
 	c.Session = sess
-	// The rate limit is per user, not per process.
-	c.limiter = newLimiter()
+	// One bucket per user, reused across every client built for that user.
+	c.limiter = s.limiterFor(uid)
 	return &c, nil
+}
+
+func (s *SessionStore) limiterFor(uid int) *limiter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.limiters[uid]
+	if !ok {
+		l = newLimiter()
+		s.limiters[uid] = l
+	}
+	return l
 }
 
 // Install caches a session created right after a successful device flow.
@@ -391,12 +423,23 @@ func (s *SessionStore) Install(uid int, cred store.Credential) *Session {
 	return sess
 }
 
-// Drop forgets the uid's session and deletes the stored credential.
+// Drop forgets the uid's session and deletes the stored credential. The
+// session is disabled first, so an in-flight refresh cannot write it back, and
+// pending authorization flows are cancelled so a late poller cannot rebind.
 func (s *SessionStore) Drop(ctx context.Context, uid int) error {
 	s.mu.Lock()
+	sess := s.sessions[uid]
 	delete(s.sessions, uid)
+	err := s.st.DeleteCredential(ctx, uid)
+	if err == nil {
+		err = s.st.CancelPendingFlows(ctx, uid)
+	}
 	s.mu.Unlock()
-	return s.st.DeleteCredential(ctx, uid)
+
+	if sess != nil {
+		sess.disable()
+	}
+	return err
 }
 
 // sessionClient copies the base client and pins it to the user's device id,

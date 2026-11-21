@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,5 +52,64 @@ func TestGatewayPrefixIsOptional(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+}
+
+// The gateway loads the app at the configured URL, /app/pikpak, with no
+// trailing slash. Without a redirect the page's relative asset URLs resolve
+// against / and the app never boots.
+func TestBareGatewayPrefixRedirectsToSlash(t *testing.T) {
+	h := NewMux(Deps{Version: "test"})
+
+	req := httptest.NewRequest(http.MethodGet, "/app/pikpak?x=1", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound && rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status=%d, want a redirect", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/app/pikpak/?x=1" {
+		t.Fatalf("Location = %q", loc)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/app/pikpak/", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<div id=\"root\"") {
+		t.Fatalf("slash status=%d body=%s", rec.Code, rec.Body)
+	}
+}
+
+// Report item 1 asks whether the gateway forwards /app/pikpak or strips it;
+// the answer has to survive prefix stripping.
+func TestGatewayInfoReportsOriginalPath(t *testing.T) {
+	h := NewMux(Deps{Version: "test"})
+
+	req := httptest.NewRequest(http.MethodGet, "/app/pikpak/api/gateway/info", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["original_path"] != "/app/pikpak/api/gateway/info" {
+		t.Fatalf("original_path = %v", body["original_path"])
+	}
+	if body["path"] != "/api/gateway/info" {
+		t.Fatalf("path = %v", body["path"])
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/gateway/info", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["original_path"] != "/api/gateway/info" {
+		t.Fatalf("unprefixed original_path = %v", body["original_path"])
 	}
 }
