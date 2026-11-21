@@ -15,6 +15,7 @@ import (
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/httpapi"
 	"fnos-pikpak/internal/probe"
+	"fnos-pikpak/internal/store"
 	"fnos-pikpak/internal/version"
 )
 
@@ -23,6 +24,13 @@ func defaultSocket() string {
 		return filepath.Join(dest, "app.sock")
 	}
 	return "./app.sock"
+}
+
+func dataDir() string {
+	if v := os.Getenv("TRIM_PKGVAR"); v != "" {
+		return v
+	}
+	return "./.data"
 }
 
 func main() {
@@ -37,6 +45,14 @@ func main() {
 		return
 	}
 
+	dir := dataDir()
+	st, err := store.Open(filepath.Join(dir, "pikpak.db"), filepath.Join(dir, "secret.key"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open store in %s: %v\n", dir, err)
+		os.Exit(1)
+	}
+	defer st.Close()
+
 	fnosClient := &fnos.Client{
 		SocketPath: "/var/run/trim_open_gateway_apiscope.socket",
 		AppName:    "pikpak",
@@ -49,6 +65,7 @@ func main() {
 		DevUID:  *devUID,
 		Probes:  probes,
 		Fnos:    fnosClient,
+		Store:   st,
 	})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)

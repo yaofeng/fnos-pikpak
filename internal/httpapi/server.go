@@ -10,6 +10,7 @@ import (
 
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/probe"
+	"fnos-pikpak/internal/store"
 )
 
 // Deps carries everything the HTTP layer needs from the rest of the app.
@@ -17,6 +18,7 @@ type Deps struct {
 	Version string
 	Probes  *probe.Registry
 	Fnos    *fnos.Client
+	Store   *store.Store
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
