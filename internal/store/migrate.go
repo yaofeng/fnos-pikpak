@@ -43,4 +43,25 @@ CREATE TABLE auth_flows (
   created_at       TEXT NOT NULL
 );
 `,
+	`
+CREATE TABLE granted_folders (
+  uid        INTEGER NOT NULL,
+  path       TEXT NOT NULL,
+  label      TEXT NOT NULL DEFAULT '',
+  granted_at TEXT NOT NULL,
+  PRIMARY KEY (uid, path)
+);
+
+CREATE TABLE settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE user_settings (
+  uid   INTEGER NOT NULL,
+  key   TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (uid, key)
+);
+`,
 }

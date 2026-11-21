@@ -132,8 +132,123 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err := s2.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("migrations = %d, want 1", count)
+	if count != len(migrations) {
+		t.Fatalf("migrations = %d, want %d", count, len(migrations))
+	}
+}
+
+func TestUserRoundTrip(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := s.PutUser(ctx, User{UID: 1000, Username: "alice", PikPakSub: "sub-1", DisplayName: "Alice"}); err != nil {
+		t.Fatalf("put user: %v", err)
+	}
+	got, err := s.GetUser(ctx, 1000)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if got.Username != "alice" || got.PikPakSub != "sub-1" || got.Status != "active" {
+		t.Fatalf("got %+v", got)
+	}
+	if got.BoundAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("timestamps were not filled in: %+v", got)
+	}
+
+	// Upsert keeps one row per uid and preserves bound_at.
+	firstBound := got.BoundAt
+	if err := s.PutUser(ctx, User{UID: 1000, Username: "alice2", PikPakSub: "sub-1", DisplayName: "Alice 2"}); err != nil {
+		t.Fatalf("put user 2: %v", err)
+	}
+	got, _ = s.GetUser(ctx, 1000)
+	if got.DisplayName != "Alice 2" || !got.BoundAt.Equal(firstBound) {
+		t.Fatalf("after upsert: %+v (bound_at %v, was %v)", got, got.BoundAt, firstBound)
+	}
+
+	if _, err := s.GetUser(ctx, 2000); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing user err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestGrantedFoldersArePerUser(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := s.GrantFolder(ctx, 1000, "/vol1/1001/private/pikpak", "存储空间 1/alice/private/pikpak"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := s.GrantFolder(ctx, 1000, "/vol1/1001/private/pikpak", "更新后的名字"); err != nil {
+		t.Fatalf("re-grant: %v", err)
+	}
+	if err := s.GrantFolder(ctx, 1001, "/vol1/1002/other", ""); err != nil {
+		t.Fatalf("grant other: %v", err)
+	}
+
+	folders, err := s.ListGrantedFolders(ctx, 1000)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(folders) != 1 || folders[0].Label != "更新后的名字" {
+		t.Fatalf("folders = %+v", folders)
+	}
+	other, _ := s.ListGrantedFolders(ctx, 1001)
+	if len(other) != 1 || other[0].Path != "/vol1/1002/other" {
+		t.Fatalf("other = %+v", other)
+	}
+
+	if err := s.RevokeFolder(ctx, 1000, "/vol1/1001/private/pikpak"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if folders, _ := s.ListGrantedFolders(ctx, 1000); len(folders) != 0 {
+		t.Fatalf("folders after revoke = %+v", folders)
+	}
+	if other, _ := s.ListGrantedFolders(ctx, 1001); len(other) != 1 {
+		t.Fatalf("revoke leaked across users: %+v", other)
+	}
+}
+
+func TestSettingsRoundTrip(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	if _, err := s.GetSetting(ctx, "download_concurrency"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing setting err = %v, want ErrNotFound", err)
+	}
+	if err := s.SetSetting(ctx, "download_concurrency", "3"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if v, err := s.GetSetting(ctx, "download_concurrency"); err != nil || v != "3" {
+		t.Fatalf("get = %q, %v", v, err)
+	}
+	if err := s.SetSetting(ctx, "download_concurrency", "2"); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	if v, _ := s.GetSetting(ctx, "download_concurrency"); v != "2" {
+		t.Fatalf("get after overwrite = %q", v)
+	}
+	if err := s.SetSetting(ctx, "too_long", string(make([]byte, 1025))); err == nil {
+		t.Fatal("a setting over 1 KiB was accepted")
+	}
+}
+
+func TestUserSettingsArePerUser(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := s.SetUserSetting(ctx, 1000, "language", "zh-CN"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := s.SetUserSetting(ctx, 1001, "language", "en"); err != nil {
+		t.Fatalf("set other: %v", err)
+	}
+	if v, _ := s.GetUserSetting(ctx, 1000, "language"); v != "zh-CN" {
+		t.Fatalf("uid 1000 = %q", v)
+	}
+	if v, _ := s.GetUserSetting(ctx, 1001, "language"); v != "en" {
+		t.Fatalf("uid 1001 = %q", v)
+	}
+	if _, err := s.GetUserSetting(ctx, 1000, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing err = %v, want ErrNotFound", err)
 	}
 }
 

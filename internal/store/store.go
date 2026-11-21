@@ -46,6 +46,28 @@ type Flow struct {
 	CreatedAt   time.Time
 }
 
+// User is the fnOS user's account record. It holds display data only; the
+// PikPak tokens live in credentials.
+type User struct {
+	UID         int
+	Username    string
+	PikPakSub   string
+	DisplayName string
+	Avatar      string
+	VIPType     string
+	VIPExpire   string
+	Status      string
+	BoundAt     time.Time
+	UpdatedAt   time.Time
+}
+
+type GrantedFolder struct {
+	UID       int
+	Path      string
+	Label     string
+	GrantedAt time.Time
+}
+
 type Store struct {
 	db  *sql.DB
 	key []byte
@@ -327,4 +349,161 @@ func (s *Store) CancelPendingFlows(ctx context.Context, uid int) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE auth_flows SET status = 'cancelled' WHERE uid = ? AND status = 'pending'`, uid)
 	return err
+}
+
+// PutUser upserts the display record for a bound account. bound_at is set on
+// the first write and kept on later ones, so the UI can show when the user
+// first linked the account.
+func (s *Store) PutUser(ctx context.Context, u User) error {
+	if u.Status == "" {
+		u.Status = "active"
+	}
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO users(uid, username, pikpak_sub, display_name, avatar, vip_type, vip_expire,
+  status, bound_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(uid) DO UPDATE SET
+  username=excluded.username,
+  pikpak_sub=excluded.pikpak_sub,
+  display_name=excluded.display_name,
+  avatar=excluded.avatar,
+  vip_type=excluded.vip_type,
+  vip_expire=excluded.vip_expire,
+  status=excluded.status,
+  bound_at=CASE WHEN users.bound_at = '' THEN excluded.bound_at ELSE users.bound_at END,
+  updated_at=excluded.updated_at`,
+		u.UID, u.Username, u.PikPakSub, u.DisplayName, u.Avatar,
+		u.VIPType, u.VIPExpire, u.Status,
+		now.Format(time.RFC3339), now.Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) GetUser(ctx context.Context, uid int) (User, error) {
+	var (
+		u              User
+		bound, updated string
+	)
+	err := s.db.QueryRowContext(ctx, `
+SELECT uid, username, pikpak_sub, display_name, avatar, vip_type, vip_expire,
+       status, bound_at, updated_at
+FROM users WHERE uid = ?`, uid).
+		Scan(&u.UID, &u.Username, &u.PikPakSub, &u.DisplayName, &u.Avatar,
+			&u.VIPType, &u.VIPExpire, &u.Status, &bound, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, err
+	}
+	u.BoundAt = parseTime(bound)
+	u.UpdatedAt = parseTime(updated)
+	return u, nil
+}
+
+// SetUserStatus flips active / reauth_required / disabled without touching the
+// stored profile, so a token failure does not erase who the user is.
+func (s *Store) SetUserStatus(ctx context.Context, uid int, status string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET status = ?, updated_at = ? WHERE uid = ?`,
+		status, time.Now().UTC().Format(time.RFC3339), uid)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GrantFolder records a directory the user authorized. Re-granting updates the
+// label but keeps the original granted_at.
+func (s *Store) GrantFolder(ctx context.Context, uid int, path, label string) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO granted_folders(uid, path, label, granted_at)
+VALUES(?,?,?,?)
+ON CONFLICT(uid, path) DO UPDATE SET label=excluded.label`,
+		uid, path, label, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) ListGrantedFolders(ctx context.Context, uid int) ([]GrantedFolder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT uid, path, label, granted_at FROM granted_folders
+WHERE uid = ? ORDER BY path`, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []GrantedFolder
+	for rows.Next() {
+		var (
+			f       GrantedFolder
+			granted string
+		)
+		if err := rows.Scan(&f.UID, &f.Path, &f.Label, &granted); err != nil {
+			return nil, err
+		}
+		f.GrantedAt = parseTime(granted)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeFolder(ctx context.Context, uid int, path string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM granted_folders WHERE uid = ? AND path = ?`, uid, path)
+	return err
+}
+
+const maxSettingValue = 1024
+
+func validateSetting(key, value string) error {
+	if key == "" {
+		return errors.New("store: setting key is empty")
+	}
+	if len(value) > maxSettingValue {
+		return fmt.Errorf("store: setting %q has %d bytes, limit is %d", key, len(value), maxSettingValue)
+	}
+	return nil
+}
+
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	if err := validateSetting(key, value); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO settings(key, value) VALUES(?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
+}
+
+func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return v, err
+}
+
+func (s *Store) SetUserSetting(ctx context.Context, uid int, key, value string) error {
+	if err := validateSetting(key, value); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO user_settings(uid, key, value) VALUES(?,?,?)
+ON CONFLICT(uid, key) DO UPDATE SET value=excluded.value`, uid, key, value)
+	return err
+}
+
+func (s *Store) GetUserSetting(ctx context.Context, uid int, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT value FROM user_settings WHERE uid = ? AND key = ?`, uid, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return v, err
 }
