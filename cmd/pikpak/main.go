@@ -14,6 +14,7 @@ import (
 
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/httpapi"
+	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 	"fnos-pikpak/internal/version"
@@ -60,12 +61,15 @@ func main() {
 	probes := probe.NewRegistry()
 	fnos.RegisterProbes(probes, fnosClient)
 
+	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{}))
+
 	handler := httpapi.NewMux(httpapi.Deps{
-		Version: version.Version,
-		DevUID:  *devUID,
-		Probes:  probes,
-		Fnos:    fnosClient,
-		Store:   st,
+		Version:  version.Version,
+		DevUID:   *devUID,
+		Probes:   probes,
+		Fnos:     fnosClient,
+		Store:    st,
+		Sessions: sessions,
 	})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)

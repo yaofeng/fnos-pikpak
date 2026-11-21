@@ -9,16 +9,18 @@ import (
 	"time"
 
 	"fnos-pikpak/internal/fnos"
+	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 )
 
 // Deps carries everything the HTTP layer needs from the rest of the app.
 type Deps struct {
-	Version string
-	Probes  *probe.Registry
-	Fnos    *fnos.Client
-	Store   *store.Store
+	Version  string
+	Probes   *probe.Registry
+	Fnos     *fnos.Client
+	Store    *store.Store
+	Sessions *pikpak.SessionStore
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -46,6 +48,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Fnos != nil {
 		registerFSRoutes(inner, deps)
+	}
+	if deps.Sessions != nil {
+		registerAuthRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
 	registerStreamRoutes(inner)

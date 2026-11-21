@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -184,4 +185,51 @@ func TestAuthFlowRoundTrip(t *testing.T) {
 	if got.Status != "bound" {
 		t.Fatalf("status = %q", got.Status)
 	}
+}
+
+func TestDeleteCredential(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	if err := s.PutCredential(ctx, Credential{UID: 1, AuthType: "oauth", ClientID: "c", AccessToken: "a", RefreshToken: "r", DeviceID: "d", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := s.DeleteCredential(ctx, 1); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := s.GetCredential(ctx, 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after delete err = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteCredential(ctx, 1); err != nil {
+		t.Fatalf("delete missing: %v", err)
+	}
+}
+
+func TestDeriveDeviceID(t *testing.T) {
+	s, _ := newStore(t)
+	a := s.DeriveDeviceID(1000)
+	if len(a) != 32 {
+		t.Fatalf("device id %q has length %d, want 32", a, len(a))
+	}
+	if !isLowerHex(a) {
+		t.Fatalf("device id %q is not lower-case hex", a)
+	}
+	if a != s.DeriveDeviceID(1000) {
+		t.Fatal("device id is not stable for the same uid")
+	}
+	if a == s.DeriveDeviceID(1001) {
+		t.Fatal("device id is shared across uids")
+	}
+	other, _ := newStore(t)
+	if a == other.DeriveDeviceID(1000) {
+		t.Fatal("device id must depend on the store key")
+	}
+}
+
+func isLowerHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }

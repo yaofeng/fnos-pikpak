@@ -2,12 +2,16 @@ package store
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -299,4 +303,20 @@ func parseTime(s string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// DeleteCredential unbinds a user's PikPak session. Missing rows are not an
+// error: the caller's intent (no credential) already holds.
+func (s *Store) DeleteCredential(ctx context.Context, uid int) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM credentials WHERE uid = ?`, uid)
+	return err
+}
+
+// DeriveDeviceID returns a stable, per-user PikPak device id. It is derived
+// from the store key so it never needs to be persisted before the first bind
+// and cannot be guessed from a uid alone.
+func (s *Store) DeriveDeviceID(uid int) string {
+	mac := hmac.New(sha256.New, s.key)
+	mac.Write([]byte("device:" + strconv.Itoa(uid)))
+	return hex.EncodeToString(mac.Sum(nil))[:32]
 }
