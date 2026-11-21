@@ -2,7 +2,7 @@ GO ?= go
 VERSION ?= 0.1.0
 LDFLAGS := -s -w -X fnos-pikpak/internal/version.Version=$(VERSION)
 
-.PHONY: build build-linux test genicon web fpk
+.PHONY: build build-linux test genicon web fpk m0
 
 build:
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/pikpak ./cmd/pikpak
@@ -27,3 +27,9 @@ fpk: web build-linux genicon
 	if [ -z "$$f" ]; then echo "fnpack produced no .fpk" >&2; exit 1; fi; \
 	cp "$$f" "dist/pikpak-$(VERSION)-x86.fpk"; \
 	echo "dist/pikpak-$(VERSION)-x86.fpk"
+
+# M0 deliverable: the installable package plus the two docs the user fills in.
+m0: fpk
+	@echo "安装包: dist/pikpak-$(VERSION)-x86.fpk"
+	@echo "安装说明: docs/install-m0.md"
+	@echo "报告模板: docs/m0-report.md"
