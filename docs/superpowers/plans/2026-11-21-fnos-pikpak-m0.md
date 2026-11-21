@@ -131,7 +131,7 @@ fnos-pikpak/
 - [ ] **Step 1: 初始化仓库**
 
 ```bash
-cd /Users/fengyao/workspace/popeye/fnos-pikpak
+cd <repo>
 git init
 git add docs
 git commit -m "docs: pikpak api reference and design"
