@@ -568,9 +568,146 @@ function BindCard({ onChange }: { onChange: () => void }) {
   )
 }
 
+type UploadConfig = { generated_path: string; generated_size: number; bound: boolean }
+
+type UploadReport = {
+  local_path: string
+  size: number
+  gcid: string
+  gcid_ms: number
+  instant: boolean
+  provider?: string
+  param_keys?: string[]
+  upload_ms: number
+  wait_ms: number
+  total_ms: number
+  file?: { id: string; name: string; size: number; phase: string }
+}
+
+function UploadCard({ refresh }: { refresh: number }) {
+  const [config, setConfig] = useState<UploadConfig | null>(null)
+  const [bound, setBound] = useState(false)
+  const [parentId, setParentId] = useState('')
+  const [report, setReport] = useState<UploadReport | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [standalone, setStandalone] = useState(false)
+
+  useEffect(() => {
+    sdk
+      .ready()
+      .then(() => setStandalone(sdk.isStandaloneWeb))
+      .catch(() => setStandalone(true))
+    apiGet<UploadConfig>('upload/probe/config')
+      .then((c) => {
+        setConfig(c)
+        setBound(c.bound)
+      })
+      .catch((e: Error) => setError(e.message))
+  }, [refresh])
+
+  async function upload(localPath: string) {
+    setBusy(true)
+    setError(null)
+    setReport(null)
+    try {
+      setReport(
+        await apiPost<UploadReport>('upload/probe', {
+          local_path: localPath,
+          parent_id: parentId.trim(),
+        }),
+      )
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function pickAndUpload() {
+    setError(null)
+    if (sdk.isStandaloneWeb) {
+      setError('请在飞牛桌面内打开本应用后再选择文件。')
+      return
+    }
+    try {
+      const res = await sdk.pickUserFile({ directory: false })
+      const paths = res?.data ?? []
+      if (paths.length === 0) return
+      await upload(paths[0])
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2>上传探针</h2>
+      </div>
+      {!bound && <p className="muted">先绑定 PikPak 账号再上传。</p>}
+      {error && <p className="error">{error}</p>}
+      {config && bound && (
+        <>
+          <label className="field">
+            <span>目标文件夹 id（留空为根目录）</span>
+            <input
+              type="text"
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value)}
+              placeholder="folder id"
+            />
+          </label>
+          <div className="actions">
+            <button type="button" onClick={() => upload(config.generated_path)} disabled={busy}>
+              {busy ? '上传中…' : `上传生成文件（${Math.round(config.generated_size / 1048576)} MiB）`}
+            </button>
+            <button type="button" onClick={pickAndUpload} disabled={busy || standalone}>
+              上传飞牛文件
+            </button>
+          </div>
+        </>
+      )}
+      {report && (
+        <dl className="kv">
+          <dt>文件</dt>
+          <dd className="mono">{report.file?.name ?? report.local_path}</dd>
+          <dt>大小</dt>
+          <dd>{report.size} 字节</dd>
+          <dt>GCID</dt>
+          <dd className="mono">{report.gcid}</dd>
+          <dt>GCID 耗时</dt>
+          <dd>{report.gcid_ms} ms</dd>
+          <dt>秒传</dt>
+          <dd>{report.instant ? '是（无需上传）' : '否'}</dd>
+          {report.provider && (
+            <>
+              <dt>Provider</dt>
+              <dd className="mono">{report.provider}</dd>
+              <dt>params 键</dt>
+              <dd className="mono">{(report.param_keys ?? []).join(', ')}</dd>
+            </>
+          )}
+          <dt>上传耗时</dt>
+          <dd>{report.upload_ms} ms</dd>
+          <dt>等待完成</dt>
+          <dd>{report.wait_ms} ms</dd>
+          <dt>总耗时</dt>
+          <dd>{report.total_ms} ms</dd>
+          <dt>最终状态</dt>
+          <dd className="mono">
+            {report.file?.phase ?? '—'} {report.file?.id ? `（${report.file.id}）` : ''}
+          </dd>
+        </dl>
+      )}
+    </section>
+  )
+}
+
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refresh, setRefresh] = useState(0)
 
   const loadHealth = useCallback(() => {
     apiGet<Health>('health')
@@ -603,9 +740,10 @@ export default function App() {
         )}
       </section>
 
-      <BindCard onChange={loadHealth} />
+      <BindCard onChange={() => { loadHealth(); setRefresh((n) => n + 1) }} />
       <GatewayCard />
       <RangeCard />
+      <UploadCard refresh={refresh} />
       <ACLCard />
       <ProbesCard />
     </main>

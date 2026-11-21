@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,7 +18,14 @@ import (
 func StartGateway(t *testing.T, handler func(req string, data map[string]any) (code int, dataJSON string)) (socketPath string) {
 	t.Helper()
 
-	socketPath = filepath.Join(t.TempDir(), "gw.sock")
+	// A Unix socket path must fit in sun_path (~104 bytes on macOS). t.TempDir
+	// embeds the test name under a long TMPDIR, so use a short directory.
+	dir, err := os.MkdirTemp("", "fngw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socketPath = filepath.Join(dir, "gw.sock")
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
