@@ -1,0 +1,124 @@
+name: build-fpk
+
+# Build the x86 fnOS package when a release tag is pushed: 1.0.0 or v1.0.0
+# (fnpack also accepts an optional build number: 1.0.0-1).
+on:
+  push:
+    tags:
+      - '[0-9]*'
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+env:
+  FNPACK_VERSION: 1.3.3
+  FNPACK_SHA256: 1464d6aa9b995ebecb263c5ec60f0f4a7cbf45e0ce887836755fd65abd647d1e
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version from tag
+        id: version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]]; then
+            echo "::error::tag '${GITHUB_REF_NAME}' is not a release version (expected 1.2.3, v1.2.3, or 1.2.3-1)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building PikPak $version"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install fnpack
+        run: |
+          set -euo pipefail
+          mkdir -p tools/bin
+          curl -fsSL -o tools/bin/fnpack \
+            "https://static2.fnnas.com/fnpack/fnpack-${FNPACK_VERSION}-linux-amd64"
+          echo "${FNPACK_SHA256}  tools/bin/fnpack" | sha256sum -c -
+          chmod +x tools/bin/fnpack
+          tools/bin/fnpack --help > /dev/null
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Write developer certificate
+        # secrets are not available in `if`; expose presence through env
+        if: env.HAS_DEVELOPER_CERT == 'true'
+        env:
+          HAS_DEVELOPER_CERT: ${{ secrets.FN_DEVELOPER_KEY != '' && secrets.FN_DEVELOPER_CERT != '' }}
+          KEY: ${{ secrets.FN_DEVELOPER_KEY }}
+          CERT: ${{ secrets.FN_DEVELOPER_CERT }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEY" > "$RUNNER_TEMP/developer.key"
+          printf '%s' "$CERT" > "$RUNNER_TEMP/developer.crt"
+          chmod 600 "$RUNNER_TEMP/developer.key" "$RUNNER_TEMP/developer.crt"
+          {
+            echo "FN_KEY=$RUNNER_TEMP/developer.key"
+            echo "FN_CERT=$RUNNER_TEMP/developer.crt"
+          } >> "$GITHUB_ENV"
+
+      - name: Build package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: make fpk VERSION="$VERSION"
+
+      - name: Verify package carries the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          pkg="dist/pikpak-${VERSION}-x86.fpk"
+          test -f "$pkg"
+
+          mkdir -p "$RUNNER_TEMP/pkg"
+          tar xzf "$pkg" -C "$RUNNER_TEMP/pkg"
+
+          # fnpack rewrites the manifest into aligned "key = value" lines
+          grep -Eq "^version[[:space:]]*=[[:space:]]*${VERSION}$" "$RUNNER_TEMP/pkg/manifest"
+          grep -Eq "^platform[[:space:]]*=[[:space:]]*x86$" "$RUNNER_TEMP/pkg/manifest"
+          grep -Eq "^checksum[[:space:]]*=[[:space:]]*[0-9a-f]+$" "$RUNNER_TEMP/pkg/manifest"
+
+          tar xzf "$RUNNER_TEMP/pkg/app.tgz" -C "$RUNNER_TEMP/pkg"
+          test -x "$RUNNER_TEMP/pkg/pikpak"
+          reported="$("$RUNNER_TEMP/pkg/pikpak" --version)"
+          test "$reported" = "$VERSION"
+          echo "package=$pkg binary=$reported"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pikpak-${{ steps.version.outputs.version }}-x86
+          path: dist/pikpak-${{ steps.version.outputs.version }}-x86.fpk
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PikPak ${{ steps.version.outputs.version }}
+          files: dist/pikpak-${{ steps.version.outputs.version }}-x86.fpk
+          generate_release_notes: true
+          body: |
+            PikPak for fnOS ${{ steps.version.outputs.version }} (x86 / linux-amd64).
+
+            安装：应用中心 → 手动安装 → 选择 `pikpak-${{ steps.version.outputs.version }}-x86.fpk`。
+            详见 [`docs/install-m0.md`](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/install-m0.md)。
+
+            包内版本号：manifest `version` 与二进制 `--version` 均为 `${{ steps.version.outputs.version }}`。
+            ${{ secrets.FN_DEVELOPER_KEY == '' && '⚠️ 本包未签名（仓库未配置 FN_DEVELOPER_KEY / FN_DEVELOPER_CERT），仅适合本地调试。' || '✅ 本包已用开发者证书签名。' }}

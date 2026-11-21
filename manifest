@@ -1,0 +1,15 @@
+appname=pikpak
+version=0.1.0
+display_name=PikPak
+desc=PikPak 文件、离线下载与播放（M0 验证版）。
+source=thirdparty
+platform=x86
+maintainer=popeye
+maintainer_url=https://github.com/
+os_min_version=1.2.0401
+desktop_uidir=ui
+desktop_applaunchname=pikpak.main
+ctl_stop=true
+checkport=false
+micro_app=true
+disable_authorization_path=false

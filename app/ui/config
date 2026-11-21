@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "pikpak.main": {
+      "title": "PikPak",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/pikpak",
+      "gatewaySocket": "app.sock",
+      "url": "/app/pikpak",
+      "allUsers": true
+    }
+  }
+}

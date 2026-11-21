@@ -1,0 +1,27 @@
+const basePath = (() => {
+  const path = window.location.pathname
+    .replace(/\/index\.html$/, '')
+    .replace(/\/+$/, '')
+  return path
+})()
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${basePath}/api/${path.replace(/^\/+/, '')}`, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    ...init,
+  })
+  const text = await res.text()
+  const body = text ? JSON.parse(text) : undefined
+  if (!res.ok) {
+    const message = body?.error?.message ?? body?.error ?? res.statusText
+    throw new Error(`${res.status}: ${message}`)
+  }
+  return body as T
+}
+
+export const apiGet = <T,>(path: string) => request<T>(path)
+export const apiPost = <T,>(path: string, data: unknown) =>
+  request<T>(path, { method: 'POST', body: JSON.stringify(data ?? {}) })
+
+export { basePath }

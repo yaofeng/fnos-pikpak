@@ -1,0 +1,10 @@
+target/
+dist/
+tools/bin/
+internal/webdist/dist/assets/
+web/node_modules/
+*.fpk
+.DS_Store
+.superpowers/
+app/pikpak
+.data/
