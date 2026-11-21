@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -208,6 +209,81 @@ func TestBurstProbePassesWhenAllSucceed(t *testing.T) {
 	res := probeBurst(context.Background(), newProbeClient(t, srv.URL))
 	if res.Status != probe.Pass {
 		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+}
+
+func TestOfflineProbeFallsBackToTheNextCandidate(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+	var deleted int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drive/v1/files":
+			mu.Lock()
+			posts++
+			n := posts
+			mu.Unlock()
+			if n == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":"task_support_save_snapshot","error_code":3}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"task":{"id":"t2","phase":"PHASE_TYPE_PENDING","file_id":"f2"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/tasks/t2":
+			_, _ = io.WriteString(w, `{"id":"t2","phase":"PHASE_TYPE_COMPLETE","progress":100}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/drive/v1/tasks":
+			mu.Lock()
+			deleted++
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	res := probeOffline(context.Background(), newProbeClient(t, srv.URL))
+	if res.Status != probe.Pass {
+		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+	if posts < 2 {
+		t.Fatalf("posts = %d, want a retry with another URL", posts)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (only the created task)", deleted)
+	}
+}
+
+func TestFreshProbeFileIsUniqueAndUnchangedByGCID(t *testing.T) {
+	t.Setenv("TRIM_PKGTMP", t.TempDir())
+
+	first, err := ensureFreshProbeFile()
+	if err != nil {
+		t.Fatalf("ensureFreshProbeFile: %v", err)
+	}
+	second, err := ensureFreshProbeFile()
+	if err != nil {
+		t.Fatalf("ensureFreshProbeFile: %v", err)
+	}
+	if first == second {
+		t.Fatalf("both runs wrote %s; a fresh upload needs a new name", first)
+	}
+	st, err := os.Stat(first)
+	if err != nil || st.Size() != uploadProbeSize {
+		t.Fatalf("size = %v (err %v), want %d", st, err, uploadProbeSize)
+	}
+	g1, err := pikpak.GCIDFile(first)
+	if err != nil {
+		t.Fatalf("GCIDFile: %v", err)
+	}
+	g2, err := pikpak.GCIDFile(second)
+	if err != nil {
+		t.Fatalf("GCIDFile: %v", err)
+	}
+	if g1 == g2 {
+		t.Fatal("both fresh files share a GCID, so PikPak would answer with an instant upload")
 	}
 }
 

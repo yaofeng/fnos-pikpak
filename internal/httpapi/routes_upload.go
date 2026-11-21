@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"os"
@@ -63,6 +64,46 @@ func ensureUploadProbeFile() (string, error) {
 	return path, nil
 }
 
+// ensureFreshProbeFile writes a 20 MiB payload with a GCID no account has seen,
+// so RequestUpload has to accept a real transfer instead of answering with an
+// instant upload. The unique name also keeps each run a separate file.
+func ensureFreshProbeFile() (string, error) {
+	dir := uploadProbeDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, "pikpak-probe-20m-*.bin")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	head := make([]byte, 64<<10)
+	if _, err := rand.Read(head); err != nil {
+		return "", err
+	}
+	if _, err := f.Write(head); err != nil {
+		return "", err
+	}
+
+	block := make([]byte, 64<<10)
+	for i := range block {
+		block[i] = byte('a' + i%26)
+	}
+	written := int64(len(head))
+	for written < uploadProbeSize {
+		n := int64(len(block))
+		if remaining := uploadProbeSize - written; remaining < n {
+			n = remaining
+		}
+		if _, err := f.Write(block[:n]); err != nil {
+			return "", err
+		}
+		written += n
+	}
+	return f.Name(), nil
+}
+
 func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/upload/probe/config", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
@@ -83,6 +124,9 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 		var body struct {
 			LocalPath string `json:"local_path"`
 			ParentID  string `json:"parent_id"`
+			// Fresh forces a payload with an unseen GCID, so the upload goes
+			// through the provider instead of being deduplicated.
+			Fresh bool `json:"fresh"`
 		}
 		if err := decodeJSON(w, r, &body); err != nil {
 			return
@@ -94,7 +138,13 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 
 		path := filepath.Clean(body.LocalPath)
 		if path == uploadProbePath() {
-			p, err := ensureUploadProbeFile()
+			var p string
+			var err error
+			if body.Fresh {
+				p, err = ensureFreshProbeFile()
+			} else {
+				p, err = ensureUploadProbeFile()
+			}
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "无法生成探针文件")
 				return
@@ -212,6 +262,19 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 			"upload_ms":  uploadMS,
 			"wait_ms":    waitMS,
 			"total_ms":   time.Since(started).Milliseconds(),
+		}
+		if body.Fresh {
+			// A fresh payload exists only for this probe; purge it so repeated
+			// runs do not fill the account.
+			resp["fresh"] = true
+			resp["deleted"] = false
+			if file != nil && file.ID != "" {
+				if err := client.DeletePermanently(ctx, []string{file.ID}); err != nil {
+					resp["delete_error"] = probe.Redact(err.Error())
+				} else {
+					resp["deleted"] = true
+				}
+			}
 		}
 		if ticket.Resumable != nil {
 			resp["provider"] = ticket.Resumable.Provider

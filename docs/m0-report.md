@@ -13,7 +13,7 @@
 |---|---|
 | fnOS 版本 | |
 | 设备型号 / CPU | x86 |
-| 应用版本（服务状态卡片） | 0.1.3 |
+| 应用版本（服务状态卡片） | 0.1.4 |
 | 安装是否被签名拦截 | 否 / 是（原文：） |
 | 测试账号是否 VIP | |
 | 测试目录（授权目录） | |
@@ -135,3 +135,19 @@
 | `pikpak.offline` | 创建离线任务 → 轮询到完成 → 删除任务和文件 | 完成且清理成功 → pass；30 秒未完成 → warn；任务报错 → fail |
 
 离线探针会在网盘根目录临时创建一个约 1 KB 的文件（来源 `https://example.com/index.html`），任务删除时 `delete_files=true` 一并清掉；报告里 `cleaned` 字段说明清理结果。
+
+## 本机验证记录（2026-11-22，绑定真实账号）
+
+`make dev` 绑定账号后跑 `POST /api/probes/run` 的结果：
+
+| 探针 | 结果 | 证据 |
+|---|---|---|
+| `pikpak.pages` | pass | 1 页 4 项，`next_page_token` 正常终止 |
+| `pikpak.burst` | pass | 12 个并发请求全部 200（1.2–3.0 s） |
+| `pikpak.offline` | warn | `https://example.com/index.html` 被拒（400 `task_support_save_snapshot`）；`https://speed.hetzner.de/1MB.bin` 创建成功、状态 `PHASE_TYPE_RUNNING`，60 秒内未完成；任务与文件清理成功 |
+| 项 8 REST 上传 | **pass** | 秒传（`instant=true`）与真实上传两种路径都通过。`fresh=true` 强制新内容：`provider=PROVIDER_ALIYUN`，20 MiB，上传 6.9 s + 等待完成 1.7 s，最终 `PHASE_TYPE_COMPLETE`，随后永久删除（`deleted=true`） |
+
+观察：
+
+- 离线任务长时间停在 `PHASE_TYPE_RUNNING`。测试账号为 `novip`，且配额已用 6.09 / 6.44 GB（约 94.6%），暂不能判断是排队、限速还是空间不足；v1 的离线下载功能只负责创建任务和展示状态，不依赖秒级完成。
+- `pikpak.order` / `pikpak.search` 的 warn 是已定案的结论（服务端不支持），不是缺陷。

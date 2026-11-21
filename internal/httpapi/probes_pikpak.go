@@ -200,52 +200,94 @@ func probeBurst(ctx context.Context, c *pikpak.Client) probe.Result {
 	}
 }
 
-// offlineProbeURL is a tiny, stable public page. The probe deletes the task
-// and the downloaded file afterwards, so it leaves nothing behind.
-const offlineProbeURL = "https://example.com/index.html"
+// offlineCandidates are small, direct downloads. The device rejected
+// https://example.com/index.html with task_support_save_snapshot, so the probe
+// keeps it as evidence and falls back to a real binary and a raw file.
+var offlineCandidates = []string{
+	"https://example.com/index.html",
+	"https://speed.hetzner.de/1MB.bin",
+	"https://raw.githubusercontent.com/Quan666/PikPakAPI/main/README.md",
+}
+
+// offlineAttempt records what one candidate URL did.
+type offlineAttempt struct {
+	URL     string `json:"url"`
+	Outcome string `json:"outcome"` // rejected | complete | error | timeout | no_task_id
+	Phase   string `json:"phase,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+	Waited  int64  `json:"waited_ms"`
+	Cleaned bool   `json:"cleaned,omitempty"`
+}
 
 func probeOffline(ctx context.Context, c *pikpak.Client) probe.Result {
-	task, err := c.CreateOffline(ctx, offlineProbeURL, "")
-	if err != nil {
-		return probe.Result{Status: probe.Fail, Detail: "创建离线任务失败：" + probe.Redact(err.Error())}
-	}
-	if task.ID == "" {
-		return probe.Result{Status: probe.Fail, Detail: "创建离线任务成功但未返回任务 ID"}
-	}
+	attempts := make([]offlineAttempt, 0, len(offlineCandidates))
 
-	start := time.Now()
-	final, waitErr := c.WaitTask(ctx, task.ID, 30*time.Second, time.Second)
-	elapsed := time.Since(start).Milliseconds()
-	cleanupErr := c.DeleteTask(ctx, task.ID, true)
-
-	data := map[string]any{
-		"task_id":   task.ID,
-		"phase":     final.Phase,
-		"progress":  final.Progress,
-		"file_name": final.FileName,
-		"file_size": final.FileSize,
-		"waited_ms": elapsed,
-		"cleaned":   cleanupErr == nil,
-	}
-	if cleanupErr != nil {
-		data["cleanup_error"] = probe.Redact(cleanupErr.Error())
-	}
-
-	detail := fmt.Sprintf("离线任务 %s，等待 %d ms", final.Phase, elapsed)
-	if cleanupErr != nil {
-		detail += "；清理失败，请在任务列表删除本次探针任务"
-	}
-	switch {
-	case waitErr == pikpak.ErrTaskTimeout:
-		return probe.Result{Status: probe.Warn, Detail: detail + "；30 秒内未完成", Data: data}
-	case waitErr != nil:
-		return probe.Result{Status: probe.Fail, Detail: "轮询离线任务失败：" + probe.Redact(waitErr.Error()), Data: data}
-	case final.Phase == "PHASE_TYPE_ERROR":
-		msg := final.Message
-		if msg == "" {
-			msg = "无错误信息"
+	for _, link := range offlineCandidates {
+		attempt := offlineAttempt{URL: link}
+		task, err := c.CreateOffline(ctx, link, "")
+		if err != nil {
+			attempt.Outcome = "rejected"
+			attempt.Detail = probe.Redact(err.Error())
+			attempts = append(attempts, attempt)
+			continue
 		}
-		return probe.Result{Status: probe.Fail, Detail: "离线任务失败：" + msg, Data: data}
+		if task.ID == "" {
+			attempt.Outcome = "no_task_id"
+			attempts = append(attempts, attempt)
+			continue
+		}
+
+		start := time.Now()
+		final, waitErr := c.WaitTask(ctx, task.ID, 60*time.Second, time.Second)
+		attempt.Waited = time.Since(start).Milliseconds()
+		attempt.Phase = final.Phase
+		cleanupErr := c.DeleteTask(ctx, task.ID, true)
+		attempt.Cleaned = cleanupErr == nil
+
+		switch {
+		case waitErr == pikpak.ErrTaskTimeout:
+			attempt.Outcome = "timeout"
+		case waitErr != nil:
+			attempt.Outcome = "error"
+			attempt.Detail = probe.Redact(waitErr.Error())
+		case final.Phase == "PHASE_TYPE_ERROR":
+			attempt.Outcome = "error"
+			attempt.Detail = final.Message
+		default:
+			attempt.Outcome = "complete"
+		}
+		attempts = append(attempts, attempt)
+
+		if attempt.Outcome == "complete" {
+			detail := fmt.Sprintf("离线任务完成（%s），等待 %d ms", link, attempt.Waited)
+			if !attempt.Cleaned {
+				detail += "；清理失败，请在任务列表删除本次探针任务"
+			}
+			return probe.Result{Status: probe.Pass, Detail: detail, Data: map[string]any{"results": attempts}}
+		}
+		if attempt.Outcome == "timeout" {
+			// A created task is evidence enough; another URL would only add
+			// more waiting.
+			break
+		}
 	}
-	return probe.Result{Status: probe.Pass, Detail: detail, Data: data}
+
+	data := map[string]any{"results": attempts}
+
+	// Nothing completed: report why, most useful candidate first.
+	for _, a := range attempts {
+		if a.Outcome == "timeout" {
+			return probe.Result{
+				Status: probe.Warn,
+				Detail: "离线任务已创建但 60 秒内未完成：" + a.URL,
+				Data:   data,
+			}
+		}
+	}
+	last := attempts[len(attempts)-1]
+	return probe.Result{
+		Status: probe.Fail,
+		Detail: fmt.Sprintf("%d 个候选 URL 都没能创建完成的离线任务，最后一个：%s", len(attempts), last.Detail),
+		Data:   data,
+	}
 }

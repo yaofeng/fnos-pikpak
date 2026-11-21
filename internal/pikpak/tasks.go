@@ -95,6 +95,15 @@ func (c *Client) DeleteTask(ctx context.Context, id string, deleteFiles bool) er
 	return c.do(ctx, http.MethodDelete, c.BaseDrive+"/drive/v1/tasks?"+q.Encode(), nil, nil)
 }
 
+// DeletePermanently purges files, skipping the trash. v1 needs it for empty
+// trash and for cleaning up after upload probes.
+func (c *Client) DeletePermanently(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/files:batchDelete", map[string]any{"ids": ids}, nil)
+}
+
 // WaitTask polls until the task reaches a terminal phase, the timeout expires,
 // or a request fails. It returns the last task it saw.
 func (c *Client) WaitTask(ctx context.Context, id string, timeout, interval time.Duration) (Task, error) {
