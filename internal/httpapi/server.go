@@ -46,6 +46,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerFSRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
+	registerStreamRoutes(inner)
 
 	inner.Handle("/", spaHandler())
 

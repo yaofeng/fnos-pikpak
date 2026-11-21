@@ -139,6 +139,112 @@ function GatewayCard() {
   )
 }
 
+type RangeRow = {
+  label: string
+  status: number | string
+  contentRange: string
+  ttfb: string
+  total: string
+  bytes: number | string
+}
+
+function RangeCard() {
+  const [rows, setRows] = useState<RangeRow[]>([])
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function run() {
+    setRunning(true)
+    setError(null)
+    const size = 64 << 20
+    const cases = [
+      { label: '开头 1 KiB', range: 'bytes=0-1023' },
+      { label: '中间 1 MiB', range: `bytes=${size / 2}-${size / 2 + (1 << 20) - 1}` },
+      { label: '尾部 1 KiB', range: `bytes=${size - 1024}-${size - 1}` },
+      { label: '超出 EOF', range: `bytes=${size + 1024}-${size + 2048}` },
+    ]
+    const out: RangeRow[] = []
+
+    try {
+      for (const c of cases) {
+        const t0 = performance.now()
+        const res = await fetch(`api/stream-probe?size=${size}&t=${Date.now()}`, {
+          headers: { Range: c.range },
+        })
+        const ttfb = performance.now() - t0
+        const body = await res.arrayBuffer()
+        const total = performance.now() - t0
+        out.push({
+          label: c.label,
+          status: res.status,
+          contentRange: res.headers.get('Content-Range') ?? '—',
+          ttfb: ttfb.toFixed(0),
+          total: total.toFixed(0),
+          bytes: body.byteLength,
+        })
+      }
+
+      const t0 = performance.now()
+      const head = await fetch(`api/stream-probe?size=${size}&t=${Date.now()}`, { method: 'HEAD' })
+      const headTTFB = performance.now() - t0
+      out.push({
+        label: 'HEAD',
+        status: head.status,
+        contentRange: head.headers.get('Content-Range') ?? '—',
+        ttfb: headTTFB.toFixed(0),
+        total: (performance.now() - t0).toFixed(0),
+        bytes: head.headers.get('Content-Length') ?? '—',
+      })
+      setRows(out)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2>Range 探针</h2>
+        <button type="button" onClick={run} disabled={running}>
+          {running ? '测试中…' : '测试 64 MiB 文件'}
+        </button>
+      </div>
+      <p className="muted">
+        判断网关是否原样转发 206/Range、是否缓冲响应。首字节耗时明显接近总耗时说明整段被缓冲。
+      </p>
+      {error && <p className="error">{error}</p>}
+      {rows.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>用例</th>
+              <th>状态</th>
+              <th>Content-Range</th>
+              <th>首字节 ms</th>
+              <th>总耗时 ms</th>
+              <th>字节</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label}>
+                <td>{r.label}</td>
+                <td>{r.status}</td>
+                <td className="mono">{r.contentRange}</td>
+                <td>{r.ttfb}</td>
+                <td>{r.total}</td>
+                <td>{r.bytes}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
 function ProbesCard() {
   const [results, setResults] = useState<ProbeResult[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -336,6 +442,7 @@ export default function App() {
       </section>
 
       <GatewayCard />
+      <RangeCard />
       <ACLCard />
       <ProbesCard />
     </main>
