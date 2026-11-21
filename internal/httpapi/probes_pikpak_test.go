@@ -23,8 +23,8 @@ func TestPikPakProbesSkipWhenUnbound(t *testing.T) {
 	RegisterPikPakProbes(reg, deps.Sessions)
 
 	results := reg.Run(probe.WithUID(context.Background(), 1000))
-	if len(results) != 5 {
-		t.Fatalf("results = %d, want 5", len(results))
+	if len(results) != 8 {
+		t.Fatalf("results = %d, want 8", len(results))
 	}
 	for _, r := range results {
 		if r.Status != probe.Skip {
@@ -115,6 +115,102 @@ func TestOrderProbeReportsEveryCandidate(t *testing.T) {
 	}
 }
 
+func TestOfflineProbeCreatesPollsAndCleansUp(t *testing.T) {
+	var mu sync.Mutex
+	var deleted bool
+	var gotCreate map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drive/v1/files":
+			_ = json.NewDecoder(r.Body).Decode(&gotCreate)
+			_, _ = io.WriteString(w, `{"task":{"id":"t1","type":"offline","phase":"PHASE_TYPE_PENDING",
+				"file_id":"f1","file_name":"index.html","file_size":"12"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/tasks/t1":
+			_, _ = io.WriteString(w, `{"id":"t1","phase":"PHASE_TYPE_COMPLETE","progress":100,
+				"file_id":"f1","file_name":"index.html","file_size":"12"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/drive/v1/tasks":
+			mu.Lock()
+			deleted = r.URL.Query().Get("delete_files") == "true"
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newProbeClient(t, srv.URL)
+	res := probeOffline(context.Background(), c)
+
+	if res.Status != probe.Pass {
+		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+	if gotCreate["upload_type"] != "UPLOAD_TYPE_URL" {
+		t.Fatalf("create body = %v", gotCreate)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !deleted {
+		t.Fatal("the probe left its offline task behind")
+	}
+}
+
+func TestOfflineProbeFailsWhenCreateIsRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_argument","error_code":3,"error_description":"bad url"}`)
+	}))
+	defer srv.Close()
+
+	res := probeOffline(context.Background(), newProbeClient(t, srv.URL))
+	if res.Status != probe.Fail {
+		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+	if !strings.Contains(res.Detail, "invalid_argument") {
+		t.Fatalf("detail = %q", res.Detail)
+	}
+}
+
+func TestPagesProbePassesWhenWalkEnds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"files":[{"id":"f1"},{"id":"f2"}]}`)
+	}))
+	defer srv.Close()
+
+	res := probePages(context.Background(), newProbeClient(t, srv.URL))
+	if res.Status != probe.Pass {
+		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+}
+
+func TestPagesProbeFailsOnTokenLoop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"files":[{"id":"f1"}],"next_page_token":"same"}`)
+	}))
+	defer srv.Close()
+
+	res := probePages(context.Background(), newProbeClient(t, srv.URL))
+	if res.Status != probe.Fail {
+		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+	if !strings.Contains(res.Detail, "循环") {
+		t.Fatalf("detail = %q", res.Detail)
+	}
+}
+
+func TestBurstProbePassesWhenAllSucceed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"files":[]}`)
+	}))
+	defer srv.Close()
+
+	res := probeBurst(context.Background(), newProbeClient(t, srv.URL))
+	if res.Status != probe.Pass {
+		t.Fatalf("status = %s (%s)", res.Status, res.Detail)
+	}
+}
+
 // newProbeClient builds a client that talks to url with a static token, for
 // exercising the probe functions without a session store.
 func newProbeClient(t *testing.T, url string) *pikpak.Client {
@@ -131,18 +227,24 @@ func (s staticToken) Token(context.Context) (string, error) { return string(s), 
 func TestPikPakProbesRunWhenBound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/drive/v1/about":
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drive/v1/files":
+			_, _ = io.WriteString(w, `{"task":{"id":"t1","phase":"PHASE_TYPE_PENDING","file_id":"f1","file_size":"12"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/tasks/t1":
+			_, _ = io.WriteString(w, `{"id":"t1","phase":"PHASE_TYPE_COMPLETE","progress":100,"file_id":"f1","file_size":"12"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/drive/v1/tasks":
+			_, _ = io.WriteString(w, `{}`)
+		case r.URL.Path == "/drive/v1/about":
 			_, _ = io.WriteString(w, `{"quota":{"limit":"1000","usage":"250"},"expires_at":""}`)
-		case "/drive/v1/privilege/vip":
+		case r.URL.Path == "/drive/v1/privilege/vip":
 			_, _ = io.WriteString(w, `{"data":{"type":"platinum","expire":"2027-01-01T00:00:00Z"}}`)
-		case "/drive/v1/search":
+		case r.URL.Path == "/drive/v1/search":
 			// A filtering endpoint returns nothing for the probe query.
 			_, _ = io.WriteString(w, `{"files":[]}`)
-		case "/drive/v1/files:search":
+		case r.URL.Path == "/drive/v1/files:search":
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"error":"not_found"}`)
-		case "/drive/v1/files":
+		case r.URL.Path == "/drive/v1/files":
 			_, _ = io.WriteString(w, `{"files":[{"id":"f1","name":"movie.mkv","kind":"drive#file","size":"42"}]}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -172,6 +274,7 @@ func TestPikPakProbesRunWhenBound(t *testing.T) {
 	for name, want := range map[string]probe.Status{
 		"pikpak.list": probe.Pass, "pikpak.quota": probe.Pass,
 		"pikpak.vip": probe.Pass, "pikpak.order": probe.Pass, "pikpak.search": probe.Pass,
+		"pikpak.pages": probe.Pass, "pikpak.burst": probe.Pass, "pikpak.offline": probe.Pass,
 	} {
 		r, ok := byName[name]
 		if !ok {

@@ -1,5 +1,5 @@
 GO ?= go
-VERSION ?= 0.1.2
+VERSION ?= 0.1.3
 LDFLAGS := -s -w -X fnos-pikpak/internal/version.Version=$(VERSION)
 
 # Signing: fnpack needs a developer key/cert to produce an installable signed

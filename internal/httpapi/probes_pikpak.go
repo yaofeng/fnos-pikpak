@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
@@ -21,6 +22,9 @@ func RegisterPikPakProbes(reg *probe.Registry, sessions *pikpak.SessionStore) {
 	reg.Add(&pikPakProbe{name: "pikpak.vip", sessions: sessions, run: probeVIP})
 	reg.Add(&pikPakProbe{name: "pikpak.order", sessions: sessions, run: probeOrder})
 	reg.Add(&pikPakProbe{name: "pikpak.search", sessions: sessions, run: probeSearch})
+	reg.Add(&pikPakProbe{name: "pikpak.pages", sessions: sessions, run: probePages})
+	reg.Add(&pikPakProbe{name: "pikpak.burst", sessions: sessions, run: probeBurst})
+	reg.Add(&pikPakProbe{name: "pikpak.offline", sessions: sessions, run: probeOffline})
 }
 
 type pikPakProbe struct {
@@ -143,4 +147,105 @@ func probeSearch(ctx context.Context, c *pikpak.Client) probe.Result {
 		Detail: "没有候选真正过滤结果（q 被忽略）；搜索降级为目录内过滤",
 		Data:   data,
 	}
+}
+
+func probePages(ctx context.Context, c *pikpak.Client) probe.Result {
+	walk := c.WalkPages(ctx, 2, 5)
+	data := map[string]any{"walk": walk}
+	switch walk.Stopped {
+	case "error":
+		return probe.Result{Status: probe.Fail, Detail: "分页请求失败：" + walk.Err, Data: data}
+	case "repeated_token":
+		return probe.Result{
+			Status: probe.Fail,
+			Detail: fmt.Sprintf("next_page_token 循环（%d 页后重复），按 token 翻页会死循环", walk.Pages),
+			Data:   data,
+		}
+	case "max_pages":
+		return probe.Result{
+			Status: probe.Warn,
+			Detail: fmt.Sprintf("%d 页后仍有下一页，未确认分页能正常终止", walk.Pages),
+			Data:   data,
+		}
+	}
+	if walk.DuplicateIDs > 0 {
+		return probe.Result{
+			Status: probe.Warn,
+			Detail: fmt.Sprintf("%d 页 %d 项，存在 %d 个重复条目", walk.Pages, walk.Items, walk.DuplicateIDs),
+			Data:   data,
+		}
+	}
+	return probe.Result{
+		Status: probe.Pass,
+		Detail: fmt.Sprintf("%d 页 %d 项，token 正常终止", walk.Pages, walk.Items),
+		Data:   data,
+	}
+}
+
+func probeBurst(ctx context.Context, c *pikpak.Client) probe.Result {
+	const requests = 12
+	res := c.Burst(ctx, requests)
+	data := map[string]any{"burst": res}
+	if res.Failed > 0 {
+		detail := fmt.Sprintf("%d 个并发请求中 %d 个失败", res.Requests, res.Failed)
+		if res.Err != "" {
+			detail += "：" + res.Err
+		}
+		return probe.Result{Status: probe.Warn, Detail: detail, Data: data}
+	}
+	return probe.Result{
+		Status: probe.Pass,
+		Detail: fmt.Sprintf("%d 个并发请求全部成功（%d ms）", res.Requests, res.ElapsedMS),
+		Data:   data,
+	}
+}
+
+// offlineProbeURL is a tiny, stable public page. The probe deletes the task
+// and the downloaded file afterwards, so it leaves nothing behind.
+const offlineProbeURL = "https://example.com/index.html"
+
+func probeOffline(ctx context.Context, c *pikpak.Client) probe.Result {
+	task, err := c.CreateOffline(ctx, offlineProbeURL, "")
+	if err != nil {
+		return probe.Result{Status: probe.Fail, Detail: "创建离线任务失败：" + probe.Redact(err.Error())}
+	}
+	if task.ID == "" {
+		return probe.Result{Status: probe.Fail, Detail: "创建离线任务成功但未返回任务 ID"}
+	}
+
+	start := time.Now()
+	final, waitErr := c.WaitTask(ctx, task.ID, 30*time.Second, time.Second)
+	elapsed := time.Since(start).Milliseconds()
+	cleanupErr := c.DeleteTask(ctx, task.ID, true)
+
+	data := map[string]any{
+		"task_id":   task.ID,
+		"phase":     final.Phase,
+		"progress":  final.Progress,
+		"file_name": final.FileName,
+		"file_size": final.FileSize,
+		"waited_ms": elapsed,
+		"cleaned":   cleanupErr == nil,
+	}
+	if cleanupErr != nil {
+		data["cleanup_error"] = probe.Redact(cleanupErr.Error())
+	}
+
+	detail := fmt.Sprintf("离线任务 %s，等待 %d ms", final.Phase, elapsed)
+	if cleanupErr != nil {
+		detail += "；清理失败，请在任务列表删除本次探针任务"
+	}
+	switch {
+	case waitErr == pikpak.ErrTaskTimeout:
+		return probe.Result{Status: probe.Warn, Detail: detail + "；30 秒内未完成", Data: data}
+	case waitErr != nil:
+		return probe.Result{Status: probe.Fail, Detail: "轮询离线任务失败：" + probe.Redact(waitErr.Error()), Data: data}
+	case final.Phase == "PHASE_TYPE_ERROR":
+		msg := final.Message
+		if msg == "" {
+			msg = "无错误信息"
+		}
+		return probe.Result{Status: probe.Fail, Detail: "离线任务失败：" + msg, Data: data}
+	}
+	return probe.Result{Status: probe.Pass, Detail: detail, Data: data}
 }
