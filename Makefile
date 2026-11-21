@@ -1,5 +1,5 @@
 GO ?= go
-VERSION ?= 0.1.0-m0
+VERSION ?= 0.1.0
 LDFLAGS := -s -w -X fnos-pikpak/internal/version.Version=$(VERSION)
 
 .PHONY: build build-linux test genicon fpk
@@ -9,6 +9,7 @@ build:
 
 build-linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o target/pikpak ./cmd/pikpak
+	cp target/pikpak app/pikpak
 
 test:
 	$(GO) test ./...
@@ -17,7 +18,7 @@ genicon:
 	$(GO) run ./tools/genicon
 
 fpk: build-linux genicon
-	tools/bin/fnpack build
+	tools/bin/fnpack build --nosign
 	mkdir -p dist
 	f=$$(ls -t *.fpk 2>/dev/null | head -1); \
 	if [ -z "$$f" ]; then echo "fnpack produced no .fpk" >&2; exit 1; fi; \
