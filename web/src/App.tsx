@@ -34,6 +34,111 @@ function StatusTag({ status }: { status: ProbeResult['status'] }) {
   return <span className={`tag tag-${status}`}>{status}</span>
 }
 
+type GatewayInfo = {
+  path: string
+  raw_query: string
+  origin: string
+  referer: string
+  host: string
+  forwarded_headers: Record<string, number>
+  identity: { uid: number; username: string; is_admin: boolean }
+}
+
+function GatewayCard() {
+  const [info, setInfo] = useState<GatewayInfo | null>(null)
+  const [forged, setForged] = useState<{ header_count: number; duplicate_detected: boolean } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setError(null)
+    try {
+      setInfo(await apiGet<GatewayInfo>('gateway/info?probe=1'))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function testForged() {
+    setError(null)
+    try {
+      const res = await fetch(`api/gateway/forged?probe=${Date.now()}`, {
+        method: 'POST',
+        headers: { 'X-Trim-Userid': '99999' },
+      })
+      setForged(await res.json())
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2>网关信息</h2>
+        <div className="actions">
+          <button type="button" onClick={load}>
+            刷新
+          </button>
+          <button type="button" onClick={testForged}>
+            伪造身份头测试
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {info && (
+        <dl className="kv">
+          <dt>路径</dt>
+          <dd className="mono">{info.path}</dd>
+          <dt>查询串</dt>
+          <dd className="mono">{info.raw_query}</dd>
+          <dt>Origin</dt>
+          <dd className="mono">{info.origin || '（空）'}</dd>
+          <dt>Host</dt>
+          <dd className="mono">{info.host}</dd>
+          <dt>身份</dt>
+          <dd className="mono">
+            uid={info.identity.uid} user={info.identity.username || '（空）'} admin=
+            {String(info.identity.is_admin)}
+          </dd>
+        </dl>
+      )}
+
+      {info && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>请求头</th>
+              <th>出现次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(info.forwarded_headers).map(([name, count]) => (
+              <tr key={name}>
+                <td className="mono">{name}</td>
+                <td>{count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {forged && (
+        <p className={forged.duplicate_detected ? 'error' : 'ok'}>
+          X-Trim-Userid 出现 {forged.header_count} 次，
+          {forged.duplicate_detected
+            ? '网关保留了客户端伪造的副本（需要依赖重复头拒绝）。'
+            : '网关覆盖或剥离了客户端伪造的头。'}
+        </p>
+      )}
+    </section>
+  )
+}
+
 function ProbesCard() {
   const [results, setResults] = useState<ProbeResult[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -230,6 +335,7 @@ export default function App() {
         )}
       </section>
 
+      <GatewayCard />
       <ACLCard />
       <ProbesCard />
     </main>

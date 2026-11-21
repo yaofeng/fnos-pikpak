@@ -45,10 +45,17 @@ func NewMux(deps Deps) *http.ServeMux {
 	if deps.Fnos != nil {
 		registerFSRoutes(inner, deps)
 	}
+	registerGatewayRoutes(inner)
 
 	inner.Handle("/", spaHandler())
 
 	root := http.NewServeMux()
+	// The forged-header test must see duplicate identity headers, which the
+	// identity middleware rejects, so it is registered outside that middleware.
+	forged := forgedTest()
+	root.HandleFunc("POST /api/gateway/forged", forged)
+	root.HandleFunc("POST "+gatewayPrefix+"/api/gateway/forged", forged)
+
 	root.Handle("/", stripGatewayPrefix(gatewayPrefix, fnos.WithIdentity(deps.DevUID, inner)))
 	return root
 }
