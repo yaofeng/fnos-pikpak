@@ -807,6 +807,18 @@ GET https://api-drive.mypikpak.com/drive/v1/share
 
 响应包含 `pass_code_token`、分享状态、文件列表。密码错误时 `share_status` 为 `PASS_CODE_EMPTY` / `PASS_CODE_ERROR`，先用密码换 `pass_code_token` 再重试。
 
+实测还带分享元信息与创建者，视频收藏夹按它分组：
+
+```json
+{
+  "title": "分享标题",
+  "share_creator": { "name": "创建者昵称", "user_name": "..." },
+  "creator": { "name": "..." }
+}
+```
+
+`share_creator.name` 最常出现；为空时退回 `creator.name`，再退回 `share_creator.user_name`。三者都空则分组显示「未知分享」。
+
 ### 8.3 浏览分享目录 ◐
 
 ```http
@@ -820,6 +832,8 @@ GET https://api-drive.mypikpak.com/drive/v1/share/detail
   &page_token=<token>
   &filters={"phase":{"eq":"PHASE_TYPE_COMPLETE"},"trashed":{"eq":false}}
 ```
+
+带 `thumbnail_size=SIZE_LARGE` 时，条目里有 `thumbnail_link`（图片 CDN 地址，无鉴权头即可取）。分享缩略图同样由后端 `/api/thumb` 代理下载并缓存，浏览器只拿到本站地址。
 
 ### 8.4 分享文件下载链接 ◐
 
@@ -853,6 +867,8 @@ POST https://api-drive.mypikpak.com/drive/v1/share/restore
   "file_ids": ["<id1>", "<id2>"]
 }
 ```
+
+响应 `{"task_id": "..."}`，是异步任务：轮询 `GET /drive/v1/tasks/{task_id}` 等到 `phase == PHASE_TYPE_COMPLETE` 才完成。转存下来的文件**落在我的文件根目录**并保留原文件名，没有接口告诉你是哪一个；完整播放的做法是转存前后各取一次根目录快照，差集里按文件名挑出新增的那份。文件大时任务可能要几十秒，前端靠任务轮询展示「准备中…」。
 
 ### 8.6 我的分享 / 删除分享 / 转存历史 ◐
 
