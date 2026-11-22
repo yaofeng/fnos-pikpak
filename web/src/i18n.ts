@@ -18,7 +18,7 @@ const messages: Record<string, Entry> = {
     en: 'Your PikPak authorization expired. Link the account again to continue.',
   },
   'action.bind': { 'zh-CN': '绑定账号', en: 'Link account' },
-  'action.rebind': { 'zh-CN': '重新绑定', en: 'Link again' },
+  'action.rebind': { 'zh-CN': '重新登录', en: 'Sign in again' },
   'action.upload': { 'zh-CN': '上传', en: 'Upload' },
   'action.newFolder': { 'zh-CN': '新建文件夹', en: 'New folder' },
   'quota.used': { 'zh-CN': '已用', en: 'Used' },
