@@ -25,6 +25,8 @@ type filesResponse struct {
 }
 
 func registerFileRoutes(mux *http.ServeMux, deps Deps) {
+	registerFileOperationRoutes(mux, deps)
+
 	mux.HandleFunc("GET /api/files", func(w http.ResponseWriter, r *http.Request) {
 		client, ok := boundClient(w, r, deps)
 		if !ok {
