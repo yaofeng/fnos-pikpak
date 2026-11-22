@@ -442,6 +442,10 @@ button.link {
   color: var(--error);
 }
 
+.danger {
+  color: var(--error);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
