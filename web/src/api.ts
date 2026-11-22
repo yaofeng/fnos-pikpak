@@ -7,9 +7,9 @@ const basePath = (() => {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${basePath}/api/${path.replace(/^\/+/, '')}`, {
+    ...init,
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
   })
   const text = await res.text()
   const body = text ? JSON.parse(text) : undefined
@@ -23,5 +23,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const apiGet = <T,>(path: string) => request<T>(path)
 export const apiPost = <T,>(path: string, data: unknown) =>
   request<T>(path, { method: 'POST', body: JSON.stringify(data ?? {}) })
+export const apiPatch = <T,>(path: string, data: unknown) =>
+  request<T>(path, { method: 'PATCH', body: JSON.stringify(data ?? {}) })
+export const apiDelete = <T,>(path: string, data?: unknown) =>
+  request<T>(path, { method: 'DELETE', body: data === undefined ? undefined : JSON.stringify(data) })
 
 export { basePath }

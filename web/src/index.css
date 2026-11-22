@@ -249,7 +249,241 @@ button.link {
   font-family: inherit;
 }
 
-/* App shell */
+/* Files */
+.file-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.file-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.file-tools select,
+.file-tools input,
+.file-tools button {
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+}
+
+.file-tools .search {
+  min-width: 180px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.crumb {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.crumb.current {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+
+.crumb-sep {
+  color: var(--muted);
+}
+
+.file-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.file-table th,
+.file-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.file-table tbody tr {
+  cursor: default;
+}
+
+.file-table tbody tr:hover {
+  background: var(--bg);
+}
+
+.file-table tbody tr.selected {
+  background: rgba(27, 42, 74, 0.08);
+}
+
+:root[data-theme='dark'] .file-table tbody tr.selected {
+  background: rgba(138, 180, 248, 0.14);
+}
+
+.col-check {
+  width: 28px;
+}
+
+.col-size {
+  width: 110px;
+}
+
+.col-time {
+  width: 170px;
+}
+
+.file-icon {
+  margin-right: 8px;
+}
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 8px;
+  text-align: center;
+  background: var(--card);
+  cursor: default;
+}
+
+.tile.selected {
+  border-color: var(--accent);
+  background: rgba(27, 42, 74, 0.08);
+}
+
+.tile-icon {
+  font-size: 30px;
+}
+
+.tile-name {
+  margin-top: 6px;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.tile-meta {
+  margin-top: 2px;
+}
+
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 140px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-menu button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 5px;
+}
+
+.context-menu button:hover {
+  background: var(--bg);
+}
+
+.context-menu button.danger {
+  color: var(--error);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+}
+
+.modal {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  width: min(420px, 100%);
+}
+
+.dest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.sentinel {
+  height: 1px;
+}
+
+@media (max-width: 768px) {
+  .file-tools .search {
+    min-width: 120px;
+    flex: 1;
+  }
+
+  .col-time {
+    display: none;
+  }
+}
 .app {
   display: grid;
   grid-template-columns: 220px 1fr;
