@@ -168,6 +168,15 @@ func boundClient(w http.ResponseWriter, r *http.Request, deps Deps) (*pikpak.Cli
 }
 
 func writeUpstreamError(w http.ResponseWriter, err error) {
+	// Code 11 is PikPak's daily offline-task quota: an expected refusal, not a
+	// broken upstream, so the client gets 429 and can explain it.
+	var apiErr *pikpak.APIError
+	if errors.As(err, &apiErr) && (apiErr.Code == 11 || apiErr.Status == http.StatusTooManyRequests) {
+		if apiErr.Code == 11 {
+			writeError(w, http.StatusTooManyRequests, "daily_limit_reached", "离线任务每日额度已用完，请明天再试")
+			return
+		}
+	}
 	writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
 }
 

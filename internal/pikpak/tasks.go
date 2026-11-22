@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,15 +20,15 @@ var ErrTaskTimeout = errors.New("pikpak: task did not finish in time")
 
 // Task is one cloud-download task. FileSize arrives as a string.
 type Task struct {
-	ID       string
-	Type     string
-	Name     string
-	FileID   string
-	FileName string
-	FileSize int64
-	Phase    string
-	Progress int
-	Message  string
+	ID       string `json:"id"`
+	Type     string `json:"type,omitempty"`
+	Name     string `json:"name,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	FileName string `json:"file_name,omitempty"`
+	FileSize int64  `json:"file_size"`
+	Phase    string `json:"phase"`
+	Progress int    `json:"progress"`
+	Message  string `json:"message,omitempty"`
 }
 
 func (t *Task) UnmarshalJSON(b []byte) error {
@@ -80,6 +81,48 @@ func (c *Client) CreateOffline(ctx context.Context, link, parentID string) (Task
 	return raw.Task, nil
 }
 
+// TaskPage is one page of offline tasks.
+type TaskPage struct {
+	Items         []Task
+	NextPageToken string
+}
+
+// ListTasks reads one page of offline tasks. PikPak rejects every phase
+// filter encoding we tried (invalid_argument), so callers filter the page
+// themselves.
+func (c *Client) ListTasks(ctx context.Context, pageToken string) (TaskPage, error) {
+	u, err := url.Parse(c.BaseDrive + "/drive/v1/tasks")
+	if err != nil {
+		return TaskPage{}, err
+	}
+	q := u.Query()
+	q.Set("limit", "100")
+	if pageToken != "" {
+		q.Set("page_token", pageToken)
+	}
+	u.RawQuery = q.Encode()
+
+	var raw struct {
+		Tasks         []Task `json:"tasks"`
+		NextPageToken string `json:"next_page_token"`
+	}
+	if err := c.do(ctx, http.MethodGet, u.String(), nil, &raw); err != nil {
+		return TaskPage{}, err
+	}
+	return TaskPage{Items: raw.Tasks, NextPageToken: raw.NextPageToken}, nil
+}
+
+// RetryTask asks PikPak to run a failed offline task again.
+func (c *Client) RetryTask(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost,
+		c.BaseDrive+"/drive/v1/tasks/"+url.PathEscape(id)+"/retry", map[string]any{}, nil)
+}
+
+// ClearTasks removes every finished task from the list.
+func (c *Client) ClearTasks(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/tasks:clear", map[string]any{}, nil)
+}
+
 func (c *Client) GetTask(ctx context.Context, id string) (Task, error) {
 	var task Task
 	err := c.do(ctx, http.MethodGet, c.BaseDrive+"/drive/v1/tasks/"+url.PathEscape(id), nil, &task)
@@ -89,8 +132,17 @@ func (c *Client) GetTask(ctx context.Context, id string) (Task, error) {
 // DeleteTask removes the task; deleteFiles also drops the downloaded file so a
 // probe leaves nothing behind.
 func (c *Client) DeleteTask(ctx context.Context, id string, deleteFiles bool) error {
+	return c.DeleteTasks(ctx, []string{id}, deleteFiles)
+}
+
+// DeleteTasks removes several tasks in one request. PikPak takes the ids as a
+// comma-separated task_ids query parameter.
+func (c *Client) DeleteTasks(ctx context.Context, ids []string, deleteFiles bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
 	q := url.Values{}
-	q.Set("task_ids", id)
+	q.Set("task_ids", strings.Join(ids, ","))
 	q.Set("delete_files", strconv.FormatBool(deleteFiles))
 	return c.do(ctx, http.MethodDelete, c.BaseDrive+"/drive/v1/tasks?"+q.Encode(), nil, nil)
 }

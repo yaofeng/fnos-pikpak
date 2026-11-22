@@ -3,6 +3,7 @@ package pikpak
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -231,5 +232,93 @@ func TestBurstRunsConcurrentRequests(t *testing.T) {
 	}
 	if peak < 2 {
 		t.Fatalf("requests did not overlap: peak = %d", peak)
+	}
+}
+func TestListTasksSendsPageToken(t *testing.T) {
+	var gotQuery map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/drive/v1/tasks" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		gotQuery = map[string]string{}
+		for k := range r.URL.Query() {
+			gotQuery[k] = r.URL.Query().Get(k)
+		}
+		_, _ = io.WriteString(w, `{"tasks":[{"id":"t1","phase":"PHASE_TYPE_RUNNING","progress":42,
+			"file_name":"a.mkv","file_size":"99"}],"next_page_token":"n1"}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+	page, err := c.ListTasks(context.Background(), "t0")
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "t1" || page.Items[0].Progress != 42 || page.Items[0].FileSize != 99 {
+		t.Fatalf("page = %+v", page)
+	}
+	if page.NextPageToken != "n1" {
+		t.Fatalf("token = %q", page.NextPageToken)
+	}
+	if gotQuery["page_token"] != "t0" {
+		t.Fatalf("query = %v", gotQuery)
+	}
+	if _, ok := gotQuery["filters"]; ok {
+		t.Fatalf("phase filters are rejected upstream and must not be sent: %v", gotQuery)
+	}
+}
+
+func TestRetryTaskPostsToRetryEndpoint(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+	if err := c.RetryTask(context.Background(), "t1"); err != nil {
+		t.Fatalf("RetryTask: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/drive/v1/tasks/t1/retry" {
+		t.Fatalf("%s %s", gotMethod, gotPath)
+	}
+}
+
+func TestClearTasksPostsToClearEndpoint(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+	if err := c.ClearTasks(context.Background()); err != nil {
+		t.Fatalf("ClearTasks: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/drive/v1/tasks:clear" {
+		t.Fatalf("%s %s", gotMethod, gotPath)
+	}
+}
+
+func TestCreateOfflineDailyQuotaIsNotRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"file_task_quota_exceeded","error_code":11,"error_description":"daily limit"}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+	_, err := c.CreateOffline(context.Background(), "magnet:?xt=urn:btih:x", "")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != 11 {
+		t.Fatalf("err = %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("calls = %d, want 1 (quota errors must not be retried)", got)
 	}
 }

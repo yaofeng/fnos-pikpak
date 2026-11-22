@@ -74,6 +74,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerFileRoutes(inner, deps)
 		registerUploadRoutes(inner, deps)
 		registerTransferRoutes(inner, deps)
+		registerTaskRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
 	registerStreamRoutes(inner)

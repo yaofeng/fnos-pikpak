@@ -68,6 +68,11 @@ func (e *APIError) isReauth() bool {
 }
 
 func (e *APIError) isRateLimited() bool {
+	// Code 11 is the daily offline-task quota: retrying cannot succeed, so it
+	// must reach the caller as-is.
+	if e.Code == 11 {
+		return false
+	}
 	return e.Status == http.StatusTooManyRequests || e.Code == 10
 }
 
