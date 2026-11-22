@@ -18,6 +18,8 @@ type tasksEnv struct {
 	deleteQuery map[string]string
 	listQuery   map[string]string
 	clearCalled bool
+	// addTask appends a task to the upstream list.
+	addTask func(map[string]any)
 }
 
 // newTasksEnv serves the offline-task upstream endpoints and records what the
@@ -32,6 +34,7 @@ func newTasksEnv(t *testing.T, quota bool) *tasksEnv {
 		{"id": "t1", "phase": "PHASE_TYPE_RUNNING", "progress": 30, "file_name": "a.mkv", "file_size": "10"},
 		{"id": "t2", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "b.mkv", "file_size": "20"},
 	}
+	env.addTask = func(task map[string]any) { live = append(live, task) }
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /drive/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		env.listQuery = map[string]string{}
@@ -109,6 +112,35 @@ func TestTasksListFiltersPhaseAndForwardsToken(t *testing.T) {
 	// filter the page itself rather than forward one.
 	if _, ok := env.listQuery["filters"]; ok {
 		t.Fatalf("filters forwarded upstream: %v", env.listQuery)
+	}
+}
+
+func TestTasksListHidesPikPakInternalTasks(t *testing.T) {
+	env := newTasksEnv(t, false)
+	// PikPak lists its own maintenance tasks next to the downloads: deleting
+	// files queues a task of type "event-deletion". The offline-task page
+	// must not show them.
+	env.addTask(map[string]any{"id": "e1", "type": "event-deletion", "name": "event-deletion", "phase": "PHASE_TYPE_COMPLETE", "progress": 100})
+	h := NewMux(env.deps)
+
+	rec, body := getJSON(t, h, "/api/tasks", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	var ids []string
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		id, _ := item["id"].(string)
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
+		if id == "e1" {
+			t.Fatalf("internal task reached the offline list: %v", ids)
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("offline tasks missing: %v", ids)
 	}
 }
 

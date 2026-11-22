@@ -54,9 +54,11 @@ describe('taskTitle', () => {
 })
 
 describe('canRetry', () => {
-  test('only finished or failed tasks can be retried', () => {
+  test('only a failed task can be retried', () => {
     expect(canRetry(task({ phase: 'PHASE_TYPE_ERROR' }))).toBe(true)
-    expect(canRetry(task({ phase: 'PHASE_TYPE_COMPLETE' }))).toBe(true)
+    // A completed task has nothing left to retry: PikPak would only create a
+    // duplicate download.
+    expect(canRetry(task({ phase: 'PHASE_TYPE_COMPLETE' }))).toBe(false)
     expect(canRetry(task({ phase: 'PHASE_TYPE_RUNNING' }))).toBe(false)
     expect(canRetry(task({ phase: 'PHASE_TYPE_PENDING' }))).toBe(false)
   })

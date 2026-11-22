@@ -20,9 +20,14 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		// PikPak answers any phase filter with invalid_argument, so the phase
-		// is applied to the page that was loaded.
+		// is applied to the page that was loaded. Its own maintenance tasks
+		// (for example "event-deletion", queued when files are being purged)
+		// share the list and are skipped: this page is about downloads.
 		items := make([]pikpak.Task, 0, len(page.Items))
 		for _, task := range page.Items {
+			if !task.IsOffline() {
+				continue
+			}
 			if phase == "" || task.Phase == phase {
 				items = append(items, task)
 			}

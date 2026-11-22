@@ -31,6 +31,15 @@ type Task struct {
 	Message  string `json:"message,omitempty"`
 }
 
+// IsOffline reports whether the task is a cloud-download task. PikPak lists
+// its own maintenance tasks on the same endpoint — deleting files queues one
+// of type "event-deletion" — and those belong to the account, not to the
+// offline-task page. A task without a type is treated as a download, so an
+// older response shape never hides the user's own tasks.
+func (t Task) IsOffline() bool {
+	return t.Type == "" || t.Type == "offline"
+}
+
 func (t *Task) UnmarshalJSON(b []byte) error {
 	var raw struct {
 		ID       string          `json:"id"`
@@ -151,7 +160,7 @@ func (c *Client) ClearFinishedTasks(ctx context.Context) (int, error) {
 		}
 		ids := make([]string, 0, len(page.Items))
 		for _, task := range page.Items {
-			if isFinishedTaskPhase(task.Phase) {
+			if task.IsOffline() && isFinishedTaskPhase(task.Phase) {
 				ids = append(ids, task.ID)
 			}
 		}

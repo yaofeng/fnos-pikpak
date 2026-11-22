@@ -44,5 +44,7 @@ export function taskTitle(task: OfflineTask): string {
 }
 
 export function canRetry(task: OfflineTask): boolean {
-  return !isTaskActive(task)
+  // Only a failed download can be retried; retrying a completed one would just
+  // queue a duplicate download.
+  return task.phase === PHASE_ERROR
 }
