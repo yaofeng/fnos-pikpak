@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
 import Player from '../components/Player'
-import { FileIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
-import { formatSize } from '../files'
+import FileGrid from '../components/FileGrid'
+import { FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
+import { formatSize, thumbPath, type FileItem } from '../files'
 import { iinaURL, isMacOS } from '../iina'
 import { useFileSelection } from '../useFileSelection'
 import { groupVideoFavorites, type VideoFavorite } from '../videoFavorites'
@@ -13,6 +14,11 @@ type PlayTarget = { file_id: string; name: string; stream_url: string }
 // 视频收藏夹 keeps the videos saved from shares, grouped by the person who
 // shared them. 预览 plays the share's own stream; 完整播放 restores a copy into
 // 我的视频/临时 first, so it survives the share going away.
+// toFileItem lets the saved video reuse the file manager's row and tile.
+function toFileItem(f: VideoFavorite): FileItem {
+  return { id: f.file_id, parent_id: '', name: f.display_name || f.name, kind: 'drive#file', size: f.size }
+}
+
 export default function VideoFavorites() {
   const [items, setItems] = useState<VideoFavorite[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -23,6 +29,8 @@ export default function VideoFavorites() {
   // An external protocol needs a fresh user gesture after the async prepare,
   // so macOS gets an explicit 用 IINA 播放 button.
   const [iinaPending, setIinaPending] = useState<{ url: string; name: string } | null>(null)
+  // 我的文件 opens in the large-icon view; 视频收藏夹 does the same.
+  const [view, setView] = useState<'list' | 'grid'>('grid')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -170,6 +178,29 @@ export default function VideoFavorites() {
         <button type="button" disabled={loading} onClick={() => void load()}>
           <RefreshIcon /> 刷新
         </button>
+
+        <span className="fm-spacer" />
+
+        <div className="segmented" role="group" aria-label="视图">
+          <button
+            type="button"
+            className={view === 'list' ? 'active' : ''}
+            onClick={() => setView('list')}
+            title="列表视图"
+            aria-label="列表视图"
+          >
+            <ListIcon />
+          </button>
+          <button
+            type="button"
+            className={view === 'grid' ? 'active' : ''}
+            onClick={() => setView('grid')}
+            title="大图标视图"
+            aria-label="大图标视图"
+          >
+            <GridIcon />
+          </button>
+        </div>
       </div>
 
       {notice && <p className="ok small">{notice}</p>}
@@ -193,9 +224,34 @@ export default function VideoFavorites() {
           <p>视频收藏夹还是空的。</p>
           <p className="muted small">在分享里选中视频后点「收藏视频」，之后可以在这里直接预览或完整播放。</p>
         </div>
+      ) : view === 'grid' ? (
+        groups.map((group) => (
+          <section className="vgroup" key={group.key}>
+            <h3 className="vgroup-head">
+              {group.label}
+              <span className="muted small">{group.items.length} 个视频</span>
+            </h3>
+            <FileGrid
+              items={group.items.map(toFileItem)}
+              selected={selected}
+              thumbSrc={(f) => {
+                const fav = group.items.find((g) => g.file_id === f.id)
+                return fav ? `${basePath}/api/${thumbPath(fav.file_id, fav.share_id)}` : ''
+              }}
+              onSelect={(index, e) => select(order.indexOf(String(group.items[index].id)), e)}
+              onOpen={(f) => {
+                const fav = group.items.find((g) => g.file_id === f.id)
+                if (fav) void fullPlay(fav)
+              }}
+              onMenu={() => undefined}
+              onDragStart={() => undefined}
+              onDropOn={() => undefined}
+            />
+          </section>
+        ))
       ) : (
-        // One list in the 我的文件 shape: a group header row, then the videos
-        // of that group with the same glyph, size and time columns.
+        // The list view is the 我的文件 table: a group header row, then the
+        // videos of that group with the same glyph, size and time columns.
         <table className="file-table vfav-table">
           <thead>
             <tr>
@@ -224,7 +280,7 @@ export default function VideoFavorites() {
                     <td className="col-open" />
                     <td>
                       <span className="shine-name">
-                        <FileIcon file={{ id: f.file_id, parent_id: '', name: f.name, kind: 'drive#file', size: f.size }} size={20} />
+                        <FileIcon file={toFileItem(f)} size={20} />
                         <span title={f.name}>{f.display_name || f.name}</span>
                       </span>
                       {f.display_name && <span className="muted small">（{f.name}）</span>}
