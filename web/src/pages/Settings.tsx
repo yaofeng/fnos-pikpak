@@ -186,18 +186,6 @@ export default function Settings() {
 
   return (
     <>
-      <div className="settings-bar">
-        {dirty && <span className="muted small">有未保存的修改</span>}
-        <button
-          type="button"
-          className={dirty ? 'primary' : undefined}
-          disabled={saving === 'save'}
-          onClick={() => void saveAll()}
-        >
-          {saving === 'save' ? '保存中…' : '保存'}
-        </button>
-      </div>
-
       {error && <p className="error">{error}</p>}
       {saved && <p className="ok muted small">{saved}</p>}
 
@@ -226,7 +214,18 @@ export default function Settings() {
 
       <section className="card">
         <div className="card-header">
-          <h2>传输</h2>
+          <h2>参数设置</h2>
+          <div className="settings-bar">
+            {dirty && <span className="muted small">有未保存的修改</span>}
+            <button
+              type="button"
+              className={dirty ? 'primary' : undefined}
+              disabled={saving === 'save'}
+              onClick={() => void saveAll()}
+            >
+              {saving === 'save' ? '保存中…' : '保存'}
+            </button>
+          </div>
         </div>
 
         <label className="field">
@@ -272,12 +271,6 @@ export default function Settings() {
           </select>
         </label>
         <p className="muted small">所有用户共享这一上限，修改后需要重启服务才生效。</p>
-      </section>
-
-      <section className="card">
-        <div className="card-header">
-          <h2>播放与语言</h2>
-        </div>
 
         <label className="field">
           <span>播放方式</span>
