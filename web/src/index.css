@@ -1179,71 +1179,148 @@ button.primary {
   color: inherit;
 }
 
-.search-form {
+/* 全网搜索 reads like a search engine: one field, then plain results. */
+.search-engine {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 8vh 16px 48px;
+}
+
+.search-engine.has-results {
+  padding-top: 24px;
+}
+
+.se-logo-form {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.search-form input {
-  flex: 1 1 220px;
+.se-logo {
+  margin: 0;
+  text-align: center;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--fg);
+}
+
+.search-engine.has-results .se-logo {
+  font-size: 24px;
+  text-align: left;
+}
+
+.se-logo span {
+  color: var(--accent);
+}
+
+.se-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 6px 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  box-shadow: 0 1px 6px rgba(32, 33, 36, 0.08);
+}
+
+.se-field:focus-within {
+  box-shadow: 0 1px 10px rgba(32, 33, 36, 0.18);
+}
+
+.se-field input {
+  flex: 1;
   min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  font-size: 15px;
+  font-family: inherit;
 }
 
-.search-results {
+.se-field button {
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.se-field button:disabled {
+  opacity: 0.45;
+}
+
+.se-hint {
+  margin: -4px 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.se-count {
+  margin: 20px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.se-results {
   list-style: none;
-  margin: 12px 0 0;
+  margin: 0;
   padding: 0;
 }
 
-.search-results li {
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
+.se-results li {
+  padding: 14px 0;
 }
 
-.search-result-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.search-result-head a {
-  font-weight: 600;
-  color: var(--accent);
-  text-decoration: none;
+.se-breadcrumb {
+  margin: 0 0 2px;
+  color: #3c8a3c;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.search-result-head a:hover {
+.se-title {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #1a0dab;
+  font-size: 18px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.se-title:hover {
   text-decoration: underline;
 }
 
-.search-host {
-  flex: none;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.search-snippet {
-  margin: 4px 0 8px;
+.se-snippet {
+  margin: 4px 0 0;
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.5;
 }
 
-.search-hit {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+:root[data-theme='dark'] .se-title {
+  color: #8ab4f8;
 }
 
-.search-actions {
-  display: flex;
-  gap: 8px;
+:root[data-theme='dark'] .se-breadcrumb {
+  color: #8fbf8f;
 }
 
 /* Status bar of the fnOS file manager: counts only, pinned under the content. */
