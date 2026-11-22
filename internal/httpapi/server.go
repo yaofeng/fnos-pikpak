@@ -14,6 +14,7 @@ import (
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
+	"fnos-pikpak/internal/transfer"
 )
 
 var errUnsupportedMediaType = errors.New("httpapi: unsupported media type")
@@ -28,6 +29,11 @@ type Deps struct {
 	// Accounts caches per-user quota/VIP summaries. Nil means the default
 	// 60-second cache; tests inject a shorter one.
 	Accounts *accountCache
+	// Queue schedules download and upload jobs. Handlers still persist the
+	// job; the queue only executes it.
+	Queue *transfer.Queue
+	// DirGuard answers the fnOS ACL question. Nil falls back to Fnos.
+	DirGuard DirGuard
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -64,6 +70,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerAccountRoutes(inner, deps)
 		registerFileRoutes(inner, deps)
 		registerUploadRoutes(inner, deps)
+		registerTransferRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
 	registerStreamRoutes(inner)

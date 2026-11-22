@@ -239,3 +239,59 @@ UPDATE upload_jobs SET status = 'queued', updated_at = ? WHERE status = 'running
 		time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
+
+// QueuedDownloadJobs returns queued jobs across all users, oldest first, so
+// the transfer scheduler can fill its global slots fairly.
+func (s *Store) QueuedDownloadJobs(ctx context.Context, limit int) ([]DownloadJob, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+       status, error_code, error_message, link_expire_at, created_at, updated_at
+FROM download_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DownloadJob{}
+	for rows.Next() {
+		var (
+			j                DownloadJob
+			created, updated string
+		)
+		if err := rows.Scan(&j.ID, &j.UID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath,
+			&j.Size, &j.Downloaded, &j.Status, &j.ErrorCode, &j.ErrorMessage, &j.LinkExpireAt,
+			&created, &updated); err != nil {
+			return nil, err
+		}
+		j.CreatedAt = parseTime(created)
+		j.UpdatedAt = parseTime(updated)
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) QueuedUploadJobs(ctx context.Context, limit int) ([]UploadJob, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, uid, local_path, parent_id, remote_name, size, uploaded,
+       status, error_code, error_message, created_at, updated_at
+FROM upload_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UploadJob{}
+	for rows.Next() {
+		var (
+			j                UploadJob
+			created, updated string
+		)
+		if err := rows.Scan(&j.ID, &j.UID, &j.LocalPath, &j.ParentID, &j.RemoteName,
+			&j.Size, &j.Uploaded, &j.Status, &j.ErrorCode, &j.ErrorMessage,
+			&created, &updated); err != nil {
+			return nil, err
+		}
+		j.CreatedAt = parseTime(created)
+		j.UpdatedAt = parseTime(updated)
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}

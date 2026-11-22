@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
+	"fnos-pikpak/internal/transfer"
 	"fnos-pikpak/internal/version"
 )
 
@@ -55,20 +57,50 @@ func main() {
 	defer st.Close()
 
 	// The fnOS Open API gateway only exists on the NAS. In TCP development mode
-// there is nothing to talk to, so the fnOS probes skip and the
-// file-authorization card reports the service as unavailable.
-var fnosClient *fnos.Client
-if *listen == "" {
-	fnosClient = &fnos.Client{
-		SocketPath: "/var/run/trim_open_gateway_apiscope.socket",
-		AppName:    "pikpak",
+	// there is nothing to talk to, so the fnOS probes skip and the
+	// file-authorization card reports the service as unavailable.
+	var fnosClient *fnos.Client
+	if *listen == "" {
+		fnosClient = &fnos.Client{
+			SocketPath: "/var/run/trim_open_gateway_apiscope.socket",
+			AppName:    "pikpak",
+		}
 	}
-}
-probes := probe.NewRegistry()
-fnos.RegisterProbes(probes, fnosClient)
+	probes := probe.NewRegistry()
+	fnos.RegisterProbes(probes, fnosClient)
 
 	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{}))
 	httpapi.RegisterPikPakProbes(probes, sessions)
+
+	// A job left running at shutdown has no worker; its .part file makes the
+	// download resumable, so it goes back to the queue.
+	startupCtx := context.Background()
+	_ = st.ResetRunningDownloadJobs(startupCtx)
+	_ = st.ResetRunningUploadJobs(startupCtx)
+
+	queue := &transfer.Queue{
+		Store: st,
+		Clients: func(ctx context.Context, uid int) (*pikpak.Client, error) {
+			return sessions.ClientFor(ctx, uid)
+		},
+		MaxGlobal: 2,
+	}
+	if v, err := st.GetSetting(startupCtx, "download_concurrency"); err == nil {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 4 {
+			queue.MaxGlobal = n
+		}
+	}
+	queueCtx, queueCancel := context.WithCancel(context.Background())
+	queue.Start(queueCtx)
+	defer func() {
+		queueCancel()
+		done := make(chan struct{})
+		go func() { queue.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+		}
+	}()
 
 	handler := httpapi.NewMux(httpapi.Deps{
 		Version:  version.Version,
@@ -77,6 +109,7 @@ fnos.RegisterProbes(probes, fnosClient)
 		Fnos:     fnosClient,
 		Store:    st,
 		Sessions: sessions,
+		Queue:    queue,
 	})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
