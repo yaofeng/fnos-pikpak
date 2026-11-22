@@ -43,6 +43,8 @@ type Uploader struct {
 	// CheckDir re-validates the source directory at read time: grants can be
 	// revoked while a job waits in the queue.
 	CheckDir func(dir string) error
+	// OnProgress receives the bytes the provider has accepted so far.
+	OnProgress func(n int64)
 }
 
 func (u *Uploader) Run(ctx context.Context, job *store.UploadJob, policy ConflictPolicy) (err error) {
@@ -114,7 +116,11 @@ func (u *Uploader) Run(ctx context.Context, job *store.UploadJob, policy Conflic
 
 	instant := ticket.Resumable == nil
 	if !instant {
-		if err := u.Client.CompleteUpload(ctx, ticket, f); err != nil {
+		var src io.Reader = f
+		if u.OnProgress != nil {
+			src = &progressReader{r: f, on: u.OnProgress}
+		}
+		if err := u.Client.CompleteUpload(ctx, ticket, src); err != nil {
 			return err
 		}
 	}
@@ -189,4 +195,21 @@ func uniqueName(name string, taken map[string]bool) string {
 		}
 	}
 	return fmt.Sprintf("%s (%d)%s", base, time.Now().UnixNano(), ext)
+}
+
+// progressReader reports cumulative bytes read, which the queue stores as the
+// upload's progress.
+type progressReader struct {
+	r  io.Reader
+	on func(int64)
+	n  int64
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.n += int64(n)
+		p.on(p.n)
+	}
+	return n, err
 }

@@ -50,6 +50,37 @@ ON CONFLICT(id) DO UPDATE SET
 	return err
 }
 
+// StartDownloadJob moves a queued job to running and reports whether it did,
+// so a worker that lost a race against a pause or a delete leaves the row
+// alone. Progress and terminal writes are update-only: a job deleted while it
+// runs is never inserted again by its worker.
+func (s *Store) StartDownloadJob(ctx context.Context, uid int, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE download_jobs SET status='running', error_code='', error_message='', updated_at=?
+WHERE uid = ? AND id = ? AND status = 'queued'`,
+		time.Now().UTC().Format(time.RFC3339Nano), uid, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (s *Store) SetDownloadProgress(ctx context.Context, uid int, id string, downloaded int64) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE download_jobs SET downloaded=?, updated_at=? WHERE uid = ? AND id = ?`,
+		downloaded, time.Now().UTC().Format(time.RFC3339Nano), uid, id)
+	return err
+}
+
+func (s *Store) FinishDownloadJob(ctx context.Context, uid int, id, status, code, message string, downloaded int64) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE download_jobs SET status=?, error_code=?, error_message=?, downloaded=?, updated_at=?
+WHERE uid = ? AND id = ?`,
+		status, code, message, downloaded, time.Now().UTC().Format(time.RFC3339Nano), uid, id)
+	return err
+}
+
 func (s *Store) GetDownloadJob(ctx context.Context, uid int, id string) (DownloadJob, error) {
 	var (
 		j                DownloadJob
@@ -163,6 +194,35 @@ ON CONFLICT(id) DO UPDATE SET
   updated_at=excluded.updated_at`,
 		j.ID, j.UID, j.LocalPath, j.ParentID, j.RemoteName, j.Size, j.Uploaded,
 		j.Status, j.ErrorCode, j.ErrorMessage, now, now)
+	return err
+}
+
+// StartUploadJob and SetUploadProgress mirror the download helpers; see
+// StartDownloadJob for why the claims are conditional.
+func (s *Store) StartUploadJob(ctx context.Context, uid int, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE upload_jobs SET status='running', error_code='', error_message='', updated_at=?
+WHERE uid = ? AND id = ? AND status = 'queued'`,
+		time.Now().UTC().Format(time.RFC3339Nano), uid, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (s *Store) SetUploadProgress(ctx context.Context, uid int, id string, uploaded int64) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE upload_jobs SET uploaded=?, updated_at=? WHERE uid = ? AND id = ?`,
+		uploaded, time.Now().UTC().Format(time.RFC3339Nano), uid, id)
+	return err
+}
+
+func (s *Store) FinishUploadJob(ctx context.Context, uid int, id, status, code, message string, uploaded int64) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE upload_jobs SET status=?, error_code=?, error_message=?, uploaded=?, updated_at=?
+WHERE uid = ? AND id = ?`,
+		status, code, message, uploaded, time.Now().UTC().Format(time.RFC3339Nano), uid, id)
 	return err
 }
 

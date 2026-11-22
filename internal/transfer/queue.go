@@ -201,10 +201,15 @@ func (q *Queue) runDownload(parent context.Context, job store.DownloadJob) {
 	defer cancel()
 	q.setCancel(job.ID, cancel)
 
+	// Claim atomically: a pause or delete that landed first wins, and this
+	// worker leaves the row alone instead of running a job nobody wants.
+	claimed, err := q.Store.StartDownloadJob(context.WithoutCancel(parent), job.UID, job.ID)
+	if err != nil || !claimed {
+		return
+	}
 	job.Status = "running"
 	job.ErrorCode = ""
 	job.ErrorMessage = ""
-	_ = q.Store.PutDownloadJob(ctx, job)
 
 	d, err := q.downloader(job.UID, &job)
 	if err != nil {
@@ -215,7 +220,8 @@ func (q *Queue) runDownload(parent context.Context, job store.DownloadJob) {
 
 	cur, getErr := q.Store.GetDownloadJob(context.WithoutCancel(parent), job.UID, job.ID)
 	if getErr != nil {
-		cur = job
+		// Deleted while it ran; there is no row left to update.
+		return
 	}
 	switch {
 	case err == nil:
@@ -224,8 +230,14 @@ func (q *Queue) runDownload(parent context.Context, job store.DownloadJob) {
 		cur.ErrorCode = ""
 		cur.ErrorMessage = ""
 	case errors.Is(err, context.Canceled):
-		// Pause/cancel already wrote the status; leave it unless nothing did.
-		if cur.Status == "running" {
+		switch {
+		case cur.Status != "running":
+			// Pause/cancel already wrote the status.
+		case parent.Err() != nil:
+			// The service is stopping. Put the job back in the queue so the
+			// next start resumes it instead of showing a canceled transfer.
+			cur.Status = "queued"
+		default:
 			cur.Status = "canceled"
 		}
 	case errors.Is(err, ErrInsufficientSpace):
@@ -241,7 +253,8 @@ func (q *Queue) runDownload(parent context.Context, job store.DownloadJob) {
 		cur.ErrorCode = "download_failed"
 		cur.ErrorMessage = probe.Redact(err.Error())
 	}
-	_ = q.Store.PutDownloadJob(context.WithoutCancel(parent), cur)
+	_ = q.Store.FinishDownloadJob(context.WithoutCancel(parent), cur.UID, cur.ID,
+		cur.Status, cur.ErrorCode, cur.ErrorMessage, cur.Downloaded)
 }
 
 func (q *Queue) downloader(uid int, job *store.DownloadJob) (*Downloader, error) {
@@ -259,16 +272,14 @@ func (q *Queue) downloader(uid int, job *store.DownloadJob) (*Downloader, error)
 	}
 	d.OnProgress = func(n int64) {
 		job.Downloaded = n
-		_ = q.Store.PutDownloadJob(context.Background(), *job)
+		_ = q.Store.SetDownloadProgress(context.Background(), job.UID, job.ID, n)
 	}
 	return d, nil
 }
 
 func (q *Queue) failDownload(job store.DownloadJob, code string, err error) {
-	job.Status = "failed"
-	job.ErrorCode = code
-	job.ErrorMessage = probe.Redact(err.Error())
-	_ = q.Store.PutDownloadJob(context.Background(), job)
+	_ = q.Store.FinishDownloadJob(context.Background(), job.UID, job.ID,
+		"failed", code, probe.Redact(err.Error()), job.Downloaded)
 }
 
 func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
@@ -276,10 +287,13 @@ func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
 	defer cancel()
 	q.setCancel(job.ID, cancel)
 
+	claimed, err := q.Store.StartUploadJob(context.WithoutCancel(parent), job.UID, job.ID)
+	if err != nil || !claimed {
+		return
+	}
 	job.Status = "running"
 	job.ErrorCode = ""
 	job.ErrorMessage = ""
-	_ = q.Store.PutUploadJob(ctx, job)
 
 	u, err := q.uploader(job)
 	if err != nil {
@@ -291,7 +305,7 @@ func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
 
 	cur, getErr := q.Store.GetUploadJob(context.WithoutCancel(parent), job.UID, job.ID)
 	if getErr != nil {
-		cur = job
+		return
 	}
 	switch {
 	case err == nil:
@@ -304,7 +318,11 @@ func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
 		cur.ErrorCode = "conflict"
 		cur.ErrorMessage = "目标目录已有同名文件，已跳过"
 	case errors.Is(err, context.Canceled):
-		if cur.Status == "running" {
+		switch {
+		case cur.Status != "running":
+		case parent.Err() != nil:
+			cur.Status = "queued"
+		default:
 			cur.Status = "canceled"
 		}
 	default:
@@ -312,7 +330,8 @@ func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
 		cur.ErrorCode = "upload_failed"
 		cur.ErrorMessage = probe.Redact(err.Error())
 	}
-	_ = q.Store.PutUploadJob(context.WithoutCancel(parent), cur)
+	_ = q.Store.FinishUploadJob(context.WithoutCancel(parent), cur.UID, cur.ID,
+		cur.Status, cur.ErrorCode, cur.ErrorMessage, cur.Uploaded)
 }
 
 func (q *Queue) uploader(job store.UploadJob) (*Uploader, error) {
@@ -328,14 +347,15 @@ func (q *Queue) uploader(job store.UploadJob) (*Uploader, error) {
 		uid := job.UID
 		u.CheckDir = func(dir string) error { return q.CheckDir(context.Background(), uid, dir) }
 	}
+	u.OnProgress = func(n int64) {
+		_ = q.Store.SetUploadProgress(context.Background(), job.UID, job.ID, n)
+	}
 	return u, nil
 }
 
 func (q *Queue) failUpload(job store.UploadJob, code string, err error) {
-	job.Status = "failed"
-	job.ErrorCode = code
-	job.ErrorMessage = probe.Redact(err.Error())
-	_ = q.Store.PutUploadJob(context.Background(), job)
+	_ = q.Store.FinishUploadJob(context.Background(), job.UID, job.ID,
+		"failed", code, probe.Redact(err.Error()), job.Uploaded)
 }
 
 func (q *Queue) policy(uid int) ConflictPolicy {

@@ -126,6 +126,9 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 
 		created := []store.DownloadJob{}
 		skipped := []string{}
+		// Names claimed by this batch: two files called the same thing in one
+		// request would otherwise be written to one path.
+		claimed := map[string]bool{}
 		for _, fileID := range body.FileIDs {
 			file, err := client.FileDetail(r.Context(), fileID)
 			if err != nil {
@@ -139,15 +142,16 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			destPath := filepath.Join(destDir, name)
 			switch policy {
 			case transfer.PolicySkip:
-				if _, err := os.Stat(destPath); err == nil {
+				if _, err := os.Stat(destPath); err == nil || claimed[destPath] {
 					skipped = append(skipped, name)
 					continue
 				}
 			case transfer.PolicyOverwrite:
 				// keep the name; the worker replaces the file atomically
 			default:
-				destPath = uniqueDestPath(destPath)
+				destPath = uniqueDestPath(destPath, claimed)
 			}
+			claimed[destPath] = true
 
 			job := store.DownloadJob{
 				ID: newJobID(), UID: id.UID, FileID: file.ID, FileName: name,
@@ -479,15 +483,22 @@ func conflictPolicy(ctx context.Context, st *store.Store, uid int) transfer.Conf
 	}
 }
 
-func uniqueDestPath(path string) string {
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+func uniqueDestPath(path string, taken map[string]bool) string {
+	free := func(p string) bool {
+		if taken[p] {
+			return false
+		}
+		_, err := os.Stat(p)
+		return errors.Is(err, os.ErrNotExist)
+	}
+	if free(path) {
 		return path
 	}
 	ext := filepath.Ext(path)
 	base := strings.TrimSuffix(path, ext)
 	for i := 1; i < 1000; i++ {
 		candidate := base + " (" + itoa(i) + ")" + ext
-		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+		if free(candidate) {
 			return candidate
 		}
 	}

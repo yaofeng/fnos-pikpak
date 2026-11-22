@@ -183,3 +183,85 @@ func TestResetRunningUploadJobs(t *testing.T) {
 		t.Fatalf("u2 = %q", j.Status)
 	}
 }
+
+func TestStartJobClaimsQueuedRowsOnly(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	if err := s.PutDownloadJob(ctx, sampleJob("j1", 1000, "queued")); err != nil {
+		t.Fatal(err)
+	}
+	started, err := s.StartDownloadJob(ctx, 1000, "j1")
+	if err != nil || !started {
+		t.Fatalf("first start = %v, %v", started, err)
+	}
+	// A second worker seeing the same job must not take it over.
+	if started, err := s.StartDownloadJob(ctx, 1000, "j1"); err != nil || started {
+		t.Fatalf("second start = %v, %v", started, err)
+	}
+	if got, _ := s.GetDownloadJob(ctx, 1000, "j1"); got.Status != "running" {
+		t.Fatalf("status = %q", got.Status)
+	}
+
+	// Paused while queued: the worker must leave it alone.
+	if err := s.PutDownloadJob(ctx, sampleJob("j2", 1000, "paused")); err != nil {
+		t.Fatal(err)
+	}
+	if started, err := s.StartDownloadJob(ctx, 1000, "j2"); err != nil || started {
+		t.Fatalf("paused start = %v, %v", started, err)
+	}
+}
+
+func TestProgressUpdateDoesNotResurrectDeletedJob(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		put  func() error
+		del  func() error
+		prog func() error
+		get  func() error
+	}{
+		{
+			name: "download",
+			put:  func() error { return s.PutDownloadJob(ctx, sampleJob("j1", 1000, "running")) },
+			del:  func() error { return s.DeleteDownloadJob(ctx, 1000, "j1") },
+			prog: func() error { return s.SetDownloadProgress(ctx, 1000, "j1", 5) },
+			get:  func() error { _, err := s.GetDownloadJob(ctx, 1000, "j1"); return err },
+		},
+		{
+			name: "upload",
+			put:  func() error { return s.PutUploadJob(ctx, sampleUpload("u1", 1000, "running")) },
+			del:  func() error { return s.DeleteUploadJob(ctx, 1000, "u1") },
+			prog: func() error { return s.SetUploadProgress(ctx, 1000, "u1", 5) },
+			get:  func() error { _, err := s.GetUploadJob(ctx, 1000, "u1"); return err },
+		},
+	} {
+		if err := tc.put(); err != nil {
+			t.Fatalf("%s put: %v", tc.name, err)
+		}
+		if err := tc.del(); err != nil {
+			t.Fatalf("%s delete: %v", tc.name, err)
+		}
+		if err := tc.prog(); err != nil {
+			t.Fatalf("%s progress: %v", tc.name, err)
+		}
+		if err := tc.get(); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s after progress: %v, want ErrNotFound", tc.name, err)
+		}
+	}
+}
+
+func TestStartUploadJobClaimsQueuedRowsOnly(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	if err := s.PutUploadJob(ctx, sampleUpload("u1", 1000, "queued")); err != nil {
+		t.Fatal(err)
+	}
+	started, err := s.StartUploadJob(ctx, 1000, "u1")
+	if err != nil || !started {
+		t.Fatalf("start = %v, %v", started, err)
+	}
+	if started, err := s.StartUploadJob(ctx, 1000, "u1"); err != nil || started {
+		t.Fatalf("second start = %v, %v", started, err)
+	}
+}

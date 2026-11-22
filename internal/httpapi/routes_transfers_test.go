@@ -352,3 +352,33 @@ func TestCreateUploadStoresResolvedSource(t *testing.T) {
 		t.Fatalf("local path = %q, want the resolved %q", jobs[0].LocalPath, real)
 	}
 }
+
+func TestBatchDownloadsWithSameNameGetDistinctPaths(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every file in this batch is called the same thing.
+		_, _ = io.WriteString(w, `{"id":"`+filepath.Base(r.URL.Path)+`","name":"same.mkv","size":"10","kind":"drive#file"}`)
+	}))
+	defer srv.Close()
+	deps, st := newAuthTestDeps(t, srv.URL)
+	deps.DirGuard = allowAll
+	deps.Queue = &transfer.Queue{Store: st}
+	bindTestUser(t, st, 1000)
+	h := NewMux(deps)
+	dir := t.TempDir()
+
+	raw, _ := json.Marshal(map[string]any{"file_ids": []string{"f1", "f2"}, "dest_dir": dir})
+	rec, body := postJSON(t, h, "/api/downloads", "1000", string(raw))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	jobs, err := st.ListDownloadJobs(t.Context(), 1000)
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %+v err = %v", jobs, err)
+	}
+	if jobs[0].DestPath == jobs[1].DestPath {
+		t.Fatalf("two jobs share %q and would overwrite each other", jobs[0].DestPath)
+	}
+	if jobs[0].FileName != "same.mkv" || jobs[1].FileName != "same.mkv" {
+		t.Fatalf("names = %+v", jobs)
+	}
+}

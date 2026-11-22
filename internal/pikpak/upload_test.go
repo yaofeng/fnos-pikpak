@@ -2,6 +2,7 @@ package pikpak
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -140,6 +141,7 @@ type fakeOSS struct {
 	parts     []int
 	uploads   int
 	completes int
+	aborts    int
 	tokens    []string
 }
 
@@ -158,6 +160,11 @@ func (f *fakeOSS) handler(t *testing.T) http.Handler {
 			f.mu.Unlock()
 			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
 <InitiateMultipartUploadResult><Bucket>bkt</Bucket><Key>k</Key><UploadId>up-1</UploadId></InitiateMultipartUploadResult>`)
+		case r.Method == http.MethodDelete && q.Get("uploadId") != "":
+			f.mu.Lock()
+			f.aborts++
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPut && q.Get("partNumber") != "":
 			body, _ := io.ReadAll(r.Body)
 			f.mu.Lock()
@@ -348,5 +355,40 @@ func TestCompleteUploadUsesRequestedSizeWithoutFile(t *testing.T) {
 	}
 	if fake.uploads != 1 || len(fake.parts) != 3 {
 		t.Fatalf("uploads=%d parts=%v, want multipart", fake.uploads, fake.parts)
+	}
+}
+
+func TestCompleteUploadStopsWhenCanceled(t *testing.T) {
+	fake := &fakeOSS{}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	const size = 13 << 20
+	c := NewClient(ClientOptions{})
+	if err := c.CompleteUpload(ctx, ossTicket(srv.URL, size), io.LimitReader(zeroReader{}, size)); err == nil {
+		t.Fatal("a canceled upload reported success")
+	}
+	if fake.completes != 0 {
+		t.Fatalf("completes = %d, want 0", fake.completes)
+	}
+}
+
+func TestCanceledSmallUploadDoesNotPutObject(t *testing.T) {
+	fake := &fakeOSS{}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	c := NewClient(ClientOptions{})
+	if err := c.CompleteUpload(ctx, ossTicket(srv.URL, 5), strings.NewReader("hello")); err == nil {
+		t.Fatal("a canceled upload reported success")
+	}
+	if len(fake.puts) != 0 {
+		t.Fatalf("puts = %v, want none", fake.puts)
 	}
 }

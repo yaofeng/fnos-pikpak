@@ -227,3 +227,124 @@ func TestQueueUploadsAndAppliesSkipPolicy(t *testing.T) {
 		t.Fatalf("job = %+v", got)
 	}
 }
+
+func openQueueStore(t *testing.T) *store.Store {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "pikpak.db"), filepath.Join(dir, "secret.key"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return st
+}
+
+// hangingServer answers a download request and never sends a body, so the
+// worker sits in the transfer until its context is canceled.
+func hangingServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestShutdownRequeuesRunningDownloads(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	q := &Queue{Store: st, MaxGlobal: 1, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.Start(ctx)
+	queuedDownload(t, st, "j1", 10)
+	q.Notify()
+	waitFor(t, "download to start", func() bool {
+		got, err := st.GetDownloadJob(context.Background(), 1000, "j1")
+		return err == nil && got.Status == "running"
+	})
+
+	// A graceful stop is not a cancel: the job goes back to the queue so the
+	// next start resumes it.
+	cancel()
+	q.Wait()
+	got, err := st.GetDownloadJob(context.Background(), 1000, "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "queued" {
+		t.Fatalf("status after shutdown = %q, want queued", got.Status)
+	}
+}
+
+func TestDeletedJobIsNotResurrectedByItsWorker(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 1, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.Start(ctx)
+	queuedDownload(t, st, "j1", 10)
+	q.Notify()
+	waitFor(t, "download to start", func() bool {
+		got, err := st.GetDownloadJob(context.Background(), 1000, "j1")
+		return err == nil && got.Status == "running"
+	})
+
+	if err := st.DeleteDownloadJob(context.Background(), 1000, "j1"); err != nil {
+		t.Fatal(err)
+	}
+	q.CancelRunning("j1")
+	waitFor(t, "worker to release the job", func() bool {
+		_, err := st.GetDownloadJob(context.Background(), 1000, "j1")
+		return errors.Is(err, store.ErrNotFound)
+	})
+	time.Sleep(100 * time.Millisecond)
+	if _, err := st.GetDownloadJob(context.Background(), 1000, "j1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted job came back: %v", err)
+	}
+}
+
+// blockingUploadClient parks inside RequestUpload until the worker cancels.
+type blockingUploadClient struct{ fakeUploadClient }
+
+func (b *blockingUploadClient) RequestUpload(ctx context.Context, in pikpak.UploadRequest) (pikpak.UploadTicket, error) {
+	<-ctx.Done()
+	return pikpak.UploadTicket{}, ctx.Err()
+}
+
+func TestShutdownRequeuesRunningUploads(t *testing.T) {
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	q := &Queue{Store: st, MaxGlobal: 1, Tick: 20 * time.Millisecond}
+	q.NewUploader = func(int) (*Uploader, error) {
+		return &Uploader{Client: &blockingUploadClient{}}, nil
+	}
+	q.Start(ctx)
+
+	job := uploadJob(t, "a.mkv")
+	job.Status = "queued"
+	if err := st.PutUploadJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	q.Notify()
+	waitFor(t, "upload to start", func() bool {
+		got, err := st.GetUploadJob(context.Background(), 1000, job.ID)
+		return err == nil && got.Status == "running"
+	})
+
+	cancel()
+	q.Wait()
+	got, err := st.GetUploadJob(context.Background(), 1000, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "queued" {
+		t.Fatalf("status after shutdown = %q, want queued", got.Status)
+	}
+}

@@ -128,6 +128,9 @@ func (c *Client) CompleteUpload(ctx context.Context, ticket UploadTicket, src io
 		size = ticket.File.Size
 	}
 	key := params["key"]
+	// A paused or canceled transfer must stop pushing bytes, not run to the
+	// end because the reader never learns about the cancel.
+	src = &ctxReader{ctx: ctx, r: src}
 
 	if size < multipartThreshold {
 		if err := bucket.PutObject(key, src, oss.ContentLength(size)); err != nil {
@@ -138,11 +141,27 @@ func (c *Client) CompleteUpload(ctx context.Context, ticket UploadTicket, src io
 	return c.uploadMultipart(ctx, bucket, key, src)
 }
 
-func (c *Client) uploadMultipart(_ context.Context, bucket *oss.Bucket, key string, src io.Reader) error {
+// ctxReader stops a read when its context is canceled.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+func (c *Client) uploadMultipart(ctx context.Context, bucket *oss.Bucket, key string, src io.Reader) error {
 	imur, err := bucket.InitiateMultipartUpload(key)
 	if err != nil {
 		return fmt.Errorf("pikpak: oss initiate multipart: %w", err)
 	}
+	// An abandoned upload drops its parts: they can never be completed once
+	// the request is gone, and some providers bill for them.
+	abort := func() { _ = bucket.AbortMultipartUpload(imur) }
 
 	var (
 		wg       sync.WaitGroup
@@ -153,6 +172,11 @@ func (c *Client) uploadMultipart(_ context.Context, bucket *oss.Bucket, key stri
 	sem := make(chan struct{}, partConcurrency)
 
 	for partNumber := 1; ; partNumber++ {
+		if err := ctx.Err(); err != nil {
+			wg.Wait()
+			abort()
+			return err
+		}
 		buf := make([]byte, partSize)
 		n, readErr := io.ReadFull(src, buf)
 		if n > 0 {
@@ -178,11 +202,13 @@ func (c *Client) uploadMultipart(_ context.Context, bucket *oss.Bucket, key stri
 				break
 			}
 			wg.Wait()
+			abort()
 			return fmt.Errorf("pikpak: read upload source: %w", readErr)
 		}
 	}
 	wg.Wait()
 	if firstErr != nil {
+		abort()
 		return fmt.Errorf("pikpak: oss upload part: %w", firstErr)
 	}
 
@@ -192,6 +218,7 @@ func (c *Client) uploadMultipart(_ context.Context, bucket *oss.Bucket, key stri
 		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF") {
 			return nil
 		}
+		abort()
 		return fmt.Errorf("pikpak: oss complete multipart: %w", err)
 	}
 	return nil
