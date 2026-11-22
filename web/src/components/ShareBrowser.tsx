@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
-import { filterFiles, isFolder, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
+import { iinaURL, isMacOS } from '../iina'
+import { waitForVideoJob } from '../videoPrepare'
+import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
 import { useFileSelection } from '../useFileSelection'
 import FileGrid from './FileGrid'
 import FileTable from './FileTable'
@@ -15,6 +17,7 @@ import {
   RefreshIcon,
   RestoreIcon,
   SearchIcon,
+  StarIcon,
   SortIcon,
 } from './icons'
 
@@ -26,6 +29,7 @@ import {
 type ShareInfo = {
   share_id: string
   title: string
+  owner?: string
   protected: boolean
   items: FileItem[]
   next_page_token: string
@@ -44,7 +48,7 @@ type ShareFileUrls = {
 
 type Crumb = { id: string; name: string }
 
-export type ShareState = { title: string; passCode: string; protected: boolean }
+export type ShareState = { title: string; passCode: string; protected: boolean; owner: string }
 
 export default function ShareBrowser({
   url,
@@ -69,6 +73,7 @@ export default function ShareBrowser({
 }) {
   const [shareId, setShareId] = useState('')
   const [title, setTitle] = useState(initialTitle ?? '分享')
+  const [owner, setOwner] = useState('')
   const [protectedShare, setProtectedShare] = useState(false)
   const [passCode, setPassCode] = useState('')
   const [needPass, setNeedPass] = useState(false)
@@ -82,6 +87,11 @@ export default function ShareBrowser({
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [playing, setPlaying] = useState<FileItem | null>(null)
+  // directPlay carries a prepared copy's signed URL straight into the player.
+  const [directPlay, setDirectPlay] = useState<{ file_id: string; name: string; stream_url: string } | null>(null)
+  // iinaPending is a signed URL waiting for the click that opens IINA: an
+  // external protocol needs a fresh user gesture after the async prepare.
+  const [iinaPending, setIinaPending] = useState<{ url: string; name: string } | null>(null)
   const [favorited, setFavorited] = useState(false)
 
   // The toolbars follow 我的文件: a local filter, a sort key, and the view.
@@ -118,13 +128,14 @@ export default function ShareBrowser({
         const name = info.title || fallbackTitle.current || '分享'
         setShareId(info.share_id)
         setTitle(name)
+        setOwner(info.owner ?? '')
         setProtectedShare(info.protected)
         setItems(info.items ?? [])
         setStack([])
         setQ('')
         setNeedPass(false)
         setPassCode(code)
-        callbacks.current.onState?.({ title: name, passCode: code, protected: info.protected })
+        callbacks.current.onState?.({ title: name, passCode: code, protected: info.protected, owner: info.owner ?? '' })
         callbacks.current.onTitle?.(name)
       } catch (err) {
         const code2 = err instanceof ApiError ? err.code : ''
@@ -183,7 +194,36 @@ export default function ShareBrowser({
 
   function openFile(f: FileItem) {
     if (isFolder(f)) enter(f)
-    else setPlaying(f)
+    else void preview(f)
+  }
+
+  // absoluteURL turns a server path such as /api/stream/f1?t=… into the URL an
+  // external player has to be handed.
+  function absoluteURL(path: string): string {
+    return window.location.origin + basePath + path
+  }
+
+  // preview plays the share's own stream: nothing is restored.
+  async function preview(f: FileItem) {
+    if (isFolder(f)) {
+      enter(f)
+      return
+    }
+    if (!isMacOS(navigator.userAgent)) {
+      setPlaying(f)
+      return
+    }
+    setError('')
+    setIinaPending(null)
+    try {
+      const got = await apiGet<ShareFileUrls>(
+        `share/file?share_id=${encodeURIComponent(shareId)}&file_id=${encodeURIComponent(f.id)}`,
+      )
+      window.location.href = iinaURL(absoluteURL(got.stream_url))
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'share_session_missing') void open(passCode)
+      else setError((err as Error).message)
+    }
   }
 
   const shown = sortFiles(filterFiles(items ?? [], q, 'all'), sortKey, sortDir)
@@ -191,34 +231,6 @@ export default function ShareBrowser({
 
   const picked = shown.filter((f) => selected.has(f.id))
   const pickedFiles = picked.filter((f) => !isFolder(f))
-
-  async function download(list: FileItem[]) {
-    if (list.length === 0) return
-    setBusy('download')
-    setError('')
-    setNotice('')
-    try {
-      for (const f of list) {
-        const got = await apiGet<ShareFileUrls>(
-          `share/file?share_id=${encodeURIComponent(shareId)}&file_id=${encodeURIComponent(f.id)}`,
-        )
-        // An attachment navigation keeps the browser's own download manager and
-        // the signed URL out of the page.
-        const a = document.createElement('a')
-        a.href = basePath + got.download_url
-        a.download = got.name || f.name
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-      }
-      setNotice(list.length === 1 ? `开始下载 ${list[0].name}` : `开始下载 ${list.length} 个文件`)
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'share_session_missing') void open(passCode)
-      else setError((err as Error).message)
-    } finally {
-      setBusy('')
-    }
-  }
 
   async function restore(list: FileItem[]) {
     if (list.length === 0) return
@@ -241,6 +253,39 @@ export default function ShareBrowser({
     }
   }
 
+  // 完整播放 restores the video into 我的视频/临时 (making room by purging the
+  // oldest files) and plays that copy, so playback does not depend on the
+  // share staying available.
+  async function fullPlay(f: FileItem) {
+    if (isFolder(f)) return
+    setBusy('prepare')
+    setError('')
+    setNotice('正在把视频转存到「我的视频/临时」…')
+    setIinaPending(null)
+    try {
+      const started = await apiPost<{ job_id: string }>('videos/prepare', {
+        share_id: shareId,
+        file_id: f.id,
+      })
+      const job = await waitForVideoJob(started.job_id, {
+        get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
+      })
+      if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
+      if (isMacOS(navigator.userAgent)) {
+        setIinaPending({ url: absoluteURL(job.stream_url), name: job.name || f.name })
+        setNotice('已准备好，点「用 IINA 播放」开始播放')
+      } else {
+        setDirectPlay({ file_id: job.file_id || f.id, name: job.name || f.name, stream_url: job.stream_url })
+        setNotice('')
+      }
+    } catch (err) {
+      setError((err as Error).message)
+      setNotice('')
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function addFavorite() {
     setBusy('favorite')
     setError('')
@@ -252,7 +297,35 @@ export default function ShareBrowser({
         pass_code: passCode,
       })
       setFavorited(true)
-      setNotice('已加入收藏夹')
+      setNotice('已收藏这个分享')
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  // 收藏视频 saves the selected videos with the share's code, so a later
+  // 完整播放 from 视频收藏夹 never asks for it again.
+  async function addVideoFavorites(list: FileItem[]) {
+    if (list.length === 0) return
+    setBusy('video-favorite')
+    setError('')
+    setNotice('')
+    try {
+      for (const f of list) {
+        await apiPost('video-favorites', {
+          share_id: shareId,
+          file_id: f.id,
+          name: f.name,
+          size: f.size,
+          owner,
+          share_title: title,
+          pass_code: passCode,
+        })
+      }
+      setNotice(list.length === 1 ? `「${list[0].name}」已加入视频收藏夹` : `${list.length} 个视频已加入视频收藏夹`)
+      clearSelection()
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -261,6 +334,9 @@ export default function ShareBrowser({
   }
 
   const single = picked.length === 1 ? picked[0] : null
+  // 预览 and 完整播放 act on one video at a time; a folder or a multi-select
+  // leaves them disabled rather than guessing.
+  const singleVideo = single && !isFolder(single) && isVideo(single) ? single : null
   const inFavorites = favoriteId !== undefined
 
   return (
@@ -274,6 +350,21 @@ export default function ShareBrowser({
       </div>
 
       {notice && <p className="ok small">{notice}</p>}
+
+      {iinaPending && (
+        <p className="share-iina">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              window.location.href = iinaURL(iinaPending.url)
+            }}
+          >
+            用 IINA 播放
+          </button>
+          <span className="muted small">{iinaPending.name}</span>
+        </p>
+      )}
 
       {needPass ? (
         <form
@@ -365,20 +456,21 @@ export default function ShareBrowser({
             <button
               className="btn-icon"
               type="button"
-              disabled={!single || busy === 'download'}
-              onClick={() => single && openFile(single)}
+              disabled={!singleVideo}
+              onClick={() => singleVideo && void preview(singleVideo)}
             >
               <PlayIcon />
-              打开
+              预览
             </button>
             <button
               className="btn-icon"
               type="button"
-              disabled={pickedFiles.length === 0 || busy === 'download'}
-              onClick={() => void download(pickedFiles)}
+              disabled={!singleVideo || busy === 'prepare'}
+              onClick={() => singleVideo && void fullPlay(singleVideo)}
+              title="转存到「我的视频/临时」后播放，空间不足时自动清理最早的视频"
             >
               <DownloadIcon />
-              下载
+              {busy === 'prepare' ? '准备中…' : '完整播放'}
             </button>
             <button
               className="btn-icon"
@@ -399,9 +491,18 @@ export default function ShareBrowser({
                 onClick={() => void addFavorite()}
               >
                 <BookmarkIcon />
-                {favorited ? '已收藏' : '加入收藏'}
+                {favorited ? '已收藏' : '收藏分享'}
               </button>
             )}
+            <button
+              className="btn-icon"
+              type="button"
+              disabled={pickedFiles.length === 0 || busy === 'video-favorite'}
+              onClick={() => void addVideoFavorites(pickedFiles)}
+            >
+              <StarIcon />
+              收藏视频
+            </button>
 
             <span className="fm-spacer" />
 
@@ -485,6 +586,15 @@ export default function ShareBrowser({
           name={playing.name}
           infoPath={`share/file?share_id=${encodeURIComponent(shareId)}&file_id=${encodeURIComponent(playing.id)}`}
           onClose={() => setPlaying(null)}
+        />
+      )}
+
+      {directPlay && (
+        <Player
+          fileId={directPlay.file_id}
+          name={directPlay.name}
+          streamURL={directPlay.stream_url}
+          onClose={() => setDirectPlay(null)}
         />
       )}
     </section>

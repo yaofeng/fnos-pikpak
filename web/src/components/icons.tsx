@@ -91,6 +91,14 @@ export function PlayIcon({ size = 16 }: IconProps) {
   )
 }
 
+export function StarIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.7l5.4-.8z" />
+    </svg>
+  )
+}
+
 export function BookmarkIcon({ size = 16 }: IconProps) {
   return (
     <svg {...stroke(size)}>

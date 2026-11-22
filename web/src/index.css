@@ -1336,6 +1336,12 @@ button.primary {
   background: var(--bg);
 }
 
+.share-iina {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .share-heading {
   display: flex;
   align-items: baseline;

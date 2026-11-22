@@ -17,6 +17,7 @@ export default function Player({
   name,
   onClose,
   infoPath,
+  streamURL,
 }: {
   fileId: string
   name: string
@@ -24,6 +25,9 @@ export default function Player({
   // infoPath overrides where the stream info comes from, so a file inside a
   // share can play through the same player.
   infoPath?: string
+  // streamURL plays a URL the caller already signed (完整播放), skipping the
+  // info request entirely.
+  streamURL?: string
 }) {
   const [info, setInfo] = useState<PlayInfo | null>(null)
   const [error, setError] = useState('')
@@ -38,6 +42,12 @@ export default function Player({
     let alive = true
     setInfo(null)
     setError('')
+    if (streamURL) {
+      setInfo({ file_id: fileId, name, mime: '', size: 0, stream_url: streamURL })
+      return () => {
+        alive = false
+      }
+    }
     apiGet<PlayInfo>(infoPath ?? `play/${fileId}`)
       .then((got) => {
         if (alive) setInfo(got)
@@ -48,7 +58,7 @@ export default function Player({
     return () => {
       alive = false
     }
-  }, [fileId, infoPath])
+  }, [fileId, infoPath, streamURL, name])
 
   const mime = info ? guessMime(info.name, info.mime) : ''
   const src = info ? `${basePath}${info.stream_url}` : ''
