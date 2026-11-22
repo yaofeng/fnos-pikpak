@@ -24,8 +24,11 @@ type videoUpstream struct {
 
 	// folders maps a parent id ("" is the drive root) to its children.
 	folders map[string][]map[string]any
-	// restored is the file a share restore drops into the root.
+	// restored is the file a share restore drops into.
 	restored map[string]any
+	// restoreParent names the folder a restore drops into ("" is the root).
+	// PikPak normally uses the root folder "Pack From Shared".
+	restoreParent string
 	// badPassCode makes /drive/v1/share fail the way PikPak does.
 	badPassCode bool
 
@@ -131,7 +134,14 @@ func (u *videoUpstream) handler() http.Handler {
 	mux.HandleFunc("/drive/v1/share/restore", func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()
 		u.restores++
-		u.folders[""] = append(u.folders[""], u.restored)
+		parent := u.restoreParent
+		if parent != "" {
+			if _, ok := u.folders[parent]; !ok {
+				u.folders[""] = append(u.folders[""], folderEntry(parent, packFromSharedName))
+				u.folders[parent] = []map[string]any{}
+			}
+		}
+		u.folders[parent] = append(u.folders[parent], u.restored)
 		u.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"task_id": "rt1"})
 	})
@@ -460,5 +470,30 @@ func TestPrepareFailsWhenTheSavedPassCodeIsWrong(t *testing.T) {
 	}
 	if _, _, restores, _ := up.snapshot(); restores != 0 {
 		t.Fatalf("restored with a bad pass code %d times", restores)
+	}
+}
+
+// PikPak restores a share into the root folder Pack From Shared (creating it
+// on the first restore), not directly into the root.
+func TestPrepareFindsTheVideoInsidePackFromShared(t *testing.T) {
+	_, h, up := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("f1", "我的视频"))
+		up.set("f1", folderEntry("f3", "临时"))
+		up.restoreParent = "pack1"
+	})
+
+	job := readyVideoJob(t, h, `{"share_id":"VOabc123","file_id":"sf2"}`)
+	if job["state"] != "ready" {
+		t.Fatalf("job = %v", job)
+	}
+	if url, _ := job["stream_url"].(string); !strings.HasPrefix(url, "/api/stream/df1?t=") {
+		t.Fatalf("stream url = %v", job["stream_url"])
+	}
+	_, moved, _, _ := up.snapshot()
+	if len(moved) != 1 || moved[0] != "df1" {
+		t.Fatalf("moved = %v", moved)
+	}
+	if temp := up.children("f3"); len(temp) != 1 || temp[0]["id"] != "df1" {
+		t.Fatalf("temp folder = %v", temp)
 	}
 }

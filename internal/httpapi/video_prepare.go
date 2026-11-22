@@ -106,13 +106,21 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 		return videoPrepareResult{}, err
 	}
 
-	before, err := client.ListAllFiles(ctx, "")
+	// PikPak drops a restored share into the root folder "Pack From Shared",
+	// creating it on the first restore; older accounts see the file in the
+	// root itself, so both containers are snapshotted and the pack wins.
+	beforeRoot, err := client.ListAllFiles(ctx, "")
 	if err != nil {
 		return videoPrepareResult{}, videoUpstreamMessage(err)
 	}
-	known := make(map[string]bool, len(before))
-	for _, f := range before {
-		known[f.ID] = true
+	knownRoot := fileIDs(beforeRoot)
+	var knownPack map[string]bool
+	if pack, ok := findFolder(beforeRoot, packFromSharedName); ok {
+		items, err := client.ListAllFiles(ctx, pack.ID)
+		if err != nil {
+			return videoPrepareResult{}, videoUpstreamMessage(err)
+		}
+		knownPack = fileIDs(items)
 	}
 	restoreTask, err := client.RestoreShare(ctx, source.shareID, source.token, []string{source.fileID})
 	if err != nil {
@@ -121,13 +129,23 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 	if err := waitTask(ctx, client, restoreTask); err != nil {
 		return videoPrepareResult{}, err
 	}
-	after, err := client.ListAllFiles(ctx, "")
+	afterRoot, err := client.ListAllFiles(ctx, "")
 	if err != nil {
 		return videoPrepareResult{}, videoUpstreamMessage(err)
 	}
-	restored, ok := findRestoredFile(before, after, known, link.Name)
+	var afterPack []pikpak.File
+	if pack, ok := findFolder(afterRoot, packFromSharedName); ok {
+		afterPack, err = client.ListAllFiles(ctx, pack.ID)
+		if err != nil {
+			return videoPrepareResult{}, videoUpstreamMessage(err)
+		}
+	}
+	restored, ok := findRestoredFile(afterPack, knownPack, link.Name)
 	if !ok {
-		return videoPrepareResult{}, errors.New("转存已完成，但没有在根目录找到该视频")
+		restored, ok = findRestoredFile(afterRoot, knownRoot, link.Name)
+	}
+	if !ok {
+		return videoPrepareResult{}, errors.New("转存已完成，但没有找到该视频")
 	}
 
 	videoFolder, err := ensureFolder(ctx, client, "", videoFolderName)
@@ -377,10 +395,20 @@ func modifiedSortKey(f pikpak.File) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-// findRestoredFile picks the file the restore just dropped into the root.
+// fileIDs is the set of ids in one folder listing.
+func fileIDs(files []pikpak.File) map[string]bool {
+	out := make(map[string]bool, len(files))
+	for _, f := range files {
+		out[f.ID] = true
+	}
+	return out
+}
+
+// findRestoredFile picks the file the restore just dropped into a folder.
 // Comparing against the pre-restore snapshot matters: a file of the same name
-// may already be there, and moving that one would play the wrong video.
-func findRestoredFile(before, after []pikpak.File, known map[string]bool, name string) (pikpak.File, bool) {
+// may already be there, and moving that one would play the wrong video. A nil
+// known set means the folder itself is new.
+func findRestoredFile(after []pikpak.File, known map[string]bool, name string) (pikpak.File, bool) {
 	var first pikpak.File
 	for _, f := range after {
 		if known[f.ID] || f.Kind != "drive#file" {
