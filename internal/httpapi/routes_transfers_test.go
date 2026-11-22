@@ -239,3 +239,41 @@ func TestCreateUploadRejectsMissingFile(t *testing.T) {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
 }
+
+func TestCreateDownloadUsesDefaultDir(t *testing.T) {
+	env := newTransferEnv(t, allowAll)
+	defer env.close()
+	dir := t.TempDir()
+	if err := env.st.SetUserSetting(t.Context(), 1000, "download_dir", dir); err != nil {
+		t.Fatalf("SetUserSetting: %v", err)
+	}
+	h := NewMux(env.deps)
+
+	// No dest_dir: the file goes to the directory the user configured once.
+	rec, body := postJSON(t, h, "/api/downloads", "1000", `{"file_ids":["f1"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	jobs, err := env.st.ListDownloadJobs(t.Context(), 1000)
+	if err != nil {
+		t.Fatalf("ListDownloadJobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].DestDir != dir {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestCreateDownloadWithoutDefaultDirAsksForOne(t *testing.T) {
+	env := newTransferEnv(t, allowAll)
+	defer env.close()
+	h := NewMux(env.deps)
+
+	rec, body := postJSON(t, h, "/api/downloads", "1000", `{"file_ids":["f1"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	perr, _ := body["error"].(map[string]any)
+	if perr["code"] != "download_dir_unset" {
+		t.Fatalf("code = %v", perr["code"])
+	}
+}

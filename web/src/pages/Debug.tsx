@@ -1,6 +1,7 @@
 import { TrimApp } from '@trimjs/web-app'
 import { useCallback, useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api'
+import { copyText } from '../clipboard'
 
 type Health = { ok: boolean; version: string; uid: number }
 
@@ -530,7 +531,16 @@ export function BindCard({ onChange }: { onChange: () => void }) {
 
       {!me && !error && <p className="muted">检查中…</p>}
 
-      {me && me.bound && <p className="ok">已绑定 PikPak 账号（飞牛 UID {me.uid}）。</p>}
+      {me && me.bound && (
+        <p className="ok">
+          已绑定 PikPak 账号（飞牛 UID {me.uid}）。
+          {!flow && (
+            <button type="button" className="link" onClick={bind} disabled={busy}>
+              重新授权
+            </button>
+          )}
+        </p>
+      )}
 
       {me && !me.bound && !flow && (
         <>
@@ -549,6 +559,17 @@ export function BindCard({ onChange }: { onChange: () => void }) {
             <a href={flow.verify_url} target="_blank" rel="noreferrer">
               {flow.verify_url}
             </a>
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                void copyText(flow.verify_url).then((ok) => {
+                  if (!ok) setError('复制失败，请手动选中链接复制')
+                })
+              }}
+            >
+              复制链接
+            </button>
           </p>
           <p className="muted">
             剩余 {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}，等待授权…

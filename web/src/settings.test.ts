@@ -7,6 +7,7 @@ const all = {
   conflict: 'skip',
   play_mode: 'redirect',
   language: 'en',
+  download_dir: '/vol1/media',
 }
 
 describe('pickSettings', () => {
@@ -17,6 +18,7 @@ describe('pickSettings', () => {
     })
     expect(Object.keys(pickSettings(all, userSettingKeys)).sort()).toEqual([
       'conflict',
+      'download_dir',
       'language',
       'play_mode',
     ])

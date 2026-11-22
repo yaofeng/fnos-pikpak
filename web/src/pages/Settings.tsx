@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiGet, apiPost, apiPut } from '../api'
 import { formatSize } from '../files'
+import { askPath, hostAvailable, pickDirectory } from '../fnosSdk'
 import {
   changedSettings,
   globalSettingKeys,
@@ -145,6 +146,21 @@ export default function Settings() {
     }
   }
 
+  async function chooseDownloadDir() {
+    setError('')
+    let dir = ''
+    if (hostAvailable()) {
+      const picked = await pickDirectory('选择默认下载目录')
+      if (!picked.length) return
+      dir = picked[0]
+    } else {
+      const asked = askPath('默认下载目录（绝对路径）')
+      if (!asked) return
+      dir = asked
+    }
+    editUser('download_dir', dir)
+  }
+
   function editUser(key: string, value: string) {
     setUserSettings((prev) => ({ ...prev, [key]: value }))
     setSaved('')
@@ -202,6 +218,23 @@ export default function Settings() {
           </select>
         </label>
         <p className="muted small">当前：{optionLabel(conflictOptions, userSettings.conflict ?? 'rename')}</p>
+
+        <label className="field">
+          <span>默认下载目录</span>
+          <div className="dir-row">
+            <input
+              value={userSettings.download_dir ?? ''}
+              placeholder="未设置，下载时会提示先设置"
+              onChange={(e) => editUser('download_dir', e.target.value)}
+            />
+            <button type="button" onClick={() => void chooseDownloadDir()}>
+              选择目录
+            </button>
+          </div>
+        </label>
+        <p className="muted small">
+          「我的文件」里的下载直接保存到该目录；必须是已授权共享文件夹内的目录。留空表示不设置。
+        </p>
 
         <label className="field">
           <span>同时下载数（全局）</span>

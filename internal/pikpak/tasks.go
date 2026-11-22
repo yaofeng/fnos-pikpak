@@ -118,9 +118,14 @@ func (c *Client) RetryTask(ctx context.Context, id string) error {
 		c.BaseDrive+"/drive/v1/tasks/"+url.PathEscape(id)+"/retry", map[string]any{}, nil)
 }
 
-// ClearTasks removes every finished task from the list.
+// ClearTasks removes every finished task from the list. The body is what the
+// official web client sends; an empty body clears nothing.
 func (c *Client) ClearTasks(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/tasks:clear", map[string]any{}, nil)
+	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/tasks:clear", map[string]any{
+		"type":      "offline",
+		"phases":    []string{"PHASE_TYPE_COMPLETE", "PHASE_TYPE_ERROR"},
+		"client_id": "",
+	}, nil)
 }
 
 func (c *Client) GetTask(ctx context.Context, id string) (Task, error) {

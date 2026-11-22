@@ -285,10 +285,12 @@ func TestRetryTaskPostsToRetryEndpoint(t *testing.T) {
 	}
 }
 
-func TestClearTasksPostsToClearEndpoint(t *testing.T) {
+func TestClearTasksPostsPhasesToClearEndpoint(t *testing.T) {
 	var gotPath, gotMethod string
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
@@ -299,6 +301,15 @@ func TestClearTasksPostsToClearEndpoint(t *testing.T) {
 	}
 	if gotMethod != http.MethodPost || gotPath != "/drive/v1/tasks:clear" {
 		t.Fatalf("%s %s", gotMethod, gotPath)
+	}
+	// An empty body clears nothing: the official web sends the task type and
+	// the phases it wants dropped.
+	if gotBody["type"] != "offline" {
+		t.Fatalf("body type = %v", gotBody["type"])
+	}
+	phases, _ := gotBody["phases"].([]any)
+	if len(phases) != 2 || phases[0] != "PHASE_TYPE_COMPLETE" || phases[1] != "PHASE_TYPE_ERROR" {
+		t.Fatalf("phases = %v", gotBody["phases"])
 	}
 }
 

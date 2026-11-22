@@ -402,16 +402,33 @@ button.link {
 }
 
 .selection-bar {
+  /* Stays at the bottom of the visible area so the bulk actions are always
+     reachable, however far the file list scrolls. */
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   padding: 8px 12px;
-  margin: 8px 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
   font-size: 13px;
+  max-width: calc(100vw - 32px);
+}
+
+.dir-row {
+  display: flex;
+  gap: 8px;
+}
+
+.dir-row input {
+  flex: 1;
 }
 
 .context-menu {
@@ -893,4 +910,10 @@ button.link {
 
 .notice.danger {
   color: var(--error);
+}
+
+.notice-action {
+  margin-left: 8px;
+  border-color: currentColor;
+  color: inherit;
 }

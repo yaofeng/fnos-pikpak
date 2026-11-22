@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"fnos-pikpak/internal/fnos"
@@ -39,6 +40,9 @@ var settingSpecs = map[string]settingSpec{
 	"conflict":             {def: "rename", valid: oneOf("rename", "skip", "overwrite")},
 	"play_mode":            {def: "proxy", valid: oneOf("proxy", "redirect")},
 	"language":             {def: "zh-CN", valid: oneOf("zh-CN", "en")},
+	// Empty means "not set yet". Whether the directory may be written is a
+	// question only fnOS can answer, so it is checked separately.
+	"download_dir": {def: "", valid: func(s string) bool { return s == "" || filepath.IsAbs(s) }},
 }
 
 func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
@@ -46,7 +50,7 @@ func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 		writeJSON(w, http.StatusOK, readSettings(r, deps.Store, 0))
 	})
 	mux.HandleFunc("PUT /api/settings", func(w http.ResponseWriter, r *http.Request) {
-		writeSettings(w, r, deps.Store, 0)
+		writeSettings(w, r, deps, 0)
 	})
 	mux.HandleFunc("GET /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
@@ -54,7 +58,7 @@ func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 	})
 	mux.HandleFunc("PUT /api/user-settings", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		writeSettings(w, r, deps.Store, id.UID)
+		writeSettings(w, r, deps, id.UID)
 	})
 }
 
@@ -80,7 +84,8 @@ func readSettings(r *http.Request, st *store.Store, uid int) map[string]string {
 
 // writeSettings validates the whole body first, so a rejected key cannot leave
 // a half-applied update. It reports whether the response was written.
-func writeSettings(w http.ResponseWriter, r *http.Request, st *store.Store, uid int) bool {
+func writeSettings(w http.ResponseWriter, r *http.Request, deps Deps, uid int) bool {
+	st := deps.Store
 	var body map[string]string
 	if err := decodeJSON(w, r, &body); err != nil {
 		return false
@@ -97,6 +102,14 @@ func writeSettings(w http.ResponseWriter, r *http.Request, st *store.Store, uid 
 		}
 		if !spec.valid(value) {
 			writeError(w, http.StatusBadRequest, "invalid_setting", "设置项 "+key+" 的值不合法")
+			return false
+		}
+	}
+	// A download directory must be one this user may write to, which only the
+	// fnOS guard can decide.
+	if dir, ok := body["download_dir"]; ok && uid != 0 && dir != "" {
+		if err := checkDir(r, deps, uid, dir, true); err != nil {
+			writeDirError(w, err)
 			return false
 		}
 	}

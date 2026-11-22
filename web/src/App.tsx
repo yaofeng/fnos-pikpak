@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import Toaster from './components/Toaster'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
@@ -66,6 +66,7 @@ export default function App() {
   const t = makeT(lang)
   setLang(lang)
   const location = useLocation()
+  const navigate = useNavigate()
   const [me, setMe] = useState<Me | null>(null)
   const [account, setAccount] = useState<Account | null>(null)
 
@@ -155,7 +156,10 @@ export default function App() {
 
         {me?.bound && me.status === 'reauth_required' && (
           <div className="notice danger">
-            {t('state.reauth')} · <NavLink to="/bind">{t('action.rebind')}</NavLink>
+            <span>{t('state.reauth')}</span>
+            <button type="button" className="notice-action" onClick={() => navigate('/bind')}>
+              {t('action.rebind')}
+            </button>
           </div>
         )}
 

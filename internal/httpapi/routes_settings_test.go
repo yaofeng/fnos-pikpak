@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -110,4 +111,43 @@ func errCode(body map[string]any) string {
 	e, _ := body["error"].(map[string]any)
 	c, _ := e["code"].(string)
 	return c
+}
+
+func TestSettingsValidateDownloadDir(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	// The real guard asks fnOS for the user's folders; this test is about the
+	// path shape and the storage, so every absolute path is allowed.
+	deps.DirGuard = allowAll
+	h := NewMux(deps)
+
+	rec, _ := putJSON(t, h, "/api/user-settings", "1000", `{"download_dir":"relative/dir"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("relative dir status = %d", rec.Code)
+	}
+
+	dir := t.TempDir()
+	rec, body := putJSON(t, h, "/api/user-settings", "1000", `{"download_dir":"`+dir+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	if body["download_dir"] != dir {
+		t.Fatalf("download_dir = %v", body["download_dir"])
+	}
+
+	// An empty value clears it again.
+	rec, body = putJSON(t, h, "/api/user-settings", "1000", `{"download_dir":""}`)
+	if rec.Code != http.StatusOK || body["download_dir"] != "" {
+		t.Fatalf("clear status = %d body=%v", rec.Code, body)
+	}
+}
+
+func TestSettingsRejectDownloadDirOutsideGrants(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	deps.DirGuard = func(context.Context, int, string, bool) error { return ErrDirForbidden }
+	h := NewMux(deps)
+
+	rec, body := putJSON(t, h, "/api/user-settings", "1000", `{"download_dir":"/srv/other"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
 }

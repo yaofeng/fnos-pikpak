@@ -5,7 +5,7 @@
 export type SettingValues = Record<string, string>
 
 export const globalSettingKeys = ['download_concurrency', 'upload_concurrency'] as const
-export const userSettingKeys = ['conflict', 'play_mode', 'language'] as const
+export const userSettingKeys = ['conflict', 'play_mode', 'language', 'download_dir'] as const
 
 export function pickSettings(all: SettingValues, keys: readonly string[]): SettingValues {
   const out: SettingValues = {}

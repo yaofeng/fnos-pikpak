@@ -91,7 +91,17 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_ids", "一次需要选择 1 到 200 个文件")
 			return
 		}
-		destDir := filepath.Clean(strings.TrimSpace(body.DestDir))
+		destDir := strings.TrimSpace(body.DestDir)
+		if destDir == "" {
+			// The client sends no directory any more: downloads land in the
+			// folder the user configured once, in settings.
+			destDir = downloadDir(r, deps.Store, id.UID)
+			if destDir == "" {
+				writeError(w, http.StatusBadRequest, "download_dir_unset", "请先在设置中指定默认下载目录")
+				return
+			}
+		}
+		destDir = filepath.Clean(destDir)
 		if !filepath.IsAbs(destDir) {
 			writeError(w, http.StatusBadRequest, "bad_path", "下载目录必须是绝对路径")
 			return
@@ -401,6 +411,18 @@ func writeDirError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadGateway, "fnos_error", probe.Redact(err.Error()))
+}
+
+// downloadDir returns the user's configured download folder, falling back to
+// the global one. Empty means nothing has been configured yet.
+func downloadDir(r *http.Request, st *store.Store, uid int) string {
+	if v, err := st.GetUserSetting(r.Context(), uid, "download_dir"); err == nil && v != "" {
+		return v
+	}
+	if v, err := st.GetSetting(r.Context(), "download_dir"); err == nil && v != "" {
+		return v
+	}
+	return ""
 }
 
 func conflictPolicy(ctx context.Context, st *store.Store, uid int) transfer.ConflictPolicy {

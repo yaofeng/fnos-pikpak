@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiGet, apiPatch, apiPost } from '../api'
+import { apiGet, apiPatch, apiPost, type ApiError } from '../api'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
 import Player from '../components/Player'
-import { askPath, hostAvailable, pickDirectory, pickFiles } from '../fnosSdk'
+import { askPath, hostAvailable, pickFiles } from '../fnosSdk'
 import {
   filterFiles,
   isFolder,
@@ -180,7 +180,7 @@ export default function Files() {
     }
   }
 
-  async function downloadTo(ids: string[]) {
+  async function download(ids: string[]) {
     const fileIDs = ids.filter((id) => {
       const f = items.find((item) => item.id === id)
       return f && !isFolder(f)
@@ -189,30 +189,22 @@ export default function Files() {
       setError('文件夹暂不支持下载，请逐个选择其中的文件。')
       return
     }
-    let dir = ''
-    if (hostAvailable()) {
-      const picked = await pickDirectory('选择下载目录')
-      if (!picked.length) return
-      dir = picked[0]
-    } else {
-      const asked = askPath('下载目录（绝对路径）')
-      if (!asked) return
-      dir = asked
-    }
     setBusy(true)
     try {
-      // Registering the folder with fnOS first makes the ACL check explicit:
-      // the download only starts for a directory this user may write to.
-      await apiPost('fs/authorize', { path: dir, need: 'write' })
+      // No directory in the request: downloads go to the folder configured in
+      // settings, which the server validates against the user's grants.
       const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', {
         file_ids: fileIDs,
-        dest_dir: dir,
       })
       const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
       setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
       setSelected(new Set())
     } catch (e) {
-      setError((e as Error).message)
+      setError(
+        (e as ApiError).code === 'download_dir_unset'
+          ? '还没有设置默认下载目录，请到「设置 → 传输」指定一个目录。'
+          : (e as Error).message,
+      )
     } finally {
       setBusy(false)
     }
@@ -333,8 +325,8 @@ export default function Files() {
           <button type="button" onClick={() => setMove({ mode: 'copy', ids: selectedIds })} disabled={busy}>
             复制到…
           </button>
-          <button type="button" onClick={() => void downloadTo(selectedIds)} disabled={busy}>
-            下载到…
+          <button type="button" onClick={() => void download(selectedIds)} disabled={busy}>
+            下载
           </button>
           <button type="button" onClick={() => void trash(selectedIds)} disabled={busy}>
             移入回收站
@@ -412,8 +404,8 @@ export default function Files() {
             </button>
           )}
           {!isFolder(menu.file) && (
-            <button type="button" onClick={() => void downloadTo([menu.file.id])}>
-              下载到…
+            <button type="button" onClick={() => void download([menu.file.id])}>
+              下载
             </button>
           )}
           <button type="button" className="danger" onClick={() => void trash([menu.file.id])}>
