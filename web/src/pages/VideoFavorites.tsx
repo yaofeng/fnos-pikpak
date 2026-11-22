@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
 import Player from '../components/Player'
-import { RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
+import { FileIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
 import { formatSize } from '../files'
 import { iinaURL, isMacOS } from '../iina'
 import { useFileSelection } from '../useFileSelection'
@@ -194,14 +194,26 @@ export default function VideoFavorites() {
           <p className="muted small">在分享里选中视频后点「收藏视频」，之后可以在这里直接预览或完整播放。</p>
         </div>
       ) : (
-        groups.map((group) => (
-          <section className="vgroup" key={group.key}>
-            <h3 className="vgroup-head">
-              {group.label}
-              <span className="muted small">{group.items.length} 个视频</span>
-            </h3>
-            <table className="table fav-table">
-              <tbody>
+        // One list in the 我的文件 shape: a group header row, then the videos
+        // of that group with the same glyph, size and time columns.
+        <table className="file-table vfav-table">
+          <thead>
+            <tr>
+              <th className="col-open" />
+              <th>文件名</th>
+              <th className="col-size">大小</th>
+              <th className="col-time">收藏时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((group) => (
+              <Fragment key={group.key}>
+                <tr className="vgroup-row">
+                  <td colSpan={4}>
+                    {group.label}
+                    <span className="muted small"> · {group.items.length} 个视频</span>
+                  </td>
+                </tr>
                 {group.items.map((f) => (
                   <tr
                     key={f.id}
@@ -209,24 +221,24 @@ export default function VideoFavorites() {
                     onClick={(e) => select(order.indexOf(String(f.id)), e)}
                     onDoubleClick={() => void fullPlay(f)}
                   >
+                    <td className="col-open" />
                     <td>
                       <span className="shine-name">
-                        <StarIcon size={16} />
-                        <span>{f.display_name || f.name}</span>
+                        <FileIcon file={{ id: f.file_id, parent_id: '', name: f.name, kind: 'drive#file', size: f.size }} size={20} />
+                        <span title={f.name}>{f.display_name || f.name}</span>
                       </span>
                       {f.display_name && <span className="muted small">（{f.name}）</span>}
                     </td>
-                    <td className="muted small">{f.share_title || f.share_id}</td>
                     <td className="col-size muted small">{formatSize(f.size)}</td>
                     <td className="col-time muted small">
                       {f.created_at ? new Date(f.created_at).toLocaleString() : '—'}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </section>
-        ))
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
       )}
 
       {playing && (

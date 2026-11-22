@@ -1416,18 +1416,14 @@ button.primary {
   gap: 12px;
 }
 
-.vgroup {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.vgroup-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin: 8px 0 0;
-  font-size: 14px;
+.vgroup-row td {
+  padding-top: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .fav-table tbody tr {
