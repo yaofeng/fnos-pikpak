@@ -148,6 +148,70 @@ export function GridIcon({ size = 16 }: IconProps) {
   )
 }
 
+export function FolderIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l1.8 1.8h8.2A1.5 1.5 0 0 1 20 8.3v9.2A1.5 1.5 0 0 1 18.5 19h-14A1.5 1.5 0 0 1 3 17.5v-11Z" />
+    </svg>
+  )
+}
+
+export function ClockIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 7.5V12l3 2" />
+    </svg>
+  )
+}
+
+export function TransferIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M7 4v14" />
+      <path d="m4 15 3 3 3-3" />
+      <path d="M17 20V6" />
+      <path d="m14 9 3-3 3 3" />
+    </svg>
+  )
+}
+
+export function MagnetIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M5 4v8a7 7 0 0 0 14 0V4h-4v8a3 3 0 0 1-6 0V4H5Z" />
+      <path d="M5 8h4M15 8h4" />
+    </svg>
+  )
+}
+
+export function GlobeIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M4 12h16" />
+      <path d="M12 4c2.5 2.2 3.8 5 3.8 8s-1.3 5.8-3.8 8c-2.5-2.2-3.8-5-3.8-8S9.5 6.2 12 4Z" />
+    </svg>
+  )
+}
+
+export function GearIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4 6 18M18 18l-1.6-1.6M7.6 7.6 6 6" />
+    </svg>
+  )
+}
+
+export function WrenchIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M14.2 6.4a3.9 3.9 0 0 0 5.1 5.1l-8.4 8.4a2.2 2.2 0 0 1-3.1 0l-2-2a2.2 2.2 0 0 1 0-3.1l8.4-8.4Z" />
+    </svg>
+  )
+}
+
 // FolderGlyph is the blue two-tone folder the fnOS list and grid both use.
 export function FolderGlyph({ size = 22 }: IconProps) {
   return (

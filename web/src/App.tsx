@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import Toaster from './components/Toaster'
+import { ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
 import Bind from './pages/Bind'
 import Debug from './pages/Debug'
 import Files from './pages/Files'
+import Search from './pages/Search'
 import Recent from './pages/Recent'
 import Settings from './pages/Settings'
 import Tasks from './pages/Tasks'
@@ -33,11 +35,22 @@ type Account = {
 const navItems = [
   { to: '/files', key: 'nav.files' },
   { to: '/recent', key: 'nav.recent' },
-  { to: '/tasks', key: 'nav.tasks' },
-  { to: '/transfers', key: 'nav.transfers' },
   { to: '/trash', key: 'nav.trash' },
-  { to: '/settings', key: 'nav.settings' },
+  { to: '/transfers', key: 'nav.transfers' },
+  { to: '/tasks', key: 'nav.tasks' },
+  { to: '/search', key: 'nav.search' },
 ]
+
+const navIcons: Record<string, ReactNode> = {
+  '/files': <FolderIcon size={17} />,
+  '/recent': <ClockIcon size={17} />,
+  '/trash': <TrashIcon size={17} />,
+  '/transfers': <TransferIcon size={17} />,
+  '/tasks': <MagnetIcon size={17} />,
+  '/search': <GlobeIcon size={17} />,
+  '/settings': <GearIcon size={17} />,
+  '/debug': <WrenchIcon size={17} />,
+}
 
 const titles: Record<string, string> = {
   '/files': 'nav.files',
@@ -46,6 +59,7 @@ const titles: Record<string, string> = {
   '/transfers': 'nav.transfers',
   '/trash': 'nav.trash',
   '/settings': 'nav.settings',
+  '/search': 'nav.search',
   '/bind': 'nav.bind',
   '/debug': 'nav.debug',
 }
@@ -118,7 +132,8 @@ export default function App() {
         <nav className="nav">
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
-              {t(item.key)}
+              {navIcons[item.to]}
+              <span>{t(item.key)}</span>
             </NavLink>
           ))}
         </nav>
@@ -133,9 +148,14 @@ export default function App() {
               {t('action.bind')}
             </NavLink>
           )}
+          <NavLink to="/settings" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
+            {navIcons['/settings']}
+            <span>{t('nav.settings')}</span>
+          </NavLink>
           {me?.debug && (
             <NavLink to="/debug" className="nav-item subtle">
-              {t('nav.debug')}
+              {navIcons['/debug']}
+              <span>{t('nav.debug')}</span>
             </NavLink>
           )}
         </div>
@@ -146,11 +166,13 @@ export default function App() {
           <strong>{title}</strong>
           {account && (
             <span className="quota-pill" title={`${pct.toFixed(1)}%`}>
-              <span>
+              <span
+                className="quota-fill"
+                aria-hidden="true"
+                style={{ width: pct > 0 ? `max(${pct}%, 4px)` : '0' }}
+              />
+              <span className="quota-text">
                 {formatBytes(account.quota_usage)} / {formatBytes(account.quota_limit)}
-              </span>
-              <span className="quota-meter" aria-hidden="true">
-                <span style={{ width: `${pct}%` }} />
               </span>
             </span>
           )}
@@ -179,6 +201,7 @@ export default function App() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/transfers" element={<Transfers />} />
             <Route path="/trash" element={<Trash />} />
+            <Route path="/search" element={<Search />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bind" element={<Bind />} />
             {me?.debug && <Route path="/debug" element={<Debug />} />}

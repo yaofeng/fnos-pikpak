@@ -643,27 +643,6 @@ button.primary {
   color: #7ab4ff;
 }
 
-.selection-bar {
-  /* Stays at the bottom of the visible area so the bulk actions are always
-     reachable, however far the file list scrolls. */
-  position: fixed;
-  left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%);
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-  font-size: 13px;
-  max-width: calc(100vw - 32px);
-}
-
 .folder-list {
   list-style: none;
   margin: 0;
@@ -795,11 +774,23 @@ button.primary {
 }
 
 .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   padding: 8px 10px;
   border-radius: 6px;
   color: var(--fg);
   text-decoration: none;
   font-size: 14px;
+}
+
+.nav-item svg {
+  flex: none;
+  opacity: 0.85;
+}
+
+.nav-item.active svg {
+  opacity: 1;
 }
 
 .nav-item:hover {
@@ -874,39 +865,37 @@ button.primary {
 }
 
 .page {
+  /* Every page follows the visible width; nothing is capped to a column. */
   width: 100%;
-  max-width: 1080px;
+  max-width: none;
   margin: 0;
   padding: 20px 24px 48px;
 }
 
+/* The quota reads as one pill: the usage is the pill's own background. */
 .quota-pill {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--bg);
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
-}
-
-.quota-meter {
-  display: inline-block;
-  width: 64px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border);
   overflow: hidden;
 }
 
-.quota-meter > span {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
+.quota-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(10, 124, 255, 0.22);
+  transition: width 0.3s ease;
+}
+
+.quota-text {
+  position: relative;
 }
 
 @media (max-width: 768px) {
@@ -1188,4 +1177,88 @@ button.primary {
   margin-left: 8px;
   border-color: currentColor;
   color: inherit;
+}
+
+.search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.search-form input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.search-results {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.search-results li {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.search-result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search-result-head a {
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-head a:hover {
+  text-decoration: underline;
+}
+
+.search-host {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.search-snippet {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.search-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Status bar of the fnOS file manager: counts only, pinned under the content. */
+.status-bar {
+  position: fixed;
+  left: 220px;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 24px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .status-bar {
+    left: 0;
+    padding: 0 16px;
+  }
 }

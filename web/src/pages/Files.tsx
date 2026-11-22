@@ -448,27 +448,6 @@ export default function Files() {
       {error && <p className="error">{error}</p>}
       {notice && <p className="ok small">{notice}</p>}
 
-      {selectedIds.length > 1 && (
-        <div className="selection-bar">
-          <span>已选 {selectedIds.length} 项</span>
-          <button type="button" onClick={() => setMove({ mode: 'move', ids: selectedIds })} disabled={busy}>
-            移动到…
-          </button>
-          <button type="button" onClick={() => setMove({ mode: 'copy', ids: selectedIds })} disabled={busy}>
-            复制到…
-          </button>
-          <button type="button" onClick={() => void download(selectedIds)} disabled={busy}>
-            下载
-          </button>
-          <button type="button" onClick={() => void trash(selectedIds)} disabled={busy}>
-            移入回收站
-          </button>
-          <button type="button" onClick={() => clearSelection()}>
-            取消选择
-          </button>
-        </div>
-      )}
-
       {!loading && shown.length === 0 && !error && (
         <p className="muted">{items.length === 0 ? '这个文件夹是空的。' : '没有匹配的条目。'}</p>
       )}
@@ -511,6 +490,12 @@ export default function Files() {
             style={{ left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.width, height: marqueeRect.height }}
           />
         )}
+      </div>
+
+      <div className="status-bar">
+        {selectedIds.length > 0
+          ? `选中 ${selectedIds.length} 项（共 ${shown.length} 项）`
+          : `共 ${shown.length} 项`}
       </div>
 
       <div ref={sentinel} className="sentinel" />

@@ -9,6 +9,7 @@ const messages: Record<string, Entry> = {
   'nav.transfers': { 'zh-CN': '传输', en: 'Transfers' },
   'nav.trash': { 'zh-CN': '回收站', en: 'Trash' },
   'nav.settings': { 'zh-CN': '设置', en: 'Settings' },
+  'nav.search': { 'zh-CN': '全网搜索', en: 'Web search' },
   'nav.bind': { 'zh-CN': '账号', en: 'Account' },
   'nav.debug': { 'zh-CN': '调试', en: 'Debug' },
   'state.loading': { 'zh-CN': '加载中…', en: 'Loading…' },

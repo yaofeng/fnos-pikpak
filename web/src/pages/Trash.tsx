@@ -158,21 +158,6 @@ export default function Trash() {
       {error && <p className="error">{error}</p>}
       {notice && <p className="ok small">{notice}</p>}
 
-      {ids.length > 1 && (
-        <div className="selection-bar">
-          <span>已选 {ids.length} 项</span>
-          <button type="button" onClick={() => void run('untrash', ids)} disabled={busy}>
-            恢复
-          </button>
-          <button type="button" onClick={() => void run('delete', ids)} disabled={busy}>
-            永久删除
-          </button>
-          <button type="button" onClick={() => clearSelection()}>
-            取消选择
-          </button>
-        </div>
-      )}
-
       {!loading && items.length === 0 && !error && <p className="muted">回收站是空的。</p>}
 
       {items.length > 0 && (
@@ -186,6 +171,8 @@ export default function Trash() {
           )}
         </div>
       )}
+
+      <div className="status-bar">{ids.length > 0 ? `选中 ${ids.length} 项（共 ${items.length} 项）` : `共 ${items.length} 项`}</div>
 
       <div ref={sentinel} className="sentinel" />
       {loading && <p className="muted">加载中…</p>}
