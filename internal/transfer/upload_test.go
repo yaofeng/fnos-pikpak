@@ -211,3 +211,39 @@ func TestUploadMissingLocalFileFails(t *testing.T) {
 		t.Fatal("missing source still hit the API")
 	}
 }
+
+func TestUploadRefusesSymlinkedSource(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("not yours"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "innocent.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeUploadClient{}
+	u := &Uploader{Client: fake}
+	job := store.UploadJob{ID: "u1", UID: 1000, LocalPath: link, ParentID: "p1", RemoteName: "innocent.txt"}
+
+	if err := u.Run(context.Background(), &job, PolicyRename); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("err = %v, want ErrUnsafePath", err)
+	}
+	if len(fake.requested) != 0 {
+		t.Fatalf("a symlinked source reached the API: %+v", fake.requested)
+	}
+}
+
+func TestUploadRechecksSourceDirectory(t *testing.T) {
+	job := uploadJob(t, "a.mkv")
+	fake := &fakeUploadClient{}
+	u := &Uploader{
+		Client:   fake,
+		CheckDir: func(string) error { return ErrDirRejected },
+	}
+	if err := u.Run(context.Background(), &job, PolicyRename); !errors.Is(err, ErrDirRejected) {
+		t.Fatalf("err = %v, want ErrDirRejected", err)
+	}
+	if len(fake.requested) != 0 {
+		t.Fatal("a rejected directory still hit the API")
+	}
+}

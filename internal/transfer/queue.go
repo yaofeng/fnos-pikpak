@@ -281,7 +281,7 @@ func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
 	job.ErrorMessage = ""
 	_ = q.Store.PutUploadJob(ctx, job)
 
-	u, err := q.uploader(job.UID)
+	u, err := q.uploader(job)
 	if err != nil {
 		q.failUpload(job, "client_unavailable", err)
 		return
@@ -315,15 +315,20 @@ func (q *Queue) runUpload(parent context.Context, job store.UploadJob) {
 	_ = q.Store.PutUploadJob(context.WithoutCancel(parent), cur)
 }
 
-func (q *Queue) uploader(uid int) (*Uploader, error) {
+func (q *Queue) uploader(job store.UploadJob) (*Uploader, error) {
 	if q.NewUploader != nil {
-		return q.NewUploader(uid)
+		return q.NewUploader(job.UID)
 	}
-	client, err := q.Clients(context.Background(), uid)
+	client, err := q.Clients(context.Background(), job.UID)
 	if err != nil {
 		return nil, err
 	}
-	return &Uploader{Client: client}, nil
+	u := &Uploader{Client: client}
+	if q.CheckDir != nil {
+		uid := job.UID
+		u.CheckDir = func(dir string) error { return q.CheckDir(context.Background(), uid, dir) }
+	}
+	return u, nil
 }
 
 func (q *Queue) failUpload(job store.UploadJob, code string, err error) {

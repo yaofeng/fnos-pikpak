@@ -277,3 +277,78 @@ func TestCreateDownloadWithoutDefaultDirAsksForOne(t *testing.T) {
 		t.Fatalf("code = %v", perr["code"])
 	}
 }
+
+// grantedUnder builds a DirGuard that allows only one directory tree, the way
+// FnosDirGuard answers for a user with a single granted folder.
+func grantedUnder(allowed string) DirGuard {
+	return func(_ context.Context, _ int, dir string, _ bool) error {
+		if dir == allowed || strings.HasPrefix(dir, allowed+string(filepath.Separator)) {
+			return nil
+		}
+		return ErrDirForbidden
+	}
+}
+
+func TestCreateUploadRejectsSymlinkOutsideGrants(t *testing.T) {
+	allowed, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("not yours"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := newTransferEnv(t, grantedUnder(allowed))
+	defer env.close()
+	h := NewMux(env.deps)
+
+	link := filepath.Join(allowed, "innocent.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := json.Marshal(map[string]any{"local_paths": []string{link}, "parent_id": ""})
+	rec, body := postJSON(t, h, "/api/uploads", "1000", string(raw))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	jobs, err := env.st.ListUploadJobs(t.Context(), 1000)
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("jobs = %+v err = %v", jobs, err)
+	}
+}
+
+func TestCreateUploadStoresResolvedSource(t *testing.T) {
+	allowed, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(allowed, "real.txt")
+	if err := os.WriteFile(real, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(allowed, "alias.txt")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	env := newTransferEnv(t, grantedUnder(allowed))
+	defer env.close()
+	h := NewMux(env.deps)
+
+	raw, _ := json.Marshal(map[string]any{"local_paths": []string{link}, "parent_id": ""})
+	rec, body := postJSON(t, h, "/api/uploads", "1000", string(raw))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	jobs, err := env.st.ListUploadJobs(t.Context(), 1000)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %+v err = %v", jobs, err)
+	}
+	if jobs[0].LocalPath != real {
+		t.Fatalf("local path = %q, want the resolved %q", jobs[0].LocalPath, real)
+	}
+}

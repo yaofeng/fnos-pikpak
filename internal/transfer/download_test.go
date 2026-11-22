@@ -209,7 +209,7 @@ func TestRunReportsProgress(t *testing.T) {
 	job := testJob(t, int64(len(payload)))
 	var reports int32
 	d := &Downloader{
-		Links:    staticLink(srv.URL, int64(len(payload))),
+		Links:      staticLink(srv.URL, int64(len(payload))),
 		OnProgress: func(int64) { atomic.AddInt32(&reports, 1) },
 	}
 	if err := d.Run(context.Background(), &job); err != nil {

@@ -151,28 +151,15 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 			}
 			path = p
 		} else {
-			if deps.Fnos == nil {
-				writeError(w, http.StatusServiceUnavailable, "fnos_unavailable", "飞牛文件服务未配置")
-				return
-			}
-			folders, err := deps.Fnos.GetUserAccessibleFolders(r.Context(), id.UID)
+			// The probe reads a whole file into an upload, so the path goes
+			// through the same resolution as a queued upload: a link under a
+			// granted folder must not reach a file outside it.
+			resolved, _, err := resolveUploadSource(r, deps, id.UID, body.LocalPath)
 			if err != nil {
-				writeError(w, http.StatusBadGateway, "fnos_error", probe.Redact(err.Error()))
+				writeUploadSourceError(w, err)
 				return
 			}
-			if !fnos.IsUnderAny(path, folders) {
-				writeError(w, http.StatusForbidden, "forbidden", "该路径不在当前用户的授权目录内")
-				return
-			}
-			acl, err := deps.Fnos.CheckUserACL(r.Context(), id.UID, []string{path})
-			if err != nil {
-				writeError(w, http.StatusBadGateway, "fnos_error", probe.Redact(err.Error()))
-				return
-			}
-			if len(acl) != 1 || !acl[0].Readable {
-				writeError(w, http.StatusForbidden, "forbidden", "当前用户没有读取该文件的权限")
-				return
-			}
+			path = resolved
 		}
 
 		client, err := deps.Sessions.ClientFor(r.Context(), id.UID)

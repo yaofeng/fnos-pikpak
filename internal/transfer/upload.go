@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"fnos-pikpak/internal/pikpak"
@@ -39,10 +40,30 @@ type Uploader struct {
 	Client UploadClient
 	// WaitTimeout bounds the wait for PikPak to finish processing an upload.
 	WaitTimeout time.Duration
+	// CheckDir re-validates the source directory at read time: grants can be
+	// revoked while a job waits in the queue.
+	CheckDir func(dir string) error
 }
 
 func (u *Uploader) Run(ctx context.Context, job *store.UploadJob, policy ConflictPolicy) (err error) {
-	st, err := os.Stat(job.LocalPath)
+	if u.CheckDir != nil {
+		if err := u.CheckDir(filepath.Dir(job.LocalPath)); err != nil {
+			return err
+		}
+	}
+	// The API resolved this path when the job was queued; O_NOFOLLOW refuses
+	// a link swapped in afterwards, which would read a file the user was
+	// never granted.
+	f, err := os.OpenFile(job.LocalPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return ErrUnsafePath
+		}
+		return err
+	}
+	defer f.Close()
+
+	st, err := f.Stat()
 	if err != nil {
 		return err
 	}
@@ -73,16 +94,13 @@ func (u *Uploader) Run(ctx context.Context, job *store.UploadJob, policy Conflic
 		}()
 	}
 
-	gcid, err := pikpak.GCIDFile(job.LocalPath)
+	gcid, err := pikpak.GCID(f, job.Size)
 	if err != nil {
 		return err
 	}
-
-	f, err := os.Open(job.LocalPath)
-	if err != nil {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	defer f.Close()
 
 	ticket, err := u.Client.RequestUpload(ctx, pikpak.UploadRequest{
 		Name:     job.RemoteName,
@@ -156,7 +174,6 @@ func (u *Uploader) lookup(ctx context.Context, job *store.UploadJob) (*pikpak.Fi
 }
 
 // existingNames was folded into scan.
-
 
 // uniqueName appends " (n)" before the extension until the name is free.
 func uniqueName(name string, taken map[string]bool) string {

@@ -223,18 +223,9 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 
 		created := []store.UploadJob{}
 		for _, raw := range body.LocalPaths {
-			path := filepath.Clean(strings.TrimSpace(raw))
-			if !filepath.IsAbs(path) {
-				writeError(w, http.StatusBadRequest, "bad_path", "上传源必须是绝对路径")
-				return
-			}
-			if err := checkDir(r, deps, id.UID, filepath.Dir(path), false); err != nil {
-				writeDirError(w, err)
-				return
-			}
-			st, err := os.Stat(path)
-			if err != nil || !st.Mode().IsRegular() {
-				writeError(w, http.StatusBadRequest, "bad_path", "上传源必须是可读的普通文件")
+			path, st, err := resolveUploadSource(r, deps, id.UID, raw)
+			if err != nil {
+				writeUploadSourceError(w, err)
 				return
 			}
 			job := store.UploadJob{
@@ -386,6 +377,50 @@ func notifyQueue(deps Deps) {
 	if deps.Queue != nil {
 		deps.Queue.Notify()
 	}
+}
+
+// errBadUploadSource means the given path cannot be uploaded as-is.
+var errBadUploadSource = errors.New("httpapi: bad upload source")
+
+// resolveUploadSource canonicalizes a client-supplied upload path. The path is
+// not trusted — a link inside a granted folder can point anywhere — so the
+// target is resolved and checked against the grants and the file ACL again.
+func resolveUploadSource(r *http.Request, deps Deps, uid int, raw string) (string, os.FileInfo, error) {
+	path := filepath.Clean(strings.TrimSpace(raw))
+	if !filepath.IsAbs(path) {
+		return "", nil, errBadUploadSource
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", nil, errBadUploadSource
+	}
+	if err := checkDir(r, deps, uid, filepath.Dir(resolved), false); err != nil {
+		return "", nil, err
+	}
+	// The directory ACL says nothing about this file's own ACL.
+	if deps.Fnos != nil {
+		acl, err := deps.Fnos.CheckUserACL(r.Context(), uid, []string{resolved})
+		if err != nil {
+			return "", nil, err
+		}
+		if len(acl) != 1 || !acl[0].Readable {
+			return "", nil, ErrDirForbidden
+		}
+	}
+	st, err := os.Stat(resolved)
+	if err != nil || !st.Mode().IsRegular() {
+		return "", nil, errBadUploadSource
+	}
+	return resolved, st, nil
+}
+
+// writeUploadSourceError maps the helper's errors onto the protocol.
+func writeUploadSourceError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errBadUploadSource) {
+		writeError(w, http.StatusBadRequest, "bad_path", "上传源必须是可读的普通文件")
+		return
+	}
+	writeDirError(w, err)
 }
 
 func checkDir(r *http.Request, deps Deps, uid int, dir string, needWrite bool) error {
