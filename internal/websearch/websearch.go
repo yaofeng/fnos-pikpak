@@ -1,0 +1,148 @@
+// Package websearch asks a search engine for pages on one site. PikPak has no
+// search endpoint of its own, so 全网搜索 is a site-scoped query: the person
+// types a keyword and the site filter is added here, never in the UI.
+package websearch
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// Site is the domain every query is limited to.
+const Site = "mypikpak.com"
+
+// defaultEndpoint is Serper's Google proxy: it honors the site: operator and
+// returns organic results as JSON.
+const defaultEndpoint = "https://google.serper.dev/search"
+
+// ErrEmptyQuery means there was nothing to search for.
+var ErrEmptyQuery = errors.New("websearch: empty query")
+
+// UpstreamError is a provider refusal, carrying only its status so callers can
+// tell a bad key (401/403) from an outage without reading the body.
+type UpstreamError struct {
+	Status int
+}
+
+func (e *UpstreamError) Error() string {
+	return fmt.Sprintf("websearch: upstream status %d", e.Status)
+}
+
+// Result is one organic hit.
+type Result struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet"`
+}
+
+// Client talks to one search provider. HTTP is injectable so tests can point
+// it at a local server.
+type Client struct {
+	Endpoint string
+	HTTP     *http.Client
+}
+
+// New returns the production client.
+func New() *Client {
+	return &Client{Endpoint: defaultEndpoint, HTTP: &http.Client{Timeout: 20 * time.Second}}
+}
+
+type serperResult struct {
+	Title   string `json:"title"`
+	Link    string `json:"link"`
+	Snippet string `json:"snippet"`
+}
+
+type serperResponse struct {
+	Organic []serperResult `json:"organic"`
+}
+
+// Search looks for keyword under Site. Only results hosted on the site are
+// returned; a provider that ignores the site filter therefore cannot put an
+// unrelated page in the list.
+func (c *Client) Search(ctx context.Context, apiKey, keyword string) ([]Result, error) {
+	q := normalizeKeyword(keyword)
+	if q == "" {
+		return nil, ErrEmptyQuery
+	}
+	payload, err := json.Marshal(map[string]any{
+		"q":   "site:" + Site + " " + q,
+		"gl":  "cn",
+		"hl":  "zh-cn",
+		"num": 20,
+	})
+	if err != nil {
+		return nil, err
+	}
+	endpoint := c.Endpoint
+	if endpoint == "" {
+		endpoint = defaultEndpoint
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("websearch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// The status is the whole story; the body and the key stay out of it.
+		return nil, &UpstreamError{Status: resp.StatusCode}
+	}
+	var parsed serperResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("websearch: decode response: %w", err)
+	}
+
+	out := make([]Result, 0, len(parsed.Organic))
+	for _, r := range parsed.Organic {
+		if !onSite(r.Link) {
+			continue
+		}
+		out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet})
+	}
+	return out, nil
+}
+
+// normalizeKeyword trims the keyword and drops a leading site: operator. The
+// filter is this package's job, so a pasted "site://mypikpak.com/" must not
+// stack a second, conflicting one on the same query.
+func normalizeKeyword(keyword string) string {
+	q := strings.TrimSpace(keyword)
+	for strings.HasPrefix(strings.ToLower(q), "site:") {
+		rest := q[len("site:"):]
+		if i := strings.IndexAny(rest, " \t\r\n"); i >= 0 {
+			q = strings.TrimSpace(rest[i+1:])
+		} else {
+			// The whole keyword was a bare site: expression.
+			return ""
+		}
+	}
+	return q
+}
+
+// onSite reports whether raw points at Site or a subdomain of it.
+func onSite(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == Site || strings.HasSuffix(host, "."+Site)
+}

@@ -49,6 +49,20 @@ const errorMessages: Record<string, Entry> = {
   bad_json: { 'zh-CN': '请求内容不是合法的 JSON', en: 'Request body is not valid JSON' },
   invalid_setting: { 'zh-CN': '设置项的值不合法', en: 'Invalid setting value' },
   unknown_setting: { 'zh-CN': '未知的设置项', en: 'Unknown setting' },
+  not_user_setting: { 'zh-CN': '该设置项属于全局设置', en: 'This setting is app-wide' },
+  empty_query: { 'zh-CN': '请输入搜索关键词', en: 'Enter a keyword' },
+  search_key_missing: {
+    'zh-CN': '全网搜索需要先在参数设置里填写搜索 API Key',
+    en: 'Web search needs a search API key in Settings',
+  },
+  search_key_rejected: {
+    'zh-CN': '搜索 API Key 无效，请在参数设置里检查',
+    en: 'The search API key was rejected. Check it in Settings.',
+  },
+  search_failed: {
+    'zh-CN': '搜索服务暂时不可用，请稍后重试',
+    en: 'The search service is unavailable. Try again later.',
+  },
 }
 
 // setLang/getLang keep one process-wide language so modules outside the React

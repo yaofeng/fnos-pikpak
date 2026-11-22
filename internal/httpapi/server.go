@@ -17,6 +17,7 @@ import (
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 	"fnos-pikpak/internal/transfer"
+	"fnos-pikpak/internal/websearch"
 )
 
 var errUnsupportedMediaType = errors.New("httpapi: unsupported media type")
@@ -42,6 +43,9 @@ type Deps struct {
 	// PlaySecret signs stream tokens. Nil means a random per-process secret,
 	// which keeps tests hermetic; production derives one from the store key.
 	PlaySecret []byte
+	// WebSearch finds pages on the PikPak site for 全网搜索. Nil means the
+	// default provider client.
+	WebSearch *websearch.Client
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -98,7 +102,6 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerUploadRoutes(inner, deps)
 		registerTransferRoutes(inner, deps)
 		registerTaskRoutes(inner, deps)
-		registerSearchRoutes(inner, deps)
 		registerPlayRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
@@ -107,6 +110,7 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Store != nil {
 		registerSettingsRoutes(inner, deps)
+		registerWebSearchRoutes(inner, deps)
 		registerDiagRoutes(inner, deps)
 	}
 

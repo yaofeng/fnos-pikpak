@@ -34,6 +34,23 @@ func oneOf(values ...string) func(string) bool {
 	}
 }
 
+// validAPIKey accepts an empty value (clear it) or a provider token: no
+// whitespace, so a pasted line break cannot corrupt the key.
+func validAPIKey(s string) bool {
+	if s == "" {
+		return true
+	}
+	if len(s) < 8 || len(s) > 200 {
+		return false
+	}
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 var settingSpecs = map[string]settingSpec{
 	"download_concurrency": {def: "2", valid: intInRange(1, 4)},
 	"upload_concurrency":   {def: "2", valid: intInRange(1, 4)},
@@ -43,6 +60,20 @@ var settingSpecs = map[string]settingSpec{
 	// Empty means "not set yet". Whether the directory may be written is a
 	// question only fnOS can answer, so it is checked separately.
 	"download_dir": {def: "", valid: func(s string) bool { return s == "" || filepath.IsAbs(s) }},
+	// The 全网搜索 provider key. It is global (one key serves every fnOS user)
+	// and secret: reads report only whether one is stored.
+	"search_api_key": {def: "", valid: validAPIKey},
+}
+
+// globalOnlySettings may be written and read through /api/settings only; a
+// /api/user-settings call cannot see or touch them.
+var globalOnlySettings = map[string]bool{
+	"search_api_key": true,
+}
+
+// secretSettings are stored but never echoed: a read says "_set" instead.
+var secretSettings = map[string]bool{
+	"search_api_key": true,
 }
 
 func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
@@ -67,6 +98,9 @@ func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 func readSettings(r *http.Request, st *store.Store, uid int) map[string]string {
 	out := make(map[string]string, len(settingSpecs))
 	for key, spec := range settingSpecs {
+		if uid != 0 && globalOnlySettings[key] {
+			continue
+		}
 		v := ""
 		var err error
 		if uid == 0 {
@@ -76,6 +110,13 @@ func readSettings(r *http.Request, st *store.Store, uid int) map[string]string {
 		}
 		if err != nil || !spec.valid(v) {
 			v = spec.def
+		}
+		if secretSettings[key] {
+			out[key+"_set"] = "0"
+			if v != "" {
+				out[key+"_set"] = "1"
+			}
+			continue
 		}
 		out[key] = v
 	}
@@ -98,6 +139,10 @@ func writeSettings(w http.ResponseWriter, r *http.Request, deps Deps, uid int) b
 		spec, ok := settingSpecs[key]
 		if !ok {
 			writeError(w, http.StatusBadRequest, "unknown_setting", "未知的设置项："+key)
+			return false
+		}
+		if uid != 0 && globalOnlySettings[key] {
+			writeError(w, http.StatusBadRequest, "not_user_setting", "设置项 "+key+" 属于全局设置，不能在个人设置里修改")
 			return false
 		}
 		if !spec.valid(value) {

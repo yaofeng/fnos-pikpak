@@ -93,6 +93,51 @@ func TestUserSettingsAreIsolated(t *testing.T) {
 	}
 }
 
+func TestSettingsKeepTheSearchKeyOutOfResponses(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	h := NewMux(deps)
+
+	rec, body := putJSON(t, h, "/api/settings", "1000", `{"search_api_key":"sk-abc123"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put status = %d body=%v", rec.Code, body)
+	}
+	if _, echoed := body["search_api_key"]; echoed {
+		t.Fatalf("the key came back in the response: %v", body)
+	}
+	if body["search_api_key_set"] != "1" {
+		t.Fatalf("search_api_key_set = %v", body["search_api_key_set"])
+	}
+
+	_, got := getJSON(t, h, "/api/settings", "1000")
+	if _, echoed := got["search_api_key"]; echoed {
+		t.Fatalf("a read returned the key: %v", got)
+	}
+
+	rec, body = putJSON(t, h, "/api/settings", "1000", `{"search_api_key":""}`)
+	if rec.Code != http.StatusOK || body["search_api_key_set"] != "0" {
+		t.Fatalf("clear status = %d body=%v", rec.Code, body)
+	}
+
+	rec, body = putJSON(t, h, "/api/settings", "1000", `{"search_api_key":"has space"}`)
+	if rec.Code != http.StatusBadRequest || errCode(body) != "invalid_setting" {
+		t.Fatalf("bad key: status=%d body=%v", rec.Code, body)
+	}
+}
+
+func TestSearchKeyIsNotAPerUserSetting(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	h := NewMux(deps)
+
+	rec, body := putJSON(t, h, "/api/user-settings", "1000", `{"search_api_key":"sk-abc123"}`)
+	if rec.Code != http.StatusBadRequest || errCode(body) != "not_user_setting" {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	_, got := getJSON(t, h, "/api/user-settings", "1000")
+	if _, ok := got["search_api_key_set"]; ok {
+		t.Fatalf("a global secret showed up in a user response: %v", got)
+	}
+}
+
 func TestSettingsRejectNonJSON(t *testing.T) {
 	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
 	h := NewMux(deps)

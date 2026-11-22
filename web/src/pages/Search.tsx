@@ -1,60 +1,44 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { apiGet } from '../api'
+import { Link } from 'react-router-dom'
+import { apiGet, ApiError } from '../api'
 import { SearchIcon } from '../components/icons'
-import type { FileItem } from '../files'
+import { crumbFromURL, type WebResult, type WebSearchPage } from '../search'
 
-type PathSeg = { id: string; name: string }
-type Hit = FileItem & { path: PathSeg[] }
-type SearchPage = { items: Hit[]; scanned: number; truncated: boolean }
-
-function formatSize(n: number): string {
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`
-}
-
-// Search looks inside the whole PikPak account, laid out like a search engine:
-// one box, then results as a title, a breadcrumb and a line about the entry.
-// PikPak exposes no search endpoint, so the server walks every folder under a
-// budget and says when the answer is partial.
+// Search is 全网搜索: a search-engine query limited to the PikPak site. The
+// person types only the keyword — the server adds the site: filter — and each
+// result opens in a new tab, because the page lives on mypikpak.com.
 export default function Search() {
-  const navigate = useNavigate()
   const [q, setQ] = useState('')
-  const [items, setItems] = useState<Hit[] | null>(null)
-  const [scanned, setScanned] = useState(0)
-  const [truncated, setTruncated] = useState(false)
+  const [items, setItems] = useState<WebResult[] | null>(null)
+  const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [needKey, setNeedKey] = useState(false)
 
   async function run(e?: FormEvent) {
     e?.preventDefault()
-    const query = q.trim()
-    if (!query) return
+    const keyword = q.trim()
+    if (!keyword) return
     setLoading(true)
     setError('')
+    setNeedKey(false)
     try {
-      const page = await apiGet<SearchPage>(`files/search?q=${encodeURIComponent(query)}`)
+      const page = await apiGet<WebSearchPage>(`web-search?q=${encodeURIComponent(keyword)}`)
       setItems(page.items ?? [])
-      setScanned(page.scanned ?? 0)
-      setTruncated(Boolean(page.truncated))
+      setQuery(page.query ?? keyword)
     } catch (err) {
-      setError((err as Error).message)
+      // A missing or rejected provider key is a setup step, not a failed
+      // search: point at 参数设置 instead of shouting in red.
+      const code = err instanceof ApiError ? err.code : ''
+      if (code === 'search_key_missing' || code === 'search_key_rejected') {
+        setNeedKey(true)
+      } else {
+        setError((err as Error).message)
+      }
+      setItems(null)
     } finally {
       setLoading(false)
     }
-  }
-
-  // A hit opens its folder: a folder opens itself, a file opens the folder it
-  // lives in, where every action is available.
-  function open(hit: Hit) {
-    const crumbs = hit.kind === 'drive#folder' ? [...hit.path, { id: hit.id, name: hit.name }] : hit.path
-    navigate(`/files?crumbs=${encodeURIComponent(JSON.stringify(crumbs))}`)
   }
 
   const searched = items !== null && !loading
@@ -70,7 +54,7 @@ export default function Search() {
           <input
             type="search"
             value={q}
-            placeholder="在整个 PikPak 中搜索文件、文件夹名"
+            placeholder="搜索 mypikpak.com 上的分享内容"
             onChange={(e) => setQ(e.target.value)}
             aria-label="搜索关键词"
             autoFocus
@@ -80,31 +64,33 @@ export default function Search() {
           </button>
         </div>
         <p className="se-hint">
-          PikPak 没有搜索接口，这里逐层遍历账号里的文件夹（上限 2000 个文件夹、200 条结果、20 秒），大网盘可能只返回一部分。
+          通过搜索引擎查找 mypikpak.com 上的公开分享页，站内限定由服务端自动拼接，不用自己写 site: 语法。
         </p>
       </form>
 
-      {error && <p className="error se-error">{error}</p>}
-
-      {searched && (
+      {needKey && (
         <p className="se-count">
-          找到 {items.length} 项（扫描 {scanned} 个条目）{truncated ? '，已达上限，结果可能不完整' : ''}
+          全网搜索需要先在 <Link to="/settings">参数设置</Link> 里填写搜索 API Key。
         </p>
       )}
-      {searched && items.length === 0 && <p className="se-count">没有匹配的文件或文件夹。</p>}
+      {error && <p className="error se-error">{error}</p>}
+
+      {searched && items.length > 0 && <p className="se-count">找到 {items.length} 条结果</p>}
+      {searched && items.length === 0 && (
+        <p className="se-count">
+          没有找到「{query}」相关的分享页。搜索引擎只收录公开分享，未分享的文件和文件夹搜不到。
+        </p>
+      )}
 
       {searched && items.length > 0 && (
         <ol className="se-results">
           {items.map((hit) => (
-            <li key={hit.id}>
-              <p className="se-breadcrumb">{[...hit.path.map((p) => p.name), ''].join(' / ')}</p>
-              <button type="button" className="se-title" onClick={() => open(hit)} title={hit.name}>
-                {hit.name}
-              </button>
-              <p className="se-snippet">
-                {hit.kind === 'drive#folder' ? '文件夹' : formatSize(hit.size)}
-                {hit.modified_time ? ` · ${new Date(hit.modified_time).toLocaleString()}` : ''}
-              </p>
+            <li key={hit.url}>
+              <p className="se-breadcrumb">{crumbFromURL(hit.url)}</p>
+              <a className="se-title" href={hit.url} target="_blank" rel="noopener noreferrer" title={hit.title}>
+                {hit.title}
+              </a>
+              {hit.snippet && <p className="se-snippet">{hit.snippet}</p>}
             </li>
           ))}
         </ol>

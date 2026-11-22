@@ -130,7 +130,8 @@ export default function Settings() {
         const next = await apiPut<SettingValues>('settings', globalPatch)
         setGlobalSettings(next)
         baseline.current.global = next
-        notes.push('并发数在服务重启后生效')
+        notes.push('已保存')
+        if ('download_concurrency' in globalPatch) notes.push('并发数在服务重启后生效')
       }
       setSaved(notes.join('；'))
     } catch (e) {
@@ -271,6 +272,30 @@ export default function Settings() {
           </select>
         </label>
         <p className="muted small">所有用户共享这一上限，修改后需要重启服务才生效。</p>
+
+        <label className="field">
+          <span>全网搜索 API Key（全局）</span>
+          <div className="dir-row">
+            <input
+              type="password"
+              autoComplete="off"
+              value={globalSettings.search_api_key ?? ''}
+              placeholder={
+                globalSettings.search_api_key_set === '1' ? '已设置，输入新值可替换' : '未设置（Serper API Key）'
+              }
+              onChange={(e) => editGlobal('search_api_key', e.target.value)}
+            />
+            {(globalSettings.search_api_key_set === '1' || (globalSettings.search_api_key ?? '') !== '') && (
+              <button type="button" onClick={() => editGlobal('search_api_key', '')}>
+                清除
+              </button>
+            )}
+          </div>
+        </label>
+        <p className="muted small">
+          「全网搜索」通过 Serper（Google 结果）搜索 mypikpak.com 站内分享页。Key 只存在本机数据库，读取设置时不会返回，
+          也不会写进日志。可以在 serper.dev 免费申请。
+        </p>
 
         <label className="field">
           <span>播放方式</span>

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
-import { useLocation } from 'react-router-dom'
 import { apiGet, apiPatch, apiPost, type ApiError } from '../api'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
@@ -37,24 +36,8 @@ type Page = { items: FileItem[]; next_page_token: string }
 type Crumb = { id: string; name: string }
 type CachedList = { items: FileItem[]; token: string }
 
-// crumbsFromSearch restores the breadcrumb 全网搜索 hands over, so "打开所在
-// 文件夹" lands in the folder that holds the hit instead of at the root.
-function crumbsFromSearch(search: string): Crumb[] {
-  const raw = new URLSearchParams(search).get('crumbs')
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw) as Crumb[]
-    if (!Array.isArray(parsed)) return []
-    if (!parsed.every((c) => c && typeof c.id === 'string' && typeof c.name === 'string')) return []
-    return parsed
-  } catch {
-    return []
-  }
-}
-
 export default function Files() {
-  const location = useLocation()
-  const [stack, setStack] = useState<Crumb[]>(() => crumbsFromSearch(location.search))
+  const [stack, setStack] = useState<Crumb[]>([])
   const folderId = stack.length ? stack[stack.length - 1].id : ''
 
   const [items, setItems] = useState<FileItem[]>([])
@@ -73,16 +56,6 @@ export default function Files() {
   const [move, setMove] = useState<{ mode: 'move' | 'copy'; ids: string[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [playing, setPlaying] = useState<FileItem | null>(null)
-
-  // Drop the handoff parameter: the breadcrumb now lives in the stack, and a
-  // reload should not jump back into a folder the user has left.
-  useEffect(() => {
-    if (new URLSearchParams(location.search).has('crumbs')) {
-      window.history.replaceState(null, '', '#/files')
-    }
-    // Mount only: later stack changes are the user's own navigation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const reqId = useRef(0)
   const itemsRef = useRef<FileItem[]>([])
