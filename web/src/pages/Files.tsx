@@ -490,6 +490,10 @@ export default function Files() {
             style={{ left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.width, height: marqueeRect.height }}
           />
         )}
+        {/* Inside the scroll area: the observer sees it only when the list
+            really reached its end. */}
+        <div ref={sentinel} className="sentinel" />
+        {loading && <p className="muted">加载中…</p>}
       </div>
 
       <div className="status-bar">
@@ -497,9 +501,6 @@ export default function Files() {
           ? `选中 ${selectedIds.length} 项（共 ${shown.length} 项）`
           : `共 ${shown.length} 项`}
       </div>
-
-      <div ref={sentinel} className="sentinel" />
-      {loading && <p className="muted">加载中…</p>}
 
       {menu && (
         <div className="context-menu" style={{ left: menu.x, top: menu.y }}>

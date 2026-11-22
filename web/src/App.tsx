@@ -197,8 +197,16 @@ export default function App() {
           </div>
         )}
 
-        {/* The viewer fills the window: its page is the only scrolling surface. */}
-        <main className={location.pathname === '/search' ? 'page page-fill' : 'page'}>
+        {/* These pages fill the window: their file areas scroll, not the page. */}
+        <main
+          className={
+            location.pathname === '/search' ||
+            location.pathname.startsWith('/files') ||
+            location.pathname.startsWith('/favorites')
+              ? 'page page-fill'
+              : 'page'
+          }
+        >
           <Routes>
             <Route path="/" element={<Navigate to="/files" replace />} />
             <Route path="/files/*" element={<Files />} />
