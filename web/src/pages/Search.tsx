@@ -1,24 +1,22 @@
 import { useState, type FormEvent } from 'react'
-import { apiGet, apiPost } from '../api'
+import { useNavigate } from 'react-router-dom'
+import { apiGet, apiPost, type ApiError } from '../api'
+import { FileIcon } from '../components/icons'
+import { formatSize, isFolder, type FileItem } from '../files'
 
-type Hit = { title: string; url: string; snippet: string }
-type SearchPage = { items: Hit[] }
+type PathSeg = { id: string; name: string }
+type Hit = FileItem & { path: PathSeg[] }
+type SearchPage = { items: Hit[]; scanned: number; truncated: boolean }
 
-function hostOf(raw: string): string {
-  try {
-    return new URL(raw).host
-  } catch {
-    return ''
-  }
-}
-
-// Search asks the engine for links, scoped to one site when the user names
-// one (the engine's site: operator). A hit can become an offline task
-// directly, which is what most searches here are for.
+// Search looks inside the whole PikPak account, not the current folder. PikPak
+// exposes no search endpoint, so the server walks every folder under a budget;
+// the page says so instead of pretending the list is exhaustive.
 export default function Search() {
+  const navigate = useNavigate()
   const [q, setQ] = useState('')
-  const [site, setSite] = useState('')
   const [items, setItems] = useState<Hit[] | null>(null)
+  const [scanned, setScanned] = useState(0)
+  const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -31,10 +29,10 @@ export default function Search() {
     setError('')
     setNotice('')
     try {
-      const params = new URLSearchParams({ q: query })
-      if (site.trim()) params.set('site', site.trim())
-      const page = await apiGet<SearchPage>(`web-search?${params.toString()}`)
+      const page = await apiGet<SearchPage>(`files/search?q=${encodeURIComponent(query)}`)
       setItems(page.items ?? [])
+      setScanned(page.scanned ?? 0)
+      setTruncated(Boolean(page.truncated))
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -42,22 +40,32 @@ export default function Search() {
     }
   }
 
-  async function addOffline(hit: Hit) {
-    if (!window.confirm(`把这条链接加入离线下载？\n${hit.url}`)) return
-    try {
-      await apiPost('tasks', { link: hit.url, parent_id: '' })
-      setNotice('已创建离线任务，可在「离线任务」查看进度')
-    } catch (err) {
-      setError((err as Error).message)
-    }
+  function crumbs(hit: Hit): PathSeg[] {
+    return [...hit.path, { id: hit.id, name: hit.name }]
   }
 
-  async function copy(url: string) {
+  function openFolder(hit: Hit) {
+    navigate(`/files?crumbs=${encodeURIComponent(JSON.stringify(crumbs(hit)))}`)
+  }
+
+  // Opens the folder that contains the hit, so the file can be worked with in
+  // its own place.
+  function openParent(hit: Hit) {
+    navigate(`/files?crumbs=${encodeURIComponent(JSON.stringify(hit.path))}`)
+  }
+
+  async function download(hit: Hit) {
+    setError('')
+    setNotice('')
     try {
-      await navigator.clipboard.writeText(url)
-      setNotice('链接已复制')
-    } catch {
-      setError('浏览器不允许写入剪贴板，请手动复制')
+      await apiPost('downloads', { file_ids: [hit.id] })
+      setNotice(`已加入下载队列：${hit.name}`)
+    } catch (err) {
+      setError(
+        (err as ApiError).code === 'download_dir_unset'
+          ? '还没有设置默认下载目录，请到「设置 → 参数设置」指定一个目录。'
+          : (err as Error).message,
+      )
     }
   }
 
@@ -67,47 +75,62 @@ export default function Search() {
         <input
           type="search"
           value={q}
-          placeholder="搜索全网资源"
+          placeholder="在整个 PikPak 中搜索文件、文件夹名"
           onChange={(e) => setQ(e.target.value)}
           aria-label="搜索关键词"
-        />
-        <input
-          type="text"
-          value={site}
-          placeholder="限定站点（可选，如 example.com）"
-          onChange={(e) => setSite(e.target.value)}
-          aria-label="限定站点"
         />
         <button type="submit" disabled={loading || !q.trim()}>
           {loading ? '搜索中…' : '搜索'}
         </button>
       </form>
       <p className="muted small">
-        关键词交给搜索引擎，站点一栏走它的 site: 站内限定；留空则是全网搜索。结果只是网页链接，是否加入离线下载由你决定。
+        PikPak 没有搜索接口，这里会逐层遍历你账号里的文件夹（上限 2000 个文件夹、200 条结果、20 秒），大网盘可能只返回一部分。
       </p>
 
       {error && <p className="error">{error}</p>}
       {notice && <p className="ok small">{notice}</p>}
-      {loading && items === null && <p className="muted">搜索中…</p>}
-      {items !== null && items.length === 0 && !loading && <p className="muted">没有搜索到结果。</p>}
+      {loading && <p className="muted">搜索中…</p>}
+
+      {items !== null && !loading && (
+        <p className="muted small">
+          找到 {items.length} 项（扫描 {scanned} 个条目）
+          {truncated ? '，已达上限，结果可能不完整' : ''}
+        </p>
+      )}
+      {items !== null && !loading && items.length === 0 && <p className="muted">没有匹配的文件或文件夹。</p>}
 
       {items && items.length > 0 && (
         <ul className="search-results">
           {items.map((hit) => (
-            <li key={hit.url}>
+            <li key={hit.id}>
               <div className="search-result-head">
-                <a href={hit.url} target="_blank" rel="noreferrer noopener" title={hit.title}>
-                  {hit.title}
-                </a>
-                <span className="search-host">{hostOf(hit.url)}</span>
+                <span className="search-hit">
+                  <span className="file-icon">
+                    <FileIcon file={hit} />
+                  </span>
+                  <span className="name-text" title={hit.name}>
+                    {hit.name}
+                  </span>
+                </span>
+                <span className="search-host">{isFolder(hit) ? '文件夹' : formatSize(hit.size)}</span>
               </div>
-              {hit.snippet && <p className="search-snippet">{hit.snippet}</p>}
+              <p className="search-snippet">
+                {[hit.path.map((p) => p.name).join(' / '), hit.modified_time ? new Date(hit.modified_time).toLocaleString() : '']
+                  .filter(Boolean)
+                  .join(' · ') || '根目录'}
+              </p>
               <div className="search-actions">
-                <button type="button" onClick={() => void addOffline(hit)}>
-                  加入离线下载
-                </button>
-                <button type="button" onClick={() => void copy(hit.url)}>
-                  复制链接
+                {isFolder(hit) ? (
+                  <button type="button" onClick={() => openFolder(hit)}>
+                    打开
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => void download(hit)}>
+                    下载
+                  </button>
+                )}
+                <button type="button" onClick={() => openParent(hit)}>
+                  打开所在文件夹
                 </button>
               </div>
             </li>

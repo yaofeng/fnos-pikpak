@@ -1234,6 +1234,13 @@ button.primary {
   line-height: 1.5;
 }
 
+.search-hit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .search-actions {
   display: flex;
   gap: 8px;
