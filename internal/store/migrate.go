@@ -64,4 +64,23 @@ CREATE TABLE user_settings (
   PRIMARY KEY (uid, key)
 );
 `,
+	`
+CREATE TABLE download_jobs (
+  id             TEXT PRIMARY KEY,
+  uid            INTEGER NOT NULL,
+  file_id        TEXT NOT NULL,
+  file_name      TEXT NOT NULL,
+  dest_dir       TEXT NOT NULL,
+  dest_path      TEXT NOT NULL,
+  size           INTEGER NOT NULL DEFAULT 0,
+  downloaded     INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL,
+  error_code     TEXT NOT NULL DEFAULT '',
+  error_message  TEXT NOT NULL DEFAULT '',
+  link_expire_at TEXT NOT NULL DEFAULT '',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX idx_download_jobs_uid_status ON download_jobs(uid, status);
+`,
 }

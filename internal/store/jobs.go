@@ -1,0 +1,129 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+	"time"
+)
+
+// DownloadJob is one file being pulled from PikPak to the NAS. DestPath is the
+// final path; the worker writes DestPath+".pikpak-part" until it verifies the
+// size and renames.
+type DownloadJob struct {
+	ID           string
+	UID          int
+	FileID       string
+	FileName     string
+	DestDir      string
+	DestPath     string
+	Size         int64
+	Downloaded   int64
+	Status       string
+	ErrorCode    string
+	ErrorMessage string
+	LinkExpireAt string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (s *Store) PutDownloadJob(ctx context.Context, j DownloadJob) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO download_jobs(id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+  status, error_code, error_message, link_expire_at, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET
+  file_name=excluded.file_name,
+  dest_dir=excluded.dest_dir,
+  dest_path=excluded.dest_path,
+  size=excluded.size,
+  downloaded=excluded.downloaded,
+  status=excluded.status,
+  error_code=excluded.error_code,
+  error_message=excluded.error_message,
+  link_expire_at=excluded.link_expire_at,
+  updated_at=excluded.updated_at`,
+		j.ID, j.UID, j.FileID, j.FileName, j.DestDir, j.DestPath, j.Size, j.Downloaded,
+		j.Status, j.ErrorCode, j.ErrorMessage, j.LinkExpireAt, now, now)
+	return err
+}
+
+func (s *Store) GetDownloadJob(ctx context.Context, uid int, id string) (DownloadJob, error) {
+	var (
+		j                DownloadJob
+		created, updated string
+	)
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+       status, error_code, error_message, link_expire_at, created_at, updated_at
+FROM download_jobs WHERE uid = ? AND id = ?`, uid, id).
+		Scan(&j.ID, &j.UID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath, &j.Size, &j.Downloaded,
+			&j.Status, &j.ErrorCode, &j.ErrorMessage, &j.LinkExpireAt, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DownloadJob{}, ErrNotFound
+	}
+	if err != nil {
+		return DownloadJob{}, err
+	}
+	j.CreatedAt = parseTime(created)
+	j.UpdatedAt = parseTime(updated)
+	return j, nil
+}
+
+// ListDownloadJobs returns the user's jobs newest first. With statuses given it
+// filters to those states.
+func (s *Store) ListDownloadJobs(ctx context.Context, uid int, statuses ...string) ([]DownloadJob, error) {
+	query := `
+SELECT id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+       status, error_code, error_message, link_expire_at, created_at, updated_at
+FROM download_jobs WHERE uid = ?`
+	args := []any{uid}
+	if len(statuses) > 0 {
+		placeholders := make([]string, len(statuses))
+		for i, st := range statuses {
+			placeholders[i] = "?"
+			args = append(args, st)
+		}
+		query += " AND status IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	query += " ORDER BY created_at DESC, id DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []DownloadJob{}
+	for rows.Next() {
+		var (
+			j                DownloadJob
+			created, updated string
+		)
+		if err := rows.Scan(&j.ID, &j.UID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath,
+			&j.Size, &j.Downloaded, &j.Status, &j.ErrorCode, &j.ErrorMessage, &j.LinkExpireAt,
+			&created, &updated); err != nil {
+			return nil, err
+		}
+		j.CreatedAt = parseTime(created)
+		j.UpdatedAt = parseTime(updated)
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteDownloadJob(ctx context.Context, uid int, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM download_jobs WHERE uid = ? AND id = ?`, uid, id)
+	return err
+}
+
+// ResetRunningDownloadJobs runs at startup: a job left running has no worker,
+// but its .part file allows a resume, so it goes back to the queue.
+func (s *Store) ResetRunningDownloadJobs(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE download_jobs SET status = 'queued', updated_at = ? WHERE status = 'running'`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
