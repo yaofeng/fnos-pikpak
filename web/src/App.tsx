@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import Toaster from './components/Toaster'
-import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
+import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, StarIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
 import Bind from './pages/Bind'
 import Debug from './pages/Debug'
@@ -14,6 +14,7 @@ import Settings from './pages/Settings'
 import Tasks from './pages/Tasks'
 import Transfers from './pages/Transfers'
 import Trash from './pages/Trash'
+import VideoFavorites from './pages/VideoFavorites'
 
 type Me = {
   uid: number
@@ -40,6 +41,7 @@ const navItems = [
   { to: '/transfers', key: 'nav.transfers' },
   { to: '/tasks', key: 'nav.tasks' },
   { to: '/favorites', key: 'nav.favorites' },
+  { to: '/video-favorites', key: 'nav.videoFavorites' },
   { to: '/search', key: 'nav.search' },
 ]
 
@@ -50,6 +52,7 @@ const navIcons: Record<string, ReactNode> = {
   '/transfers': <TransferIcon size={17} />,
   '/tasks': <MagnetIcon size={17} />,
   '/favorites': <BookmarkIcon size={17} />,
+  '/video-favorites': <StarIcon size={17} />,
   '/search': <GlobeIcon size={17} />,
   '/settings': <GearIcon size={17} />,
   '/debug': <WrenchIcon size={17} />,
@@ -63,6 +66,7 @@ const titles: Record<string, string> = {
   '/trash': 'nav.trash',
   '/settings': 'nav.settings',
   '/favorites': 'nav.favorites',
+  '/video-favorites': 'nav.videoFavorites',
   '/search': 'nav.search',
   '/bind': 'nav.bind',
   '/debug': 'nav.debug',
@@ -215,6 +219,7 @@ export default function App() {
             <Route path="/transfers" element={<Transfers />} />
             <Route path="/trash" element={<Trash />} />
             <Route path="/favorites" element={<Favorites />} />
+            <Route path="/video-favorites" element={<VideoFavorites />} />
             <Route path="/search" element={<Search />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bind" element={<Bind />} />
