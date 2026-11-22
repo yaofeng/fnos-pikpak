@@ -16,6 +16,7 @@ import (
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/httpapi"
 	"fnos-pikpak/internal/pikpak"
+	"fnos-pikpak/internal/playtoken"
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 	"fnos-pikpak/internal/transfer"
@@ -103,13 +104,16 @@ func main() {
 	}()
 
 	deps := httpapi.Deps{
-		Version:  version.Version,
-		DevUID:   *devUID,
-		Probes:   probes,
-		Fnos:     fnosClient,
-		Store:    st,
-		Sessions: sessions,
-		Queue:    queue,
+		Version: version.Version,
+		// Stream tokens get their own key derived from the master key, so a
+		// leaked URL cannot be turned back into the credential key.
+		PlaySecret: playtoken.DeriveSecret(st.SecretKey()),
+		DevUID:     *devUID,
+		Probes:     probes,
+		Fnos:       fnosClient,
+		Store:      st,
+		Sessions:   sessions,
+		Queue:      queue,
 	}
 	// Local development has no fnOS gateway, so the ACL question cannot be
 	// answered; allow absolute paths so the transfer flows stay testable.

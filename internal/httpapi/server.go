@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"mime"
@@ -34,6 +35,9 @@ type Deps struct {
 	Queue *transfer.Queue
 	// DirGuard answers the fnOS ACL question. Nil falls back to Fnos.
 	DirGuard DirGuard
+	// PlaySecret signs stream tokens. Nil means a random per-process secret,
+	// which keeps tests hermetic; production derives one from the store key.
+	PlaySecret []byte
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -44,6 +48,13 @@ func NewMux(deps Deps) *http.ServeMux {
 	inner := http.NewServeMux()
 	if deps.Accounts == nil {
 		deps.Accounts = newAccountCache(defaultAccountTTL)
+	}
+	if len(deps.PlaySecret) == 0 {
+		secret := make([]byte, 32)
+		if _, err := crand.Read(secret); err != nil {
+			panic(err)
+		}
+		deps.PlaySecret = secret
 	}
 
 	inner.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +86,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerUploadRoutes(inner, deps)
 		registerTransferRoutes(inner, deps)
 		registerTaskRoutes(inner, deps)
+		registerPlayRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
 	registerStreamRoutes(inner)
@@ -90,6 +102,10 @@ func NewMux(deps Deps) *http.ServeMux {
 	forged := forgedTest()
 	root.HandleFunc("POST /api/gateway/forged", forged)
 	root.HandleFunc("POST "+gatewayPrefix+"/api/gateway/forged", forged)
+
+	// Streaming is authenticated by its signed token, not by the gateway
+	// header, because a <video> element cannot send one.
+	registerStreamRoutesPlay(root, deps)
 
 	root.Handle("/", stripGatewayPrefix(gatewayPrefix, fnos.WithIdentity(deps.DevUID, inner)))
 	return root

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -378,5 +379,28 @@ func TestCancelPendingFlows(t *testing.T) {
 	}
 	if f, _ := s.GetAuthFlow(ctx, "pending-2"); f.Status != "pending" {
 		t.Fatalf("pending-2 status = %q", f.Status)
+	}
+}
+
+func TestSecretKeyReturnsCopy(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "secret.key")
+	st, err := Open(filepath.Join(dir, "pikpak.db"), keyPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+
+	onDisk, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read key: %v", err)
+	}
+	got := st.SecretKey()
+	if !bytes.Equal(got, onDisk) {
+		t.Fatalf("SecretKey = %x, want %x", got, onDisk)
+	}
+	got[0] ^= 0xff
+	if bytes.Equal(st.SecretKey(), got) {
+		t.Fatal("SecretKey must hand out a copy, not the live key")
 	}
 }
