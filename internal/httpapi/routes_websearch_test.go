@@ -13,20 +13,23 @@ import (
 )
 
 // serperStub answers like the search provider and records what it was asked.
-func serperStub(t *testing.T, organic []map[string]any) (*httptest.Server, *string, *string) {
+func serperStub(t *testing.T, organic []map[string]any) (*httptest.Server, *string, *string, *int) {
 	t.Helper()
 	var gotQuery, gotKey string
+	gotPage := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Q string `json:"q"`
+			Q    string `json:"q"`
+			Page int    `json:"page"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		gotQuery = body.Q
 		gotKey = r.Header.Get("X-API-KEY")
+		gotPage = body.Page
 		_ = json.NewEncoder(w).Encode(map[string]any{"organic": organic})
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &gotQuery, &gotKey
+	return srv, &gotQuery, &gotKey, &gotPage
 }
 
 func withSearchKey(t *testing.T, deps Deps, key string) {
@@ -37,7 +40,7 @@ func withSearchKey(t *testing.T, deps Deps, key string) {
 }
 
 func TestWebSearchUsesTheStoredKeyAndPrefiltersBySite(t *testing.T) {
-	srv, gotQuery, gotKey := serperStub(t, []map[string]any{
+	srv, gotQuery, gotKey, gotPage := serperStub(t, []map[string]any{
 		{"title": "大模型合集", "link": "https://mypikpak.com/s/VN1", "snippet": "资料"},
 		{"title": "无关站点", "link": "https://example.com/x", "snippet": "不该出现"},
 	})
@@ -57,6 +60,9 @@ func TestWebSearchUsesTheStoredKeyAndPrefiltersBySite(t *testing.T) {
 	if *gotKey != "key-123" {
 		t.Fatalf("upstream key = %q", *gotKey)
 	}
+	if *gotPage != 1 {
+		t.Fatalf("default page = %d", *gotPage)
+	}
 	items, _ := body["items"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("items = %v", body["items"])
@@ -67,6 +73,42 @@ func TestWebSearchUsesTheStoredKeyAndPrefiltersBySite(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "key-123") {
 		t.Fatal("the API key reached the response")
+	}
+}
+
+func TestWebSearchPassesThePageThrough(t *testing.T) {
+	srv, _, _, gotPage := serperStub(t, []map[string]any{
+		{"title": "第二页", "link": "https://mypikpak.com/s/VN2", "snippet": "资料"},
+	})
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	withSearchKey(t, deps, "key-123")
+	deps.WebSearch = &websearch.Client{Endpoint: srv.URL, HTTP: srv.Client()}
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/web-search?q=大模型&page=2", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	if *gotPage != 2 {
+		t.Fatalf("upstream page = %d", *gotPage)
+	}
+	if body["page"] != float64(2) {
+		t.Fatalf("page = %v", body["page"])
+	}
+}
+
+func TestWebSearchRejectsAPageOutOfRange(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	withSearchKey(t, deps, "key-123")
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	for _, raw := range []string{"0", "11", "x"} {
+		rec, body := getJSON(t, h, "/api/web-search?q=大模型&page="+raw, "1000")
+		if rec.Code != http.StatusBadRequest || errCode(body) != "invalid_page" {
+			t.Fatalf("page=%s: status = %d body=%v", raw, rec.Code, body)
+		}
 	}
 }
 

@@ -193,7 +193,8 @@ export default function App() {
           </div>
         )}
 
-        <main className="page">
+        {/* The viewer fills the window: its page is the only scrolling surface. */}
+        <main className={location.pathname === '/search' ? 'page page-fill' : 'page'}>
           <Routes>
             <Route path="/" element={<Navigate to="/files" replace />} />
             <Route path="/files/*" element={<Files />} />

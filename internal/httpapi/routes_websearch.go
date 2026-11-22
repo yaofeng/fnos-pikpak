@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,15 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "query_too_long", "关键词太长，请缩短后重试")
 			return
 		}
+		page := 1
+		if raw := r.URL.Query().Get("page"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > websearch.MaxPage {
+				writeError(w, http.StatusBadRequest, "invalid_page", "页码超出范围（1–10）")
+				return
+			}
+			page = n
+		}
 
 		apiKey, err := deps.Store.GetSetting(r.Context(), "search_api_key")
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -47,7 +57,7 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), webSearchTimeout)
 		defer cancel()
-		results, err := client.Search(ctx, apiKey, query)
+		results, err := client.Search(ctx, apiKey, query, page)
 		if err != nil {
 			var upstream *websearch.UpstreamError
 			if errors.As(err, &upstream) && (upstream.Status == http.StatusUnauthorized || upstream.Status == http.StatusForbidden) {
@@ -61,6 +71,6 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadGateway, "search_failed", "搜索服务暂时不可用，请稍后重试")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": results, "query": query})
+		writeJSON(w, http.StatusOK, map[string]any{"items": results, "query": query, "page": page})
 	})
 }

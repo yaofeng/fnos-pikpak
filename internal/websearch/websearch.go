@@ -22,6 +22,13 @@ const Site = "mypikpak.com"
 // returns organic results as JSON.
 const defaultEndpoint = "https://google.serper.dev/search"
 
+// MaxPage is the last page a provider will serve; each page is one paid query.
+const MaxPage = 10
+
+// pageSize mirrors a Google result page, so 下一页 advances by what a person
+// sees rather than by a server-side quota.
+const pageSize = 10
+
 // ErrEmptyQuery means there was nothing to search for.
 var ErrEmptyQuery = errors.New("websearch: empty query")
 
@@ -66,17 +73,21 @@ type serperResponse struct {
 
 // Search looks for keyword under Site. Only results hosted on the site are
 // returned; a provider that ignores the site filter therefore cannot put an
-// unrelated page in the list.
-func (c *Client) Search(ctx context.Context, apiKey, keyword string) ([]Result, error) {
+// unrelated page in the list. page is 1-based; callers validate its range.
+func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) ([]Result, error) {
 	q := normalizeKeyword(keyword)
 	if q == "" {
 		return nil, ErrEmptyQuery
 	}
+	if page < 1 {
+		page = 1
+	}
 	payload, err := json.Marshal(map[string]any{
-		"q":   "site:" + Site + " " + q,
-		"gl":  "cn",
-		"hl":  "zh-cn",
-		"num": 20,
+		"q":    "site:" + Site + " " + q,
+		"gl":   "cn",
+		"hl":   "zh-cn",
+		"num":  pageSize,
+		"page": page,
 	})
 	if err != nil {
 		return nil, err
