@@ -52,6 +52,9 @@ type Deps struct {
 	// Thumbs caches proxied thumbnail bytes. Nil means a fresh in-memory
 	// cache with the default 30-minute TTL.
 	Thumbs *thumbCache
+	// Videos runs the 完整播放 preparation jobs. Nil means a fresh registry:
+	// one job per user, results kept for 30 minutes.
+	Videos *videoJobs
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -76,6 +79,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Thumbs == nil {
 		deps.Thumbs = newThumbCache()
+	}
+	if deps.Videos == nil {
+		deps.Videos = newVideoJobs()
 	}
 	if len(deps.PlaySecret) == 0 {
 		secret := make([]byte, 32)
@@ -117,6 +123,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerShareRoutes(inner, deps)
 		registerThumbRoutes(inner, deps)
 		registerPlayRoutes(inner, deps)
+		registerVideoRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
 	if deps.Debug {

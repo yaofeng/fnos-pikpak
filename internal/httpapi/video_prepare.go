@@ -1,0 +1,421 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"net/url"
+	"sort"
+	"time"
+
+	"fnos-pikpak/internal/pikpak"
+	"fnos-pikpak/internal/playtoken"
+	"fnos-pikpak/internal/store"
+)
+
+// The folders 完整播放 works with. 临时 holds the videos restored for
+// playback; Pack From Shared holds the batch a share was saved into, and is
+// only touched when 临时 ran out.
+const (
+	videoFolderName    = "我的视频"
+	tempFolderName     = "临时"
+	packFromSharedName = "Pack From Shared"
+
+	videoTaskTimeout  = 2 * time.Minute
+	videoTaskInterval = 500 * time.Millisecond
+)
+
+// The errors a route or a job reports; the messages are the user-facing copy.
+var (
+	errSpaceInsufficient = errors.New("空间不足：清理「我的视频/临时」和「Pack From Shared」后仍无法容纳该视频")
+	errNotBound          = errors.New("请先绑定 PikPak 账号")
+	errSessionGone       = errors.New("分享会话已过期，请重新打开分享")
+	errFavoriteMissing   = errors.New("收藏不存在")
+	errSessionLoad       = errors.New("无法加载 PikPak 会话")
+	errPassRequired      = errors.New("该分享需要访问密码")
+	errPassWrong         = errors.New("分享访问密码不正确")
+	errShareUnavailable  = errors.New("分享已失效或已被取消")
+	errVideoNoLink       = errors.New("该文件没有可播放的链接")
+	errReauth            = errors.New("PikPak 授权已失效，请重新绑定账号")
+	errUpstream          = errors.New("PikPak 请求失败，请稍后重试")
+)
+
+// videoPrepareRequest names the share video to prepare. A favorite carries a
+// sealed pass code, so it reopens without asking; a share tab relies on its
+// server-side session.
+type videoPrepareRequest struct {
+	ShareID    string
+	FileID     string
+	FavoriteID int64
+}
+
+type videoSource struct {
+	shareID  string
+	fileID   string
+	token    string
+	owner    string
+	title    string
+	favorite *store.VideoFavorite
+}
+
+// prepareVideo restores one share video into 我的视频/临时, making room first,
+// and returns a signed URL for the restored copy.
+func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (videoPrepareResult, error) {
+	client, err := deps.Sessions.ClientFor(ctx, uid)
+	if errors.Is(err, pikpak.ErrNotBound) {
+		return videoPrepareResult{}, errNotBound
+	}
+	if err != nil {
+		return videoPrepareResult{}, errSessionLoad
+	}
+
+	source, err := resolveVideoSource(ctx, deps, uid, req, client)
+	if err != nil {
+		return videoPrepareResult{}, err
+	}
+	link, err := client.GetShareFileLink(ctx, source.shareID, source.fileID, source.token)
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	if source.favorite != nil {
+		// Refresh the saved metadata so the favourites list shows the real
+		// name, size and owner; the display name and pass code stay as saved.
+		_, _ = deps.Store.AddVideoFavorite(ctx, uid, store.VideoFavorite{
+			ShareID: source.shareID, FileID: source.fileID,
+			Name: link.Name, Size: link.Size,
+			Owner: source.owner, ShareTitle: source.title,
+		})
+	}
+
+	tempID, err := tempFolderID(ctx, client)
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	// A previous 完整播放 of the same video leaves it in 临时; playing that
+	// copy again costs nothing and restores nothing.
+	if tempID != "" {
+		items, err := client.ListAllFiles(ctx, tempID)
+		if err != nil {
+			return videoPrepareResult{}, videoUpstreamMessage(err)
+		}
+		if existing, ok := findSameVideo(items, link.Name, link.Size); ok {
+			return signVideoResult(deps, uid, existing), nil
+		}
+	}
+
+	if err := makeRoom(ctx, client, link.Size); err != nil {
+		return videoPrepareResult{}, err
+	}
+
+	before, err := client.ListAllFiles(ctx, "")
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	known := make(map[string]bool, len(before))
+	for _, f := range before {
+		known[f.ID] = true
+	}
+	restoreTask, err := client.RestoreShare(ctx, source.shareID, source.token, []string{source.fileID})
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	if err := waitTask(ctx, client, restoreTask); err != nil {
+		return videoPrepareResult{}, err
+	}
+	after, err := client.ListAllFiles(ctx, "")
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	restored, ok := findRestoredFile(before, after, known, link.Name)
+	if !ok {
+		return videoPrepareResult{}, errors.New("转存已完成，但没有在根目录找到该视频")
+	}
+
+	videoFolder, err := ensureFolder(ctx, client, "", videoFolderName)
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	tempFolder, err := ensureFolder(ctx, client, videoFolder, tempFolderName)
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	moveTask, err := client.BatchMove(ctx, []string{restored.ID}, tempFolder)
+	if err != nil {
+		return videoPrepareResult{}, videoUpstreamMessage(err)
+	}
+	if err := waitTask(ctx, client, moveTask); err != nil {
+		return videoPrepareResult{}, err
+	}
+	return signVideoResult(deps, uid, restored), nil
+}
+
+// previewShareVideo signs the share's own stream URL: nothing is restored, so
+// the video plays straight from the share.
+func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (string, error) {
+	client, err := deps.Sessions.ClientFor(ctx, uid)
+	if errors.Is(err, pikpak.ErrNotBound) {
+		return "", errNotBound
+	}
+	if err != nil {
+		return "", errSessionLoad
+	}
+	source, err := resolveVideoSource(ctx, deps, uid, req, client)
+	if err != nil {
+		return "", err
+	}
+	if _, err := client.GetShareFileLink(ctx, source.shareID, source.fileID, source.token); err != nil {
+		return "", videoUpstreamMessage(err)
+	}
+	token := playtoken.SignShare(deps.PlaySecret, uid, source.shareID, source.fileID, playTokenTTL, time.Now())
+	return "/api/share/stream/" + url.PathEscape(source.shareID) + "/" + url.PathEscape(source.fileID) + "?t=" + token, nil
+}
+
+func resolveVideoSource(ctx context.Context, deps Deps, uid int, req videoPrepareRequest, client *pikpak.Client) (videoSource, error) {
+	if req.FavoriteID > 0 {
+		fav, err := deps.Store.GetVideoFavorite(ctx, uid, req.FavoriteID)
+		if errors.Is(err, store.ErrNotFound) {
+			return videoSource{}, errFavoriteMissing
+		}
+		if err != nil {
+			return videoSource{}, errors.New("读取收藏失败")
+		}
+		info, err := client.GetShare(ctx, fav.ShareID, fav.PassCode)
+		if err != nil {
+			return videoSource{}, videoUpstreamMessage(err)
+		}
+		deps.ShareSessions.put(uid, fav.ShareID, info.PassCodeToken, time.Now())
+		return videoSource{
+			shareID: fav.ShareID, fileID: fav.FileID,
+			token: info.PassCodeToken, owner: info.Owner, title: info.Title,
+			favorite: &fav,
+		}, nil
+	}
+	token, ok := deps.ShareSessions.get(uid, req.ShareID, time.Now())
+	if !ok {
+		return videoSource{}, errSessionGone
+	}
+	return videoSource{shareID: req.ShareID, fileID: req.FileID, token: token}, nil
+}
+
+// videoUpstreamMessage turns the upstream errors a person can act on into
+// Chinese copy; anything else stays generic rather than leaking a URL.
+func videoUpstreamMessage(err error) error {
+	switch {
+	case errors.Is(err, pikpak.ErrPassCodeRequired):
+		return errPassRequired
+	case errors.Is(err, pikpak.ErrPassCodeWrong):
+		return errPassWrong
+	case errors.Is(err, pikpak.ErrShareUnavailable):
+		return errShareUnavailable
+	case errors.Is(err, pikpak.ErrNoDownloadLink):
+		return errVideoNoLink
+	case errors.Is(err, pikpak.ErrReauthRequired):
+		return errReauth
+	default:
+		return errUpstream
+	}
+}
+
+// tempFolderID returns the id of 我的视频/临时, or "" when the folders do not
+// exist yet (nothing has been prepared before).
+func tempFolderID(ctx context.Context, client *pikpak.Client) (string, error) {
+	root, err := client.ListAllFiles(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	videoFolder, ok := findFolder(root, videoFolderName)
+	if !ok {
+		return "", nil
+	}
+	children, err := client.ListAllFiles(ctx, videoFolder.ID)
+	if err != nil {
+		return "", err
+	}
+	if temp, ok := findFolder(children, tempFolderName); ok {
+		return temp.ID, nil
+	}
+	return "", nil
+}
+
+func findFolder(files []pikpak.File, name string) (pikpak.File, bool) {
+	for _, f := range files {
+		if f.Kind == "drive#folder" && f.Name == name {
+			return f, true
+		}
+	}
+	return pikpak.File{}, false
+}
+
+func findSameVideo(files []pikpak.File, name string, size int64) (pikpak.File, bool) {
+	for _, f := range files {
+		if f.Kind != "drive#file" || f.Name != name {
+			continue
+		}
+		if size == 0 || f.Size == size {
+			return f, true
+		}
+	}
+	return pikpak.File{}, false
+}
+
+// ensureFolder returns the id of name under parentID, creating it when it is
+// missing.
+func ensureFolder(ctx context.Context, client *pikpak.Client, parentID, name string) (string, error) {
+	items, err := client.ListAllFiles(ctx, parentID)
+	if err != nil {
+		return "", err
+	}
+	if f, ok := findFolder(items, name); ok {
+		return f.ID, nil
+	}
+	f, err := client.CreateFolder(ctx, parentID, name)
+	if err != nil {
+		return "", err
+	}
+	return f.ID, nil
+}
+
+// makeRoom frees enough quota for need bytes. It purges the oldest files in
+// 我的视频/临时 first, then the oldest files in the root Pack From Shared
+// folder, re-reading the quota after each settled delete because PikPak's
+// usage figure lags the task. It returns errSpaceInsufficient when both
+// folders are exhausted.
+func makeRoom(ctx context.Context, client *pikpak.Client, need int64) error {
+	if need <= 0 {
+		return nil
+	}
+	free, err := freeSpace(ctx, client)
+	if err != nil {
+		return videoUpstreamMessage(err)
+	}
+	if free >= need {
+		return nil
+	}
+
+	if tempID, err := tempFolderID(ctx, client); err != nil {
+		return videoUpstreamMessage(err)
+	} else if tempID != "" {
+		if err := purgeOldest(ctx, client, tempID, need); err != nil {
+			return err
+		}
+	}
+	if free, err = freeSpace(ctx, client); err != nil {
+		return videoUpstreamMessage(err)
+	}
+	if free >= need {
+		return nil
+	}
+
+	root, err := client.ListAllFiles(ctx, "")
+	if err != nil {
+		return videoUpstreamMessage(err)
+	}
+	if pack, ok := findFolder(root, packFromSharedName); ok {
+		if err := purgeOldest(ctx, client, pack.ID, need); err != nil {
+			return err
+		}
+	}
+	if free, err = freeSpace(ctx, client); err != nil {
+		return videoUpstreamMessage(err)
+	}
+	if free < need {
+		return errSpaceInsufficient
+	}
+	return nil
+}
+
+func freeSpace(ctx context.Context, client *pikpak.Client) (int64, error) {
+	about, err := client.About(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return about.QuotaLimit - about.QuotaUsage, nil
+}
+
+// purgeOldest deletes files from parentID oldest first until the quota fits.
+// Folders are left alone: they are cheap and may be someone's structure.
+func purgeOldest(ctx context.Context, client *pikpak.Client, parentID string, need int64) error {
+	items, err := client.ListAllFiles(ctx, parentID)
+	if err != nil {
+		return videoUpstreamMessage(err)
+	}
+	files := make([]pikpak.File, 0, len(items))
+	for _, f := range items {
+		if f.Kind == "drive#file" {
+			files = append(files, f)
+		}
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		return modifiedSortKey(files[i]) < modifiedSortKey(files[j])
+	})
+	for _, f := range files {
+		free, err := freeSpace(ctx, client)
+		if err != nil {
+			return videoUpstreamMessage(err)
+		}
+		if free >= need {
+			return nil
+		}
+		task, err := client.BatchDelete(ctx, []string{f.ID})
+		if err != nil {
+			return videoUpstreamMessage(err)
+		}
+		if err := waitTask(ctx, client, task); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// modifiedSortKey normalises PikPak's timestamps for oldest-first sorting.
+// An unparsable value sorts first, which only ever deletes something older
+// than it can prove.
+func modifiedSortKey(f pikpak.File) string {
+	t, err := time.Parse(time.RFC3339Nano, f.ModifiedTime)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// findRestoredFile picks the file the restore just dropped into the root.
+// Comparing against the pre-restore snapshot matters: a file of the same name
+// may already be there, and moving that one would play the wrong video.
+func findRestoredFile(before, after []pikpak.File, known map[string]bool, name string) (pikpak.File, bool) {
+	var first pikpak.File
+	for _, f := range after {
+		if known[f.ID] || f.Kind != "drive#file" {
+			continue
+		}
+		if f.Name == name {
+			return f, true
+		}
+		if first.ID == "" {
+			first = f
+		}
+	}
+	return first, first.ID != ""
+}
+
+func waitTask(ctx context.Context, client *pikpak.Client, taskID string) error {
+	if taskID == "" {
+		return nil
+	}
+	_, ok, err := client.WaitTaskSettled(ctx, taskID, videoTaskTimeout, videoTaskInterval)
+	if err != nil {
+		return videoUpstreamMessage(err)
+	}
+	if !ok {
+		return errors.New("PikPak 任务超时，请稍后重试")
+	}
+	return nil
+}
+
+func signVideoResult(deps Deps, uid int, file pikpak.File) videoPrepareResult {
+	token := playtoken.Sign(deps.PlaySecret, uid, file.ID, playTokenTTL, time.Now())
+	return videoPrepareResult{
+		FileID:    file.ID,
+		Name:      file.Name,
+		Size:      file.Size,
+		StreamURL: "/api/stream/" + url.PathEscape(file.ID) + "?t=" + token,
+	}
+}

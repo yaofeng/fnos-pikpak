@@ -238,6 +238,28 @@ func (c *Client) ListFiles(ctx context.Context, parentID string, o ListOptions) 
 	return FilePage{Items: raw.Files, NextPageToken: raw.NextPageToken}, nil
 }
 
+// ListAllFiles follows page tokens until parentID is exhausted. Preparation
+// walks folders to find the oldest videos and to notice a freshly restored
+// file, and both need the whole folder, not its first page. The page cap
+// keeps a misbehaving upstream from looping forever.
+func (c *Client) ListAllFiles(ctx context.Context, parentID string) ([]File, error) {
+	const maxPages = 50
+	out := []File{}
+	pageToken := ""
+	for i := 0; i < maxPages; i++ {
+		page, err := c.ListFiles(ctx, parentID, ListOptions{PageToken: pageToken, Limit: 100})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page.Items...)
+		if page.NextPageToken == "" {
+			return out, nil
+		}
+		pageToken = page.NextPageToken
+	}
+	return out, nil
+}
+
 func (c *Client) About(ctx context.Context) (About, error) {
 	var raw struct {
 		Quota struct {
