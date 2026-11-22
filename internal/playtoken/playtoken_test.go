@@ -78,3 +78,31 @@ func TestDeriveSecretIsStableAndSeparate(t *testing.T) {
 		t.Fatalf("derived key = %x", a)
 	}
 }
+
+func TestSignShareVerifyRoundTrip(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	token := SignShare(secret, 1000, "VOabc123", "sf1", 6*time.Hour, now)
+
+	claims, err := Verify(secret, token, now)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if claims.UID != 1000 || claims.ShareID != "VOabc123" || claims.FileID != "sf1" {
+		t.Fatalf("claims = %+v", claims)
+	}
+}
+
+func TestDriveAndShareTokensDoNotSubstituteForEachOther(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	drive := Sign(secret, 1000, "f1", time.Hour, now)
+	share := SignShare(secret, 1000, "VOabc123", "f1", time.Hour, now)
+
+	dc, err := Verify(secret, drive, now)
+	if err != nil || dc.ShareID != "" {
+		t.Fatalf("drive claims = %+v err=%v", dc, err)
+	}
+	sc, err := Verify(secret, share, now)
+	if err != nil || sc.ShareID != "VOabc123" {
+		t.Fatalf("share claims = %+v err=%v", sc, err)
+	}
+}

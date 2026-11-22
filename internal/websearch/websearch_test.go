@@ -87,10 +87,14 @@ func TestSearchAsksForTheRequestedPage(t *testing.T) {
 	}
 }
 
-func TestSearchDropsResultsOutsidePikPak(t *testing.T) {
+func TestSearchKeepsEveryPikPakShareHost(t *testing.T) {
 	srv, _, _, _ := organicServer(t, []map[string]any{
 		{"title": "知乎", "link": "https://www.zhihu.com/question/1", "snippet": "无关"},
-		{"title": "站内", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+		{"title": "主站", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+		// PikPak shares appear on its sister domains too; dropping them made a
+		// page of ten look like three.
+		{"title": "备用域名", "link": "https://mypikpak.net/s/VN2", "snippet": "相关"},
+		{"title": "国际站", "link": "https://pikpak.me/s/VN3", "snippet": "相关"},
 		// A lookalike host must not pass for the site.
 		{"title": "假冒", "link": "https://notmypikpak.com/s/VN1", "snippet": "相关"},
 	})
@@ -100,8 +104,18 @@ func TestSearchDropsResultsOutsidePikPak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got) != 1 || got[0].URL != "https://mypikpak.com/s/VN1" {
-		t.Fatalf("results = %+v", got)
+	urls := make([]string, 0, len(got))
+	for _, r := range got {
+		urls = append(urls, r.URL)
+	}
+	want := []string{"https://mypikpak.com/s/VN1", "https://mypikpak.net/s/VN2", "https://pikpak.me/s/VN3"}
+	if len(urls) != len(want) {
+		t.Fatalf("results = %v", urls)
+	}
+	for i := range want {
+		if urls[i] != want[i] {
+			t.Fatalf("results = %v", urls)
+		}
 	}
 }
 

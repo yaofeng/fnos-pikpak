@@ -100,4 +100,16 @@ CREATE TABLE upload_jobs (
 );
 CREATE INDEX idx_upload_jobs_uid_status ON upload_jobs(uid, status);
 `,
+	`
+CREATE TABLE share_favorites (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid           INTEGER NOT NULL,
+  share_id      TEXT NOT NULL,
+  title         TEXT NOT NULL DEFAULT '',
+  pass_code_enc BLOB NOT NULL DEFAULT x'',
+  created_at    TEXT NOT NULL,
+  UNIQUE (uid, share_id)
+);
+CREATE INDEX idx_share_favorites_uid ON share_favorites(uid, created_at);
+`,
 }

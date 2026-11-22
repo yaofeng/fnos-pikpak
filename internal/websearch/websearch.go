@@ -18,6 +18,11 @@ import (
 // Site is the domain every query is limited to.
 const Site = "mypikpak.com"
 
+// shareSites are the hosts PikPak actually serves share pages from. Google
+// indexes all of them, so filtering to the .com alone hid most of a result
+// page — ten hits in, three shown.
+var shareSites = []string{"mypikpak.com", "mypikpak.net", "mypikpak.me", "pikpak.me"}
+
 // defaultEndpoint is Serper's Google proxy: it honors the site: operator and
 // returns organic results as JSON.
 const defaultEndpoint = "https://google.serper.dev/search"
@@ -25,9 +30,9 @@ const defaultEndpoint = "https://google.serper.dev/search"
 // MaxPage is the last page a provider will serve; each page is one paid query.
 const MaxPage = 10
 
-// pageSize mirrors a Google result page, so 下一页 advances by what a person
-// sees rather than by a server-side quota.
-const pageSize = 10
+// pageSize is larger than a Google page so the site filter still leaves a
+// full screen of hits; Serper bills the request, not the result count.
+const pageSize = 20
 
 // ErrEmptyQuery means there was nothing to search for.
 var ErrEmptyQuery = errors.New("websearch: empty query")
@@ -148,12 +153,18 @@ func normalizeKeyword(keyword string) string {
 	return q
 }
 
-// onSite reports whether raw points at Site or a subdomain of it.
+// onSite reports whether raw points at one of PikPak's share hosts or a
+// subdomain of one.
 func onSite(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
-	return host == Site || strings.HasSuffix(host, "."+Site)
+	for _, site := range shareSites {
+		if host == site || strings.HasSuffix(host, "."+site) {
+			return true
+		}
+	}
+	return false
 }

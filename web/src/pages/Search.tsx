@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { apiGet, ApiError } from '../api'
+import { apiGet, apiPost, ApiError } from '../api'
 import { copyText } from '../clipboard'
+import ShareBrowser, { type ShareState } from '../components/ShareBrowser'
 import { GlobeIcon, SearchIcon } from '../components/icons'
 import { crumbFromURL, type WebResult, type WebSearchPage } from '../search'
 import { afterClose, openTab, type WebTab } from '../webTabs'
@@ -26,6 +27,10 @@ export default function Search() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tab: WebTab } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [tabNote, setTabNote] = useState('')
+  // What each share tab learned while it was open: the title it settled on and
+  // the pass code that worked, so 加入收藏 can save the same thing.
+  const [tabStates, setTabStates] = useState<Record<number, ShareState>>({})
   const nextTabId = useRef(1)
   const active = tabs.find((t) => t.id === activeId) ?? null
 
@@ -43,6 +48,12 @@ export default function Search() {
     const timer = window.setTimeout(() => setCopied(false), 2000)
     return () => window.clearTimeout(timer)
   }, [copied])
+
+  useEffect(() => {
+    if (!tabNote) return
+    const timer = window.setTimeout(() => setTabNote(''), 2500)
+    return () => window.clearTimeout(timer)
+  }, [tabNote])
 
   async function run(e?: FormEvent, wanted = 1) {
     e?.preventDefault()
@@ -82,6 +93,31 @@ export default function Search() {
   function closeTab(id: number) {
     setActiveId(afterClose(tabs, id, activeId))
     setTabs(tabs.filter((t) => t.id !== id))
+    setTabStates((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }
+
+  function noteTabTitle(id: number, title: string) {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)))
+  }
+
+  async function addFavorite(tab: WebTab) {
+    setTabMenu(null)
+    setError('')
+    const state = tabStates[tab.id]
+    try {
+      await apiPost('share-favorites', {
+        url: tab.url,
+        title: state?.title ?? tab.title,
+        pass_code: state?.passCode ?? '',
+      })
+      setTabNote('已加入收藏夹')
+    } catch (err) {
+      setError((err as Error).message)
+    }
   }
 
   async function copyTabAddress(tab: WebTab) {
@@ -136,14 +172,18 @@ export default function Search() {
               </button>
             </div>
           ))}
-          {copied && <span className="wtab-note">已复制地址</span>}
+          {(copied || tabNote) && <span className="wtab-note">{tabNote || '已复制地址'}</span>}
         </div>
       )}
 
       {active ? (
-        <div className="wview">
-          <iframe className="wframe" src={active.url} title={active.title} />
-        </div>
+        <ShareBrowser
+          key={active.id}
+          url={active.url}
+          initialTitle={active.title}
+          onTitle={(title) => noteTabTitle(active.id, title)}
+          onState={(state) => setTabStates((prev) => ({ ...prev, [active.id]: state }))}
+        />
       ) : (
         <div className={searched ? 'search-engine has-results' : 'search-engine'}>
           <form className="se-logo-form" onSubmit={(e) => void run(e)}>
@@ -238,6 +278,9 @@ export default function Search() {
         <div className="context-menu" style={{ left: tabMenu.x, top: tabMenu.y }}>
           <button type="button" onClick={() => void copyTabAddress(tabMenu.tab)}>
             复制地址
+          </button>
+          <button type="button" onClick={() => void addFavorite(tabMenu.tab)}>
+            加入收藏
           </button>
           <button
             type="button"

@@ -46,7 +46,7 @@ export default function Files() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
-  const [view, setView] = useState<'list' | 'grid'>('list')
+  const [view, setView] = useState<'list' | 'grid'>('grid')
   const [q, setQ] = useState('')
   const [kind, setKind] = useState<KindFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -433,8 +433,8 @@ export default function Files() {
             type="button"
             className={view === 'grid' ? 'active' : ''}
             onClick={() => setView('grid')}
-            title="网格视图"
-            aria-label="网格视图"
+            title="大图标视图"
+            aria-label="大图标视图"
           >
             <GridIcon />
           </button>

@@ -2,10 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import Toaster from './components/Toaster'
-import { ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
+import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
 import Bind from './pages/Bind'
 import Debug from './pages/Debug'
+import Favorites from './pages/Favorites'
 import Files from './pages/Files'
 import Search from './pages/Search'
 import Recent from './pages/Recent'
@@ -38,6 +39,7 @@ const navItems = [
   { to: '/trash', key: 'nav.trash' },
   { to: '/transfers', key: 'nav.transfers' },
   { to: '/tasks', key: 'nav.tasks' },
+  { to: '/favorites', key: 'nav.favorites' },
   { to: '/search', key: 'nav.search' },
 ]
 
@@ -47,6 +49,7 @@ const navIcons: Record<string, ReactNode> = {
   '/trash': <TrashIcon size={17} />,
   '/transfers': <TransferIcon size={17} />,
   '/tasks': <MagnetIcon size={17} />,
+  '/favorites': <BookmarkIcon size={17} />,
   '/search': <GlobeIcon size={17} />,
   '/settings': <GearIcon size={17} />,
   '/debug': <WrenchIcon size={17} />,
@@ -59,6 +62,7 @@ const titles: Record<string, string> = {
   '/transfers': 'nav.transfers',
   '/trash': 'nav.trash',
   '/settings': 'nav.settings',
+  '/favorites': 'nav.favorites',
   '/search': 'nav.search',
   '/bind': 'nav.bind',
   '/debug': 'nav.debug',
@@ -202,6 +206,7 @@ export default function App() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/transfers" element={<Transfers />} />
             <Route path="/trash" element={<Trash />} />
+            <Route path="/favorites" element={<Favorites />} />
             <Route path="/search" element={<Search />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bind" element={<Bind />} />

@@ -10,6 +10,7 @@ const messages: Record<string, Entry> = {
   'nav.trash': { 'zh-CN': '回收站', en: 'Trash' },
   'nav.settings': { 'zh-CN': '设置', en: 'Settings' },
   'nav.search': { 'zh-CN': '全网搜索', en: 'Web search' },
+  'nav.favorites': { 'zh-CN': '分享收藏夹', en: 'Share favorites' },
   'nav.bind': { 'zh-CN': '账号', en: 'Account' },
   'nav.debug': { 'zh-CN': '调试', en: 'Debug' },
   'state.loading': { 'zh-CN': '加载中…', en: 'Loading…' },

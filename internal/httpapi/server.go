@@ -46,6 +46,9 @@ type Deps struct {
 	// WebSearch finds pages on the PikPak site for 全网搜索. Nil means the
 	// default provider client.
 	WebSearch *websearch.Client
+	// ShareSessions remembers the pass-code token of every opened share so
+	// the browser never sees it. Nil means a fresh in-memory cache.
+	ShareSessions *shareSessions
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -64,6 +67,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Links == nil {
 		deps.Links = newLinkCache(linkTTL)
+	}
+	if deps.ShareSessions == nil {
+		deps.ShareSessions = newShareSessions()
 	}
 	if len(deps.PlaySecret) == 0 {
 		secret := make([]byte, 32)
@@ -102,6 +108,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerUploadRoutes(inner, deps)
 		registerTransferRoutes(inner, deps)
 		registerTaskRoutes(inner, deps)
+		registerShareRoutes(inner, deps)
 		registerPlayRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
@@ -126,6 +133,7 @@ func NewMux(deps Deps) *http.ServeMux {
 	// Streaming is authenticated by its signed token, not by the gateway
 	// header, because a <video> element cannot send one.
 	registerStreamRoutesPlay(root, deps)
+	registerShareStreamRoutes(root, deps)
 
 	logger := deps.Logger
 	if logger == nil {

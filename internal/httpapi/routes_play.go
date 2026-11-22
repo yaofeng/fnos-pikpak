@@ -71,7 +71,8 @@ func (deps Deps) streamFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_token", "播放链接无效")
 		return
 	}
-	if claims.FileID != r.PathValue("id") {
+	if claims.FileID != r.PathValue("id") || claims.ShareID != "" {
+		// A share token names a share as well; it must not open a drive file.
 		writeError(w, http.StatusUnauthorized, "invalid_token", "播放链接与文件不匹配")
 		return
 	}

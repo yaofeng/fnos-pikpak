@@ -74,6 +74,22 @@ export function FolderPlusIcon({ size = 16 }: IconProps) {
   )
 }
 
+export function PlayIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M8 5.5 19 12 8 18.5z" />
+    </svg>
+  )
+}
+
+export function BookmarkIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M6 4h12v16l-6-4-6 4z" />
+    </svg>
+  )
+}
+
 export function DownloadIcon({ size = 16 }: IconProps) {
   return (
     <svg {...stroke(size)}>

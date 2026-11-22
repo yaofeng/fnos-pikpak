@@ -28,7 +28,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, quiet = false): Promise<T> {
   const res = await fetch(`${basePath}/api/${path.replace(/^\/+/, '')}`, {
     ...init,
     credentials: 'same-origin',
@@ -42,13 +42,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       body?.error?.message ?? (typeof body?.error === 'string' ? body.error : res.statusText)
     const message = errorText(code, getLang()) ?? raw
     // One place raises the visible error, so no page can forget to report it.
-    notifyError(message, `${res.status} ${code}: ${raw}`)
+    // A quiet read opts out: its callers handle the failure themselves, and a
+    // toast for an expected state (a share asking for its pass code) is noise.
+    if (!quiet) notifyError(message, `${res.status} ${code}: ${raw}`)
     throw new ApiError(res.status, code, message, `${res.status} ${code}: ${raw}`)
   }
   return body as T
 }
 
 export const apiGet = <T,>(path: string) => request<T>(path)
+// apiGetQuiet is apiGet without the global error toast.
+export const apiGetQuiet = <T,>(path: string) => request<T>(path, undefined, true)
 export const apiPost = <T,>(path: string, data: unknown) =>
   request<T>(path, { method: 'POST', body: JSON.stringify(data ?? {}) })
 export const apiPatch = <T,>(path: string, data: unknown) =>

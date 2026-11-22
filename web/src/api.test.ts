@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest'
-import { ApiError, apiGet } from './api'
+import { ApiError, apiGet, apiGetQuiet } from './api'
 import { getToasts, resetToasts } from './toast'
 
 const realFetch = globalThis.fetch
@@ -30,6 +30,13 @@ describe('ApiError', () => {
     const err = (await apiGet('files').catch((e) => e)) as ApiError
     expect(err.code).toBe('brand_new')
     expect(err.message).toBe('文件夹名不能为空')
+  })
+
+  test('a quiet read reports an expected failure without a toast', async () => {
+    stubFetch(400, JSON.stringify({ error: { code: 'pass_code_required', message: '该分享需要访问密码' } }))
+    const err = (await apiGetQuiet('share?url=x').catch((e) => e)) as ApiError
+    expect(err.code).toBe('pass_code_required')
+    expect(getToasts()).toHaveLength(0)
   })
 
   test('raises one toast, expandable down to the raw detail', async () => {

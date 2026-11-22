@@ -12,7 +12,19 @@ type PlayInfo = {
 
 const rates = [0.5, 1, 1.25, 1.5, 2]
 
-export default function Player({ fileId, name, onClose }: { fileId: string; name: string; onClose: () => void }) {
+export default function Player({
+  fileId,
+  name,
+  onClose,
+  infoPath,
+}: {
+  fileId: string
+  name: string
+  onClose: () => void
+  // infoPath overrides where the stream info comes from, so a file inside a
+  // share can play through the same player.
+  infoPath?: string
+}) {
   const [info, setInfo] = useState<PlayInfo | null>(null)
   const [error, setError] = useState('')
   const [rate, setRate] = useState(1)
@@ -26,7 +38,7 @@ export default function Player({ fileId, name, onClose }: { fileId: string; name
     let alive = true
     setInfo(null)
     setError('')
-    apiGet<PlayInfo>(`play/${fileId}`)
+    apiGet<PlayInfo>(infoPath ?? `play/${fileId}`)
       .then((got) => {
         if (alive) setInfo(got)
       })
@@ -36,7 +48,7 @@ export default function Player({ fileId, name, onClose }: { fileId: string; name
     return () => {
       alive = false
     }
-  }, [fileId])
+  }, [fileId, infoPath])
 
   const mime = info ? guessMime(info.name, info.mime) : ''
   const src = info ? `${basePath}${info.stream_url}` : ''
