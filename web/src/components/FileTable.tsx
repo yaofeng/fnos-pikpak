@@ -5,32 +5,22 @@ import { ChevronRight, FileIcon } from './icons'
 type Props = {
   items: FileItem[]
   selected?: Set<string>
-  selectable?: boolean
-  onToggle?: (id: string) => void
+  onSelect?: (index: number, e: MouseEvent) => void
   onOpen?: (f: FileItem) => void
   onMenu?: (e: MouseEvent, f: FileItem) => void
   onDragStart?: (f: FileItem) => void
   onDropOn?: (folderId: string) => void
 }
 
-// FileTable renders the list view the fnOS 文件管理 uses: chevron, checkbox,
-// glyph, name, size, time. Every interaction is optional, so the 最近 and
-// 回收站 pages can show the same table read-only or with their own actions.
-export default function FileTable({
-  items,
-  selected,
-  selectable = false,
-  onToggle,
-  onOpen,
-  onMenu,
-  onDragStart,
-  onDropOn,
-}: Props) {
+// FileTable renders the list view with the Finder's selection: a row is
+// selected by clicking it, there are no checkboxes. Every interaction is
+// optional, so the 最近 and 回收站 pages can show the same table read-only or
+// with their own actions.
+export default function FileTable({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn }: Props) {
   return (
     <table className="file-table">
       <thead>
         <tr>
-          {selectable && <th className="col-check" />}
           <th className="col-open" />
           <th>文件名</th>
           <th className="col-size">大小</th>
@@ -38,11 +28,12 @@ export default function FileTable({
         </tr>
       </thead>
       <tbody>
-        {items.map((f) => {
+        {items.map((f, index) => {
           const isSelected = selected?.has(f.id) ?? false
           return (
             <tr
               key={f.id}
+              data-file-id={f.id}
               className={isSelected ? 'selected' : ''}
               draggable={Boolean(onDragStart)}
               onDragStart={() => onDragStart?.(f)}
@@ -54,21 +45,10 @@ export default function FileTable({
                 e.preventDefault()
                 onDropOn(f.id)
               }}
-              onClick={() => onToggle?.(f.id)}
+              onClick={(e) => onSelect?.(index, e)}
               onDoubleClick={() => onOpen?.(f)}
               onContextMenu={(e) => onMenu?.(e, f)}
             >
-              {selectable && (
-                <td className="col-check">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggle?.(f.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    aria-label={`选择 ${f.name}`}
-                  />
-                </td>
-              )}
               <td className="col-open">
                 {isFolder(f) && onOpen && (
                   <button

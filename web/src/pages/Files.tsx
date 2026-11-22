@@ -19,6 +19,8 @@ import {
 } from '../components/icons'
 import { askPath, hostAvailable, pickFiles } from '../fnosSdk'
 import { cacheKeys, dropCachePrefix, readCache, writeCache } from '../listCache'
+import { useFileSelection } from '../useFileSelection'
+import { useMarquee } from '../useMarquee'
 import {
   filterFiles,
   isFolder,
@@ -44,7 +46,6 @@ export default function Files() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [view, setView] = useState<'list' | 'grid'>('list')
   const [q, setQ] = useState('')
   const [kind, setKind] = useState<KindFilter>('all')
@@ -89,7 +90,7 @@ export default function Files() {
   )
 
   useEffect(() => {
-    setSelected(new Set())
+    clearSelection()
     // Coming back to a folder shows the listing it had; 刷新 and the mutation
     // paths replace it.
     const cached = readCache<CachedList>(cacheKeys.files(folderId, kind))
@@ -126,15 +127,33 @@ export default function Files() {
   }, [menu])
 
   const shown = sortFiles(filterFiles(items, q, kind), sortKey, sortDir)
+  // Selection is by list position, like the Finder: click selects one,
+  // Command/Control adds or removes, Shift takes the range, and a drag on the
+  // background rubber-bands over whatever it touches.
+  const {
+    ids: selectedIds,
+    selected,
+    select,
+    hitTest,
+    selectAll,
+    clear: clearSelection,
+  } = useFileSelection(shown.map((f) => f.id))
+  const { box: bodyRef, rect: marqueeRect, onMouseDown: startMarquee } = useMarquee({ onHits: hitTest })
 
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        selectAll()
+        return
+      }
+      if (e.key === 'Escape') clearSelection()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectAll, clearSelection])
 
   function openFile(f: FileItem) {
     if (!isFolder(f)) return
@@ -184,7 +203,7 @@ export default function Files() {
     try {
       const res = await apiPost<{ pending: boolean }>('files/trash', { ids })
       setNotice(res.pending ? '任务已提交，稍后自动刷新' : '已移入回收站')
-      setSelected(new Set())
+      clearSelection()
       dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
@@ -204,7 +223,7 @@ export default function Files() {
       })
       setNotice(res.pending ? '任务已提交，稍后自动刷新' : move.mode === 'move' ? '已移动' : '已复制')
       setMove(null)
-      setSelected(new Set())
+      clearSelection()
       dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
@@ -232,7 +251,7 @@ export default function Files() {
       })
       const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
       setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
-      setSelected(new Set())
+      clearSelection()
     } catch (e) {
       setError(
         (e as ApiError).code === 'download_dir_unset'
@@ -286,7 +305,7 @@ export default function Files() {
         })
         setNotice(res.pending ? '任务已提交，稍后自动刷新' : '已移动')
         setMove(null)
-        setSelected(new Set())
+        clearSelection()
         dropCachePrefix('files:')
       await fetchPage('', true)
       } catch (e) {
@@ -296,8 +315,6 @@ export default function Files() {
       }
     })()
   }
-
-  const selectedIds = [...selected]
 
   function goUp() {
     if (stack.length === 0) return
@@ -431,7 +448,7 @@ export default function Files() {
       {error && <p className="error">{error}</p>}
       {notice && <p className="ok small">{notice}</p>}
 
-      {selectedIds.length > 0 && (
+      {selectedIds.length > 1 && (
         <div className="selection-bar">
           <span>已选 {selectedIds.length} 项</span>
           <button type="button" onClick={() => setMove({ mode: 'move', ids: selectedIds })} disabled={busy}>
@@ -446,7 +463,7 @@ export default function Files() {
           <button type="button" onClick={() => void trash(selectedIds)} disabled={busy}>
             移入回收站
           </button>
-          <button type="button" onClick={() => setSelected(new Set())}>
+          <button type="button" onClick={() => clearSelection()}>
             取消选择
           </button>
         </div>
@@ -456,38 +473,45 @@ export default function Files() {
         <p className="muted">{items.length === 0 ? '这个文件夹是空的。' : '没有匹配的条目。'}</p>
       )}
 
-      {view === 'list' ? (
-        <FileTable
-          items={shown}
-          selected={selected}
-          selectable
-          onToggle={toggle}
-          onOpen={openFile}
-          onMenu={(e, f) => {
-            e.preventDefault()
-            setMenu({ x: e.clientX, y: e.clientY, file: f })
-          }}
-          onDragStart={(f) => {
-            dragged.current = f
-          }}
-          onDropOn={(id) => handleDrop(id)}
-        />
-      ) : (
-        <FileGrid
-          items={shown}
-          selected={selected}
-          onToggle={toggle}
-          onOpen={openFile}
-          onMenu={(e, f) => {
-            e.preventDefault()
-            setMenu({ x: e.clientX, y: e.clientY, file: f })
-          }}
-          onDragStart={(f) => {
-            dragged.current = f
-          }}
-          onDropOn={(id) => handleDrop(id)}
-        />
-      )}
+      <div className="file-body" ref={bodyRef} onMouseDown={startMarquee}>
+        {view === 'list' ? (
+          <FileTable
+            items={shown}
+            selected={selected}
+            onSelect={select}
+            onOpen={openFile}
+            onMenu={(e, f) => {
+              e.preventDefault()
+              setMenu({ x: e.clientX, y: e.clientY, file: f })
+            }}
+            onDragStart={(f) => {
+              dragged.current = f
+            }}
+            onDropOn={(id) => handleDrop(id)}
+          />
+        ) : (
+          <FileGrid
+            items={shown}
+            selected={selected}
+            onSelect={select}
+            onOpen={openFile}
+            onMenu={(e, f) => {
+              e.preventDefault()
+              setMenu({ x: e.clientX, y: e.clientY, file: f })
+            }}
+            onDragStart={(f) => {
+              dragged.current = f
+            }}
+            onDropOn={(id) => handleDrop(id)}
+          />
+        )}
+        {marqueeRect && (
+          <div
+            className="marquee"
+            style={{ left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.width, height: marqueeRect.height }}
+          />
+        )}
+      </div>
 
       <div ref={sentinel} className="sentinel" />
       {loading && <p className="muted">加载中…</p>}
@@ -552,10 +576,10 @@ export default function Files() {
               >
                 复制到…
               </button>
-              <button type="button" onClick={() => setSelected(new Set(shown.map((f) => f.id)))}>
+              <button type="button" onClick={() => selectAll()}>
                 全选
               </button>
-              <button type="button" onClick={() => setSelected(new Set())}>
+              <button type="button" onClick={() => clearSelection()}>
                 取消选择
               </button>
             </>

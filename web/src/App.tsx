@@ -145,8 +145,13 @@ export default function App() {
         <header className="topbar">
           <strong>{title}</strong>
           {account && (
-            <span className="muted small">
-              {t('quota.used')} {formatBytes(account.quota_usage)} / {formatBytes(account.quota_limit)}
+            <span className="quota-pill" title={`${pct.toFixed(1)}%`}>
+              <span>
+                {formatBytes(account.quota_usage)} / {formatBytes(account.quota_limit)}
+              </span>
+              <span className="quota-meter" aria-hidden="true">
+                <span style={{ width: `${pct}%` }} />
+              </span>
             </span>
           )}
         </header>
@@ -183,11 +188,6 @@ export default function App() {
 
         <Toaster />
 
-        {account && (
-          <div className="quota-bar" title={`${pct.toFixed(1)}%`}>
-            <div style={{ width: `${pct}%` }} />
-          </div>
-        )}
       </div>
     </div>
   )

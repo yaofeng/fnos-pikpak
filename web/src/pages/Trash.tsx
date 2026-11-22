@@ -4,6 +4,8 @@ import FileTable from '../components/FileTable'
 import { RefreshIcon, RestoreIcon, TrashIcon } from '../components/icons'
 import type { FileItem } from '../files'
 import { cacheKeys, readCache, writeCache } from '../listCache'
+import { useFileSelection } from '../useFileSelection'
+import { useMarquee } from '../useMarquee'
 
 type Page = { items: FileItem[]; next_page_token: string }
 type CachedList = { items: FileItem[]; token: string }
@@ -14,7 +16,6 @@ export default function Trash() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const reqId = useRef(0)
   const itemsRef = useRef<FileItem[]>([])
@@ -34,7 +35,7 @@ export default function Trash() {
       setItems(nextItems)
       setToken(nextToken)
       writeCache<CachedList>(cacheKeys.trash(), { items: nextItems, token: nextToken })
-      if (reset) setSelected(new Set())
+      if (reset) clearSelection()
     } catch (e) {
       if (id === reqId.current) setError((e as Error).message)
     } finally {
@@ -66,16 +67,20 @@ export default function Trash() {
     return () => obs.disconnect()
   }, [token, loading, fetchPage])
 
-  const ids = [...selected]
+  // Same Finder selection as 我的文件: click selects one, Command/Control
+  // toggles, Shift takes the range, a drag on the background rubber-bands.
+  const { ids, selected, select, hitTest, clear: clearSelection } = useFileSelection(items.map((f) => f.id))
+  const { box: bodyRef, rect: marqueeRect, onMouseDown: startMarquee } = useMarquee({ onHits: hitTest })
 
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      if (e.key === 'Escape') clearSelection()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [clearSelection])
 
   async function run(action: 'untrash' | 'delete', target: string[]) {
     if (!target.length) return
@@ -153,7 +158,7 @@ export default function Trash() {
       {error && <p className="error">{error}</p>}
       {notice && <p className="ok small">{notice}</p>}
 
-      {ids.length > 0 && (
+      {ids.length > 1 && (
         <div className="selection-bar">
           <span>已选 {ids.length} 项</span>
           <button type="button" onClick={() => void run('untrash', ids)} disabled={busy}>
@@ -162,7 +167,7 @@ export default function Trash() {
           <button type="button" onClick={() => void run('delete', ids)} disabled={busy}>
             永久删除
           </button>
-          <button type="button" onClick={() => setSelected(new Set())}>
+          <button type="button" onClick={() => clearSelection()}>
             取消选择
           </button>
         </div>
@@ -171,7 +176,15 @@ export default function Trash() {
       {!loading && items.length === 0 && !error && <p className="muted">回收站是空的。</p>}
 
       {items.length > 0 && (
-        <FileTable items={items} selected={selected} selectable onToggle={toggle} />
+        <div className="file-body" ref={bodyRef} onMouseDown={startMarquee}>
+          <FileTable items={items} selected={selected} onSelect={select} />
+          {marqueeRect && (
+            <div
+              className="marquee"
+              style={{ left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.width, height: marqueeRect.height }}
+            />
+          )}
+        </div>
       )}
 
       <div ref={sentinel} className="sentinel" />

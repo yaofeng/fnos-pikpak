@@ -484,15 +484,13 @@ button.primary {
 }
 
 .file-table tbody tr.selected {
-  background: rgba(27, 42, 74, 0.08);
+  /* The Finder paints the whole row: blue, white text. */
+  background: #0a7cff;
+  color: #fff;
 }
 
-:root[data-theme='dark'] .file-table tbody tr.selected {
-  background: rgba(138, 180, 248, 0.14);
-}
-
-.col-check {
-  width: 28px;
+.file-table tbody tr.selected .muted {
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .col-open {
@@ -553,42 +551,96 @@ button.primary {
   flex: none;
 }
 
+.file-body {
+  position: relative;
+}
+
+/* Rubber band drawn by useMarquee while the pointer drags the background. */
+.marquee {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid rgba(10, 124, 255, 0.8);
+  border-radius: 2px;
+  background: rgba(10, 124, 255, 0.12);
+  pointer-events: none;
+}
+
+/* Icon view of the Finder: no card per item, the selected name carries the
+   blue highlight, the caption below it turns blue. */
 .file-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 4px;
+  padding: 4px 0;
 }
 
 .tile {
-  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px 8px;
+  border: none;
   border-radius: 8px;
-  padding: 12px 8px;
-  text-align: center;
-  background: var(--card);
+  background: transparent;
   cursor: default;
+  user-select: none;
+}
+
+.tile:hover {
+  background: rgba(0, 0, 0, 0.045);
+}
+
+:root[data-theme='dark'] .tile:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .tile.selected {
-  border-color: var(--accent);
-  background: rgba(27, 42, 74, 0.08);
+  background: rgba(10, 124, 255, 0.1);
 }
 
 .tile-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 48px;
-  margin-bottom: 6px;
+  height: 60px;
+}
+
+.tile-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
 }
 
 .tile-name {
-  margin-top: 6px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 5px;
   font-size: 13px;
-  word-break: break-all;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile.selected .tile-name {
+  background: #0a7cff;
+  color: #fff;
 }
 
 .tile-meta {
-  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tile.selected .tile-meta {
+  color: #0a7cff;
+}
+
+:root[data-theme='dark'] .tile.selected .tile-meta {
+  color: #7ab4ff;
 }
 
 .selection-bar {
@@ -828,17 +880,32 @@ button.primary {
   padding: 20px 24px 48px;
 }
 
-.quota-bar {
-  position: fixed;
-  left: 220px;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--border);
+.quota-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
-.quota-bar > div {
+.quota-meter {
+  display: inline-block;
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.quota-meter > span {
+  display: block;
   height: 100%;
+  border-radius: 3px;
   background: var(--accent);
 }
 
