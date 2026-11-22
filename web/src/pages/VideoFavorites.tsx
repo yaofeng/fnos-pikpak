@@ -244,8 +244,6 @@ export default function VideoFavorites() {
         </div>
       </div>
 
-      {notice && <p className="ok small">{notice}</p>}
-
       {error && <p className="error">{error}</p>}
 
       {items === null || (loading && items.length === 0) ? (
@@ -366,6 +364,15 @@ export default function VideoFavorites() {
           </tbody>
         </table>
       )}
+
+      <div className="status-bar">
+        <span>
+          {picked.length > 0
+            ? `选中 ${picked.length} 项（共 ${(items ?? []).length} 项）`
+            : `共 ${(items ?? []).length} 项`}
+        </span>
+        {notice && <span className="ok status-note">{notice}</span>}
+      </div>
 
       {playing && (
         <Player

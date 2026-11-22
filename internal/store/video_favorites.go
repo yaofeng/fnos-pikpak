@@ -187,20 +187,27 @@ func scanVideoFavorite(row rowScanner) (VideoFavorite, error) {
 	return fav, nil
 }
 
-// VideoGroupKey is the group a saved video shows in when nothing local was
-// chosen: the sharing user, then the share title, then 未知分享. The browser
-// builds the same key, so group operations can name one.
-func VideoGroupKey(fav VideoFavorite) string {
+// VideoGroupLabel is the group name a saved video shows under: the local
+// label if one was chosen, else the sharing user, else the share title, else
+// 未知分享. The browser builds the same name.
+func VideoGroupLabel(fav VideoFavorite) string {
 	if label := strings.TrimSpace(fav.GroupLabel); label != "" {
-		return "label:" + label
+		return label
 	}
 	if owner := strings.TrimSpace(fav.Owner); owner != "" {
-		return "owner:" + owner
+		return owner
 	}
 	if title := strings.TrimSpace(fav.ShareTitle); title != "" {
-		return "title:" + title
+		return title
 	}
-	return "unknown"
+	return "未知分享"
+}
+
+// VideoGroupKey is the group a saved video shows in. It is built from the
+// displayed name alone, so videos that happen to share a name — one by its
+// sharing user, one filed under that label — are one group.
+func VideoGroupKey(fav VideoFavorite) string {
+	return "label:" + VideoGroupLabel(fav)
 }
 
 // MoveVideoFavoriteGroup files one saved video under a local group label.

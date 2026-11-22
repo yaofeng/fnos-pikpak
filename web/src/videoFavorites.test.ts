@@ -67,10 +67,24 @@ describe('local groups', () => {
     expect(groups.map((g) => g.label)).toEqual(['我的功夫片', 'alice'])
   })
 
-  test('groupKeyOf names the group a video currently sits in', () => {
+  test('groupKeyOf names the group by the name it shows', () => {
     expect(groupKeyOf(fav(1, { group_label: '甲' }))).toBe('label:甲')
-    expect(groupKeyOf(fav(1, { owner: 'alice' }))).toBe('owner:alice')
-    expect(groupKeyOf(fav(1, { share_title: '资料' }))).toBe('title:资料')
-    expect(groupKeyOf(fav(1))).toBe('unknown')
+    expect(groupKeyOf(fav(1, { group_label: '甲', owner: 'bob' }))).toBe('label:甲')
+    expect(groupKeyOf(fav(1, { owner: 'alice' }))).toBe('label:alice')
+    expect(groupKeyOf(fav(1, { share_title: '资料' }))).toBe('label:资料')
+    expect(groupKeyOf(fav(1))).toBe('label:未知分享')
+  })
+
+  // A group is its displayed name: a video shared by bob and a video filed
+  // under the local label "bob" are one group.
+  test('the same group name is one group, whatever its source', () => {
+    const groups = groupVideoFavorites([
+      fav(1, { owner: 'bob', created_at: '2026-11-01T00:00:00Z' }),
+      fav(2, { owner: 'alice', group_label: 'bob', created_at: '2026-11-10T00:00:00Z' }),
+      fav(3, { share_title: 'bob', created_at: '2026-11-20T00:00:00Z' }),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].label).toBe('bob')
+    expect(groups[0].items.map((f) => f.id)).toEqual([3, 2, 1])
   })
 })

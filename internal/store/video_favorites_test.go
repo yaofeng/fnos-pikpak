@@ -152,7 +152,7 @@ func TestVideoFavoriteGroupsMoveAndRename(t *testing.T) {
 		t.Fatalf("other user's move: %v", err)
 	}
 
-	n, err := s.RenameVideoGroup(ctx, 1000, "owner:bob", "朋友分享")
+	n, err := s.RenameVideoGroup(ctx, 1000, "label:bob", "朋友分享")
 	if err != nil || n != 1 {
 		t.Fatalf("rename group = %d err=%v", n, err)
 	}
@@ -169,5 +169,48 @@ func TestVideoFavoriteGroupsMoveAndRename(t *testing.T) {
 	}
 	if byID[bobFav.ID].GroupLabel != "朋友分享" {
 		t.Fatalf("bob after rename = %+v", byID[bobFav.ID])
+	}
+}
+
+// A group is identified by the name it shows: a video whose sharing user is
+// bob and a video the user filed under the local label "bob" are one group,
+// so renaming or dropping into it addresses both.
+func TestVideoFavoriteSameGroupNameIsOneGroup(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	byOwner, err := s.AddVideoFavorite(ctx, 1000, videoFav("VOabc123", "sf2", "a.mp4", 9))
+	if err != nil {
+		t.Fatalf("add by owner: %v", err)
+	}
+	labelled := videoFav("VOabc123", "sf3", "b.mp4", 9)
+	labelled.Owner = "alice"
+	labelled.GroupLabel = "alice"
+	byLabel, err := s.AddVideoFavorite(ctx, 1000, labelled)
+	if err != nil {
+		t.Fatalf("add by label: %v", err)
+	}
+
+	n, err := s.RenameVideoGroup(ctx, 1000, "label:alice", "朋友分享")
+	if err != nil || n != 2 {
+		t.Fatalf("rename group = %d err=%v, want both videos", n, err)
+	}
+	list, err := s.ListVideoFavorites(ctx, 1000)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v err=%v", list, err)
+	}
+	for _, f := range list {
+		if f.GroupLabel != "朋友分享" {
+			t.Fatalf("video %d kept group %q", f.ID, f.GroupLabel)
+		}
+	}
+	if VideoGroupKey(VideoFavorite{Owner: "alice"}) != "label:alice" {
+		t.Fatalf("owner key = %q", VideoGroupKey(VideoFavorite{Owner: "alice"}))
+	}
+	if VideoGroupKey(VideoFavorite{GroupLabel: "alice", Owner: "bob"}) != "label:alice" {
+		t.Fatal("the local label must decide the group")
+	}
+	if byOwner.ID == byLabel.ID {
+		t.Fatal("the fixtures collapsed into one row")
 	}
 }
