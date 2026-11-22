@@ -83,8 +83,10 @@ func TestStreamRejectsForgedToken(t *testing.T) {
 	_, body := getJSON(t, h, "/api/play/f1", "1000")
 	streamURL := env.streamTarget(t, body)
 
-	// Flip one character of the signature.
-	tampered := streamURL[:len(streamURL)-1] + flipLast(streamURL)
+	// Flip one data-carrying character of the signature: the very last base64
+	// character holds padding bits, and A↔B there decodes to the same MAC.
+	cut := len(streamURL) - 2
+	tampered := streamURL[:cut] + flipLast(streamURL[:cut+1]) + streamURL[cut+1:]
 	for _, target := range []string{tampered, "/api/stream/f1?t=garbage"} {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
 		rec := httptest.NewRecorder()
@@ -160,6 +162,10 @@ func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, want string) 
 	}
 }
 
+// flipLast replaces the last character with a different one. The final base64
+// character of a 32-byte HMAC carries padding bits, and changing only those
+// decodes to the same signature, so callers pass a string cut back by one more
+// character: the second-to-last character is all data.
 func flipLast(s string) string {
 	last := s[len(s)-1]
 	if last == 'A' {
