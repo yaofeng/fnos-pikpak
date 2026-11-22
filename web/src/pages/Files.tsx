@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
-import { apiGet, apiPatch, apiPost, type ApiError } from '../api'
+import { apiGet, apiPatch, apiPost, basePath, type ApiError } from '../api'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
@@ -26,6 +26,7 @@ import {
   isFolder,
   isVideo,
   sortFiles,
+  thumbPath,
   type FileItem,
   type KindFilter,
   type SortDir,
@@ -470,6 +471,7 @@ export default function Files() {
           />
         ) : (
           <FileGrid
+            thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id)}`}
             items={shown}
             selected={selected}
             onSelect={select}

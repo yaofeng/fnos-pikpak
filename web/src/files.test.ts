@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { fileKind, filterFiles, formatSize, isVideo, sortFiles, type FileItem } from './files'
+import { fileKind, filterFiles, formatSize, isVideo, sortFiles, thumbPath, type FileItem } from './files'
 
 function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem {
   return { id, parent_id: '', name, kind: 'drive#file', size: 0, ...extra }
@@ -66,6 +66,14 @@ describe('helpers', () => {
     expect(isVideo(file('1', 'a', { category: 'VIDEO' }))).toBe(true)
     expect(isVideo(file('2', 'a', { mime_type: 'video/mp4' }))).toBe(true)
     expect(isVideo(file('3', 'a', { mime_type: 'text/plain' }))).toBe(false)
+  })
+
+  test('builds a drive thumbnail path', () => {
+    expect(thumbPath('f1')).toBe('thumb?file_id=f1')
+  })
+
+  test('builds a share thumbnail path', () => {
+    expect(thumbPath('sf2', 'VOabc123')).toBe('thumb?share_id=VOabc123&file_id=sf2')
   })
 
   test('fileKind picks the icon the file manager shows', () => {

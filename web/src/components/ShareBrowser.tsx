@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
-import { filterFiles, isFolder, sortFiles, type FileItem, type SortDir, type SortKey } from '../files'
+import { filterFiles, isFolder, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
 import { useFileSelection } from '../useFileSelection'
 import FileGrid from './FileGrid'
 import FileTable from './FileTable'
@@ -461,6 +461,7 @@ export default function ShareBrowser({
               <FileTable items={shown} selected={selected} onSelect={select} onOpen={openFile} />
             ) : (
               <FileGrid
+                thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id, shareId)}`}
                 items={shown}
                 selected={selected}
                 onSelect={select}

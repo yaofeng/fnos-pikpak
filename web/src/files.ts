@@ -95,3 +95,13 @@ export function fileKind(f: FileItem): FileKind {
   if (docExtensions.includes(ext)) return 'doc'
   return 'other'
 }
+
+// thumbPath addresses the server-side thumbnail proxy. A share file needs its
+// share id because the bytes come through that share's session; the path has
+// no /api prefix so callers can put it after whatever base they use.
+export function thumbPath(fileID: string, shareID?: string): string {
+  const params = new URLSearchParams()
+  if (shareID) params.set('share_id', shareID)
+  params.set('file_id', fileID)
+  return `thumb?${params.toString()}`
+}
