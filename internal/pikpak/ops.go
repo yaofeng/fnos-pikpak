@@ -33,7 +33,8 @@ func (c *Client) Rename(ctx context.Context, id, name string) error {
 
 func (c *Client) FileDetail(ctx context.Context, id string) (File, error) {
 	var f File
-	err := c.do(ctx, http.MethodGet, c.BaseDrive+"/drive/v1/files/"+url.PathEscape(id), nil, &f)
+	u := c.BaseDrive + "/drive/v1/files/" + url.PathEscape(id) + "?thumbnail_size=SIZE_LARGE"
+	err := c.do(ctx, http.MethodGet, u, nil, &f)
 	return f, err
 }
 

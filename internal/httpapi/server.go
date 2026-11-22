@@ -49,6 +49,9 @@ type Deps struct {
 	// ShareSessions remembers the pass-code token of every opened share so
 	// the browser never sees it. Nil means a fresh in-memory cache.
 	ShareSessions *shareSessions
+	// Thumbs caches proxied thumbnail bytes. Nil means a fresh in-memory
+	// cache with the default 30-minute TTL.
+	Thumbs *thumbCache
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -70,6 +73,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.ShareSessions == nil {
 		deps.ShareSessions = newShareSessions()
+	}
+	if deps.Thumbs == nil {
+		deps.Thumbs = newThumbCache()
 	}
 	if len(deps.PlaySecret) == 0 {
 		secret := make([]byte, 32)
@@ -109,6 +115,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerTransferRoutes(inner, deps)
 		registerTaskRoutes(inner, deps)
 		registerShareRoutes(inner, deps)
+		registerThumbRoutes(inner, deps)
 		registerPlayRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)

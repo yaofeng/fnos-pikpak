@@ -147,6 +147,7 @@ type shareFileInfo struct {
 	Size           json.RawMessage `json:"size"`
 	MimeType       string          `json:"mime_type"`
 	WebContentLink string          `json:"web_content_link"`
+	ThumbnailLink  string          `json:"thumbnail_link"`
 	Medias         []struct {
 		Link struct {
 			URL string `json:"url"`
@@ -173,9 +174,10 @@ func (f shareFileInfo) downloadLink() DownloadLink {
 // ShareFileLink is a share file's signed URL plus the facts a player needs.
 type ShareFileLink struct {
 	DownloadLink
-	ID   string
-	Name string
-	Mime string
+	ID            string
+	Name          string
+	Mime          string
+	ThumbnailLink string
 }
 
 // GetShareFileLink asks for a fresh signed URL for one file of an opened
@@ -185,6 +187,7 @@ func (c *Client) GetShareFileLink(ctx context.Context, shareID, fileID, passToke
 	q.Set("share_id", shareID)
 	q.Set("file_id", fileID)
 	q.Set("pass_code_token", passToken)
+	q.Set("thumbnail_size", "SIZE_LARGE")
 	u := c.BaseDrive + "/drive/v1/share/file_info?" + q.Encode()
 
 	var raw struct {
@@ -202,7 +205,13 @@ func (c *Client) GetShareFileLink(ctx context.Context, shareID, fileID, passToke
 	if link.URL == "" {
 		return ShareFileLink{}, ErrNoDownloadLink
 	}
-	return ShareFileLink{DownloadLink: link, ID: fileID, Name: info.Name, Mime: info.MimeType}, nil
+	return ShareFileLink{
+		DownloadLink:  link,
+		ID:            fileID,
+		Name:          info.Name,
+		Mime:          info.MimeType,
+		ThumbnailLink: info.ThumbnailLink,
+	}, nil
 }
 
 // RestoreShare saves the selected share files into the user's own drive root.

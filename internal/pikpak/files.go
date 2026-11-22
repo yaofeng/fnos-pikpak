@@ -124,35 +124,40 @@ type File struct {
 	Category     string `json:"category"`
 	MimeType     string `json:"mime_type"`
 	ModifiedTime string `json:"modified_time"`
+	// ThumbnailLink is a short-lived CDN URL. It stays server-side: the
+	// browser asks /api/thumb instead.
+	ThumbnailLink string `json:"-"`
 }
 
 // UnmarshalJSON accepts size as either a JSON string (what PikPak sends) or a
 // number.
 func (f *File) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		ID           string          `json:"id"`
-		ParentID     string          `json:"parent_id"`
-		Name         string          `json:"name"`
-		Kind         string          `json:"kind"`
-		Size         json.RawMessage `json:"size"`
-		Phase        string          `json:"phase"`
-		Category     string          `json:"file_category"`
-		MimeType     string          `json:"mime_type"`
-		ModifiedTime string          `json:"modified_time"`
+		ID            string          `json:"id"`
+		ParentID      string          `json:"parent_id"`
+		Name          string          `json:"name"`
+		Kind          string          `json:"kind"`
+		Size          json.RawMessage `json:"size"`
+		Phase         string          `json:"phase"`
+		Category      string          `json:"file_category"`
+		MimeType      string          `json:"mime_type"`
+		ModifiedTime  string          `json:"modified_time"`
+		ThumbnailLink string          `json:"thumbnail_link"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
 	*f = File{
-		ID:           raw.ID,
-		ParentID:     raw.ParentID,
-		Name:         raw.Name,
-		Kind:         raw.Kind,
-		Size:         parseSize(raw.Size),
-		Phase:        raw.Phase,
-		Category:     raw.Category,
-		MimeType:     raw.MimeType,
-		ModifiedTime: raw.ModifiedTime,
+		ID:            raw.ID,
+		ParentID:      raw.ParentID,
+		Name:          raw.Name,
+		Kind:          raw.Kind,
+		Size:          parseSize(raw.Size),
+		Phase:         raw.Phase,
+		Category:      raw.Category,
+		MimeType:      raw.MimeType,
+		ModifiedTime:  raw.ModifiedTime,
+		ThumbnailLink: raw.ThumbnailLink,
 	}
 	return nil
 }
@@ -220,6 +225,7 @@ func (c *Client) ListFiles(ctx context.Context, parentID string, o ListOptions) 
 	if o.Filters != "" {
 		q.Set("filters", o.Filters)
 	}
+	q.Set("thumbnail_size", "SIZE_LARGE")
 	u.RawQuery = q.Encode()
 
 	var raw struct {
