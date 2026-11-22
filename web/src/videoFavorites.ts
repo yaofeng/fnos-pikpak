@@ -47,3 +47,9 @@ export function groupVideoFavorites(items: VideoFavorite[]): VideoFavoriteGroup[
   }
   return groups
 }
+
+// FileGrid keys its tiles by file id, while the page selects favourites by
+// their row id; this is the bridge between the two.
+export function selectedFileIDs(picked: VideoFavorite[]): Set<string> {
+  return new Set(picked.map((f) => f.file_id))
+}

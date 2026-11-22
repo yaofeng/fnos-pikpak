@@ -74,7 +74,6 @@ export default function ShareBrowser({
   const [shareId, setShareId] = useState('')
   const [title, setTitle] = useState(initialTitle ?? '分享')
   const [owner, setOwner] = useState('')
-  const [protectedShare, setProtectedShare] = useState(false)
   const [passCode, setPassCode] = useState('')
   const [needPass, setNeedPass] = useState(false)
   const [openError, setOpenError] = useState('')
@@ -91,7 +90,13 @@ export default function ShareBrowser({
   const [directPlay, setDirectPlay] = useState<{ file_id: string; name: string; stream_url: string } | null>(null)
   // iinaPending is a signed URL waiting for the click that opens IINA: an
   // external protocol needs a fresh user gesture after the async prepare.
-  const [iinaPending, setIinaPending] = useState<{ url: string; name: string } | null>(null)
+  // onFallback plays the same stream in the built-in player, for a Mac (or
+  // iPad) without IINA installed.
+  const [iinaPending, setIinaPending] = useState<{
+    url: string
+    name: string
+    onFallback: () => void
+  } | null>(null)
   const [favorited, setFavorited] = useState(false)
 
   // The toolbars follow 我的文件: a local filter, a sort key, and the view.
@@ -129,7 +134,6 @@ export default function ShareBrowser({
         setShareId(info.share_id)
         setTitle(name)
         setOwner(info.owner ?? '')
-        setProtectedShare(info.protected)
         setItems(info.items ?? [])
         setStack([])
         setQ('')
@@ -219,7 +223,16 @@ export default function ShareBrowser({
       const got = await apiGet<ShareFileUrls>(
         `share/file?share_id=${encodeURIComponent(shareId)}&file_id=${encodeURIComponent(f.id)}`,
       )
-      window.location.href = iinaURL(absoluteURL(got.stream_url))
+      setIinaPending({
+        url: absoluteURL(got.stream_url),
+        name: f.name,
+        onFallback: () => {
+          setIinaPending(null)
+          setNotice('')
+          setPlaying(f)
+        },
+      })
+      setNotice('点「用 IINA 播放」开始预览')
     } catch (err) {
       if (err instanceof ApiError && err.code === 'share_session_missing') void open(passCode)
       else setError((err as Error).message)
@@ -271,11 +284,24 @@ export default function ShareBrowser({
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
       if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
+      const direct = {
+        file_id: job.file_id || f.id,
+        name: job.name || f.name,
+        stream_url: job.stream_url,
+      }
       if (isMacOS(navigator.userAgent)) {
-        setIinaPending({ url: absoluteURL(job.stream_url), name: job.name || f.name })
+        setIinaPending({
+          url: absoluteURL(job.stream_url),
+          name: direct.name,
+          onFallback: () => {
+            setIinaPending(null)
+            setNotice('')
+            setDirectPlay(direct)
+          },
+        })
         setNotice('已准备好，点「用 IINA 播放」开始播放')
       } else {
-        setDirectPlay({ file_id: job.file_id || f.id, name: job.name || f.name, stream_url: job.stream_url })
+        setDirectPlay(direct)
         setNotice('')
       }
     } catch (err) {
@@ -341,16 +367,6 @@ export default function ShareBrowser({
 
   return (
     <section className="share-browser">
-      <div className="share-heading">
-        <h2>{title}</h2>
-        <span className="muted small">
-          {protectedShare ? '受密码保护' : '公开分享'}
-          {shareId ? ` · ${shareId}` : ''}
-        </span>
-      </div>
-
-      {notice && <p className="ok small">{notice}</p>}
-
       {iinaPending && (
         <p className="share-iina">
           <button
@@ -362,7 +378,12 @@ export default function ShareBrowser({
           >
             用 IINA 播放
           </button>
-          <span className="muted small">{iinaPending.name}</span>
+          <button type="button" onClick={iinaPending.onFallback}>
+            用内置播放器
+          </button>
+          <span className="muted small">
+            {iinaPending.name} · 若没有打开，可能尚未安装 IINA
+          </span>
         </p>
       )}
 
@@ -426,8 +447,8 @@ export default function ShareBrowser({
             </button>
             <div className="crumb-box">
               <nav className="share-crumbs" aria-label="分享目录">
-                <button type="button" onClick={() => goTo(-1)} disabled={stack.length === 0}>
-                  分享根目录
+                <button type="button" onClick={() => goTo(-1)} disabled={stack.length === 0} title="分享根目录">
+                  {title || '分享'}
                 </button>
                 {stack.map((c, i) => (
                   <span key={c.id} className="share-crumb">
@@ -547,10 +568,6 @@ export default function ShareBrowser({
             </div>
           </div>
 
-          <p className="muted small">
-            排序与筛选只作用于已加载的条目（PikPak 分享列表接口不支持服务端排序/搜索）。双击文件夹可进入，双击文件可播放。
-          </p>
-
           {error && <p className="error">{error}</p>}
 
           {items !== null && shown.length === 0 && !loading && (
@@ -575,7 +592,8 @@ export default function ShareBrowser({
           </div>
 
           <div className="status-bar">
-            {ids.length > 0 ? `选中 ${ids.length} 项（共 ${shown.length} 项）` : `共 ${shown.length} 项`}
+            <span>{ids.length > 0 ? `选中 ${ids.length} 项（共 ${shown.length} 项）` : `共 ${shown.length} 项`}</span>
+            {notice && <span className="ok status-note">{notice}</span>}
           </div>
         </>
       )}

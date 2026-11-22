@@ -1342,24 +1342,6 @@ button.primary {
   gap: 8px;
 }
 
-.share-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
-  margin-bottom: 10px;
-}
-
-.share-heading h2 {
-  margin: 0;
-  max-width: 60%;
-  font-size: 16px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .share-crumbs {
   display: flex;
   align-items: center;
@@ -1683,4 +1665,15 @@ button.primary {
     left: 0;
     padding: 0 16px;
   }
+}
+
+/* Action results ride the status bar instead of the page body, so a running
+   完整播放 or a favorite confirmation never pushes the file list down. */
+.status-note {
+  margin-left: auto;
+  padding-left: 16px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -6,7 +6,7 @@ import { FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '
 import { formatSize, thumbPath, type FileItem } from '../files'
 import { iinaURL, isMacOS } from '../iina'
 import { useFileSelection } from '../useFileSelection'
-import { groupVideoFavorites, type VideoFavorite } from '../videoFavorites'
+import { groupVideoFavorites, selectedFileIDs, type VideoFavorite } from '../videoFavorites'
 import { waitForVideoJob } from '../videoPrepare'
 
 type PlayTarget = { file_id: string; name: string; stream_url: string }
@@ -27,8 +27,9 @@ export default function VideoFavorites() {
   const [busy, setBusy] = useState('')
   const [playing, setPlaying] = useState<PlayTarget | null>(null)
   // An external protocol needs a fresh user gesture after the async prepare,
-  // so macOS gets an explicit 用 IINA 播放 button.
-  const [iinaPending, setIinaPending] = useState<{ url: string; name: string } | null>(null)
+  // so macOS gets an explicit 用 IINA 播放 button. onFallback plays the same
+  // stream in the built-in player, for a Mac (or iPad) without IINA.
+  const [iinaPending, setIinaPending] = useState<{ url: string; name: string; onFallback: () => void } | null>(null)
   // 我的文件 opens in the large-icon view; 视频收藏夹 does the same.
   const [view, setView] = useState<'list' | 'grid'>('grid')
 
@@ -55,6 +56,8 @@ export default function VideoFavorites() {
   const { selected, select, clear } = useFileSelection(order)
   const picked = (items ?? []).filter((f) => selected.has(String(f.id)))
   const one = picked.length === 1 ? picked[0] : null
+  // The grid keys its tiles by file id; the page selects favourites by row id.
+  const gridSelected = selectedFileIDs(picked)
 
   function patchLocal(id: number, displayName: string) {
     setItems((prev) => (prev ?? []).map((f) => (f.id === id ? { ...f, display_name: displayName } : f)))
@@ -66,6 +69,7 @@ export default function VideoFavorites() {
 
   function playInline(target: PlayTarget) {
     setIinaPending(null)
+    setNotice('')
     setPlaying(target)
   }
 
@@ -76,11 +80,12 @@ export default function VideoFavorites() {
     setIinaPending(null)
     try {
       const got = await apiPost<{ stream_url: string }>('videos/preview', { video_favorite_id: f.id })
+      const target = { file_id: f.file_id, name: f.display_name || f.name, stream_url: got.stream_url }
       if (isMacOS(navigator.userAgent)) {
-        setIinaPending({ url: absolute(got.stream_url), name: f.display_name || f.name })
+        setIinaPending({ url: absolute(got.stream_url), name: target.name, onFallback: () => playInline(target) })
         setNotice('点「用 IINA 播放」开始预览')
       } else {
-        playInline({ file_id: f.file_id, name: f.display_name || f.name, stream_url: got.stream_url })
+        playInline(target)
       }
     } catch (err) {
       setError((err as Error).message)
@@ -100,15 +105,16 @@ export default function VideoFavorites() {
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
       if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
+      const target = {
+        file_id: job.file_id || f.file_id,
+        name: job.name || f.display_name || f.name,
+        stream_url: job.stream_url,
+      }
       if (isMacOS(navigator.userAgent)) {
-        setIinaPending({ url: absolute(job.stream_url), name: job.name || f.display_name || f.name })
+        setIinaPending({ url: absolute(job.stream_url), name: target.name, onFallback: () => playInline(target) })
         setNotice('已准备好，点「用 IINA 播放」开始播放')
       } else {
-        playInline({
-          file_id: job.file_id || f.file_id,
-          name: job.name || f.display_name || f.name,
-          stream_url: job.stream_url,
-        })
+        playInline(target)
         setNotice('')
       }
     } catch (err) {
@@ -210,7 +216,12 @@ export default function VideoFavorites() {
           <button type="button" className="primary" onClick={() => { window.location.href = iinaURL(iinaPending.url) }}>
             用 IINA 播放
           </button>
-          <span className="muted small">{iinaPending.name}</span>
+          <button type="button" onClick={iinaPending.onFallback}>
+            用内置播放器
+          </button>
+          <span className="muted small">
+            {iinaPending.name} · 若没有打开，可能尚未安装 IINA
+          </span>
         </p>
       )}
 
@@ -233,15 +244,17 @@ export default function VideoFavorites() {
             </h3>
             <FileGrid
               items={group.items.map(toFileItem)}
-              selected={selected}
+              selected={gridSelected}
               thumbSrc={(f) => {
                 const fav = group.items.find((g) => g.file_id === f.id)
                 return fav ? `${basePath}/api/${thumbPath(fav.file_id, fav.share_id)}` : ''
               }}
               onSelect={(index, e) => select(order.indexOf(String(group.items[index].id)), e)}
               onOpen={(f) => {
+                // Opening plays the share's own stream: restoring a copy and
+                // running the cleanup is 完整播放's explicit, labelled action.
                 const fav = group.items.find((g) => g.file_id === f.id)
-                if (fav) void fullPlay(fav)
+                if (fav) void preview(fav)
               }}
               onMenu={() => undefined}
               onDragStart={() => undefined}
@@ -275,7 +288,7 @@ export default function VideoFavorites() {
                     key={f.id}
                     className={selected.has(String(f.id)) ? 'selected' : ''}
                     onClick={(e) => select(order.indexOf(String(f.id)), e)}
-                    onDoubleClick={() => void fullPlay(f)}
+                    onDoubleClick={() => void preview(f)}
                   >
                     <td className="col-open" />
                     <td>

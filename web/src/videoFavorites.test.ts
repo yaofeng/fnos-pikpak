@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { groupVideoFavorites, type VideoFavorite } from './videoFavorites'
+import { groupVideoFavorites, selectedFileIDs, type VideoFavorite } from './videoFavorites'
 
 function fav(id: number, extra: Partial<VideoFavorite> = {}): VideoFavorite {
   return {
@@ -43,5 +43,16 @@ describe('groupVideoFavorites', () => {
     ])
     expect(groups.map((g) => g.label)).toEqual(['bob', 'alice'])
     expect(groups[0].items).toHaveLength(2)
+  })
+})
+
+describe('selectedFileIDs', () => {
+  test('keys the grid selection by file id, as FileGrid looks it up', () => {
+    const picked = [fav(1, { file_id: 'sf1' }), fav(2, { file_id: 'sf2' })]
+    expect([...selectedFileIDs(picked)]).toEqual(['sf1', 'sf2'])
+  })
+
+  test('is empty when nothing is picked', () => {
+    expect(selectedFileIDs([]).size).toBe(0)
   })
 })
