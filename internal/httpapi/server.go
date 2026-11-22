@@ -17,6 +17,7 @@ import (
 	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 	"fnos-pikpak/internal/transfer"
+	"fnos-pikpak/internal/websearch"
 )
 
 var errUnsupportedMediaType = errors.New("httpapi: unsupported media type")
@@ -50,6 +51,8 @@ type Deps struct {
 	Debug bool
 	// Logger receives one line per request. Nil means slog's default logger.
 	Logger *slog.Logger
+	// Search runs 全网搜索. Nil means the default Bing RSS client.
+	Search Searcher
 }
 
 // NewMux builds the API surface. Every /api route requires a gateway identity.
@@ -60,6 +63,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Links == nil {
 		deps.Links = newLinkCache(linkTTL)
+	}
+	if deps.Search == nil {
+		deps.Search = websearch.NewClient()
 	}
 	if len(deps.PlaySecret) == 0 {
 		secret := make([]byte, 32)
@@ -100,6 +106,7 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerTaskRoutes(inner, deps)
 		registerPlayRoutes(inner, deps)
 	}
+	registerSearchRoutes(inner, deps)
 	registerGatewayRoutes(inner)
 	if deps.Debug {
 		registerStreamRoutes(inner)
