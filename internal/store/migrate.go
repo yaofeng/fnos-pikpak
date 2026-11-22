@@ -112,4 +112,21 @@ CREATE TABLE share_favorites (
 );
 CREATE INDEX idx_share_favorites_uid ON share_favorites(uid, created_at);
 `,
+	`
+CREATE TABLE video_favorites (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid           INTEGER NOT NULL,
+  share_id      TEXT NOT NULL,
+  file_id       TEXT NOT NULL,
+  name          TEXT NOT NULL DEFAULT '',
+  size          INTEGER NOT NULL DEFAULT 0,
+  owner         TEXT NOT NULL DEFAULT '',
+  share_title   TEXT NOT NULL DEFAULT '',
+  display_name  TEXT NOT NULL DEFAULT '',
+  pass_code_enc BLOB NOT NULL DEFAULT x'',
+  created_at    TEXT NOT NULL,
+  UNIQUE (uid, share_id, file_id)
+);
+CREATE INDEX idx_video_favorites_uid ON video_favorites(uid, created_at);
+`,
 }

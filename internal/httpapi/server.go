@@ -124,6 +124,7 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Store != nil {
 		registerSettingsRoutes(inner, deps)
+		registerVideoFavoriteRoutes(inner, deps)
 		registerWebSearchRoutes(inner, deps)
 		registerDiagRoutes(inner, deps)
 	}
