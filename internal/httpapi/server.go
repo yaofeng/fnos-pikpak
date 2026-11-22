@@ -62,6 +62,7 @@ func NewMux(deps Deps) *http.ServeMux {
 	if deps.Sessions != nil {
 		registerAuthRoutes(inner, deps)
 		registerAccountRoutes(inner, deps)
+		registerFileRoutes(inner, deps)
 		registerUploadRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
