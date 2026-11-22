@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiDelete, apiGet } from '../api'
+import { apiDelete, apiGet, apiPatch, apiPost } from '../api'
 import ShareBrowser from '../components/ShareBrowser'
 import { BookmarkIcon, RefreshIcon } from '../components/icons'
 
@@ -10,6 +10,7 @@ type ShareFavorite = {
   id: number
   share_id: string
   title: string
+  display_title: string
   protected: boolean
   created_at: string
 }
@@ -20,6 +21,10 @@ export default function Favorites() {
   const [error, setError] = useState('')
   const [openFav, setOpenFav] = useState<ShareFavorite | null>(null)
   const [busy, setBusy] = useState(0)
+  const [adding, setAdding] = useState(false)
+  const [newURL, setNewURL] = useState('')
+  const [addError, setAddError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -51,6 +56,36 @@ export default function Favorites() {
     }
   }
 
+  // 新增收藏 takes the link a person copied from PikPak; the server parses the
+  // share id and picks up a ?pwd= code from it.
+  async function addShare() {
+    const url = newURL.trim()
+    if (!url) return
+    setSaving(true)
+    setAddError('')
+    try {
+      await apiPost('share-favorites', { url })
+      setNewURL('')
+      setAdding(false)
+      await load()
+    } catch (err) {
+      setAddError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function rename(fav: ShareFavorite) {
+    const next = window.prompt('新名称（留空恢复原名）', fav.display_title || fav.title || fav.share_id)
+    if (next === null) return
+    try {
+      const updated = await apiPatch<ShareFavorite>(`share-favorites/${fav.id}`, { title: next.trim() })
+      setItems((prev) => (prev ?? []).map((f) => (f.id === fav.id ? { ...f, display_title: updated.display_title } : f)))
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
   if (openFav !== null) {
     return (
       <section className="page-stack">
@@ -73,7 +108,34 @@ export default function Favorites() {
         <Link to="/search" className="button">
           去全网搜索
         </Link>
+        <button type="button" onClick={() => { setAdding((v) => !v); setAddError('') }}>
+          <BookmarkIcon /> 新增收藏
+        </button>
       </div>
+
+      {adding && (
+        <form
+          className="fav-add"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void addShare()
+          }}
+        >
+          <input
+            value={newURL}
+            onChange={(e) => setNewURL(e.target.value)}
+            placeholder="粘贴分享链接，例如 https://mypikpak.com/s/xxxx?pwd=1234"
+            aria-label="分享链接"
+          />
+          <button type="submit" className="primary" disabled={!newURL.trim() || saving}>
+            {saving ? '保存中…' : '保存'}
+          </button>
+          <button type="button" onClick={() => { setAdding(false); setNewURL(''); setAddError('') }}>
+            取消
+          </button>
+          {addError && <span className="error small">{addError}</span>}
+        </form>
+      )}
 
       {error && <p className="error">{error}</p>}
 
@@ -84,7 +146,7 @@ export default function Favorites() {
           <BookmarkIcon size={28} />
           <p>收藏夹还是空的。</p>
           <p className="muted small">
-            在全网搜索里右键标签页选「加入收藏」，或者打开分享后点「加入收藏」，之后可以在这里直接进入。
+            点「新增收藏」粘贴分享链接，或者在全网搜索里右键标签页选「收藏分享」，之后可以在这里直接进入。
           </p>
         </div>
       ) : (
@@ -108,7 +170,7 @@ export default function Favorites() {
                       className="link"
                       onClick={() => setOpenFav(fav)}
                     >
-                      {fav.title || fav.share_id}
+                      {fav.display_title || fav.title || fav.share_id}
                     </button>
                   </span>
                   {fav.protected && <span className="badge-lock">有密码</span>}
@@ -123,6 +185,9 @@ export default function Favorites() {
                     onClick={() => setOpenFav(fav)}
                   >
                     打开
+                  </button>
+                  <button type="button" onClick={() => void rename(fav)}>
+                    重命名
                   </button>
                   <button type="button" className="danger" disabled={busy === fav.id} onClick={() => void remove(fav)}>
                     移除

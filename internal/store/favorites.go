@@ -10,12 +10,15 @@ import (
 // ShareFavorite is a saved share link. The pass code is sealed at rest and
 // only ever decrypted by GetShareFavorite, so a list response cannot leak it.
 type ShareFavorite struct {
-	ID        int64     `json:"id"`
-	UID       int       `json:"-"`
-	ShareID   string    `json:"share_id"`
-	Title     string    `json:"title"`
-	Protected bool      `json:"protected"`
-	CreatedAt time.Time `json:"created_at"`
+	ID      int64  `json:"id"`
+	UID     int    `json:"-"`
+	ShareID string `json:"share_id"`
+	Title   string `json:"title"`
+	// DisplayTitle renames the favourite locally. PikPak knows nothing about
+	// it, so the real share title stays in Title.
+	DisplayTitle string    `json:"display_title"`
+	Protected    bool      `json:"protected"`
+	CreatedAt    time.Time `json:"created_at"`
 
 	PassCode string `json:"-"`
 	encPass  []byte
@@ -54,7 +57,7 @@ ON CONFLICT(uid, share_id) DO UPDATE SET
 
 func (s *Store) shareFavoriteByShareID(ctx context.Context, uid int, shareID string) (ShareFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
 	return scanShareFavorite(row)
 }
@@ -62,7 +65,7 @@ FROM share_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
 // ListShareFavorites returns the user's favourites, newest first.
 func (s *Store) ListShareFavorites(ctx context.Context, uid int) ([]ShareFavorite, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, uid, share_id, title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 	if err != nil {
 		return nil, err
@@ -84,7 +87,7 @@ FROM share_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 // GetShareFavorite returns one favourite with its pass code decrypted.
 func (s *Store) GetShareFavorite(ctx context.Context, uid int, id int64) (ShareFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanShareFavorite(row)
 	if err != nil {
@@ -97,6 +100,32 @@ FROM share_favorites WHERE uid = ? AND id = ?`, uid, id)
 		}
 		fav.PassCode = string(plain)
 	}
+	return fav, nil
+}
+
+// RenameShareFavorite changes only the local display title. An empty title
+// restores the share's own name.
+func (s *Store) RenameShareFavorite(ctx context.Context, uid int, id int64, title string) (ShareFavorite, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE share_favorites SET display_title = ? WHERE uid = ? AND id = ?`, title, uid, id)
+	if err != nil {
+		return ShareFavorite{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return ShareFavorite{}, err
+	}
+	if n == 0 {
+		return ShareFavorite{}, ErrNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
+FROM share_favorites WHERE uid = ? AND id = ?`, uid, id)
+	fav, err := scanShareFavorite(row)
+	if err != nil {
+		return ShareFavorite{}, err
+	}
+	fav.PassCode = ""
 	return fav, nil
 }
 
@@ -122,7 +151,7 @@ type rowScanner interface {
 func scanShareFavorite(row rowScanner) (ShareFavorite, error) {
 	var fav ShareFavorite
 	var created string
-	if err := row.Scan(&fav.ID, &fav.UID, &fav.ShareID, &fav.Title, &fav.encPass, &created); err != nil {
+	if err := row.Scan(&fav.ID, &fav.UID, &fav.ShareID, &fav.Title, &fav.DisplayTitle, &fav.encPass, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ShareFavorite{}, ErrNotFound
 		}

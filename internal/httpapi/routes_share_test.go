@@ -226,3 +226,44 @@ func TestShareFavoritesAreListedAndDeleted(t *testing.T) {
 		t.Fatalf("items after delete = %v", items)
 	}
 }
+
+func TestShareFavoritesPatch(t *testing.T) {
+	srv, _ := shareUpstream(t)
+	deps, _ := newAuthTestDeps(t, srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	bindTestUser(t, deps.Store, 2000)
+	h := NewMux(deps)
+
+	rec, fav := postJSON(t, h, "/api/share-favorites", "1000",
+		`{"url":"https://mypikpak.com/s/VOabc123?pwd=7f3a","title":"大模型资料"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d %v", rec.Code, fav)
+	}
+	id := strconv.FormatInt(int64(fav["id"].(float64)), 10)
+
+	rec, out := patchJSON(t, h, "/api/share-favorites/"+id, "1000", `{"title":"网课"}`)
+	if rec.Code != http.StatusOK || out["display_title"] != "网课" || out["title"] != "大模型资料" {
+		t.Fatalf("patch = %d %v", rec.Code, out)
+	}
+
+	rec, list := getJSON(t, h, "/api/share-favorites", "1000")
+	items, _ := list["items"].([]any)
+	first, _ := items[0].(map[string]any)
+	if first["display_title"] != "网课" {
+		t.Fatalf("list = %v", list)
+	}
+	if strings.Contains(rec.Body.String(), "7f3a") {
+		t.Fatal("the list leaked the pass code")
+	}
+
+	// Another user cannot rename it.
+	if rec, _ := patchJSON(t, h, "/api/share-favorites/"+id, "2000", `{"title":"x"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("other user = %d", rec.Code)
+	}
+
+	// An empty title restores the share's own name.
+	rec, cleared := patchJSON(t, h, "/api/share-favorites/"+id, "1000", `{"title":""}`)
+	if rec.Code != http.StatusOK || cleared["display_title"] != "" {
+		t.Fatalf("clear = %d %v", rec.Code, cleared)
+	}
+}

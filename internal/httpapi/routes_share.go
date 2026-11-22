@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/pikpak"
@@ -256,6 +257,36 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, fav)
+	})
+
+	mux.HandleFunc("PATCH /api/share-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := fnos.IdentityFrom(r.Context())
+		favID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || favID <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
+			return
+		}
+		var body struct {
+			Title string `json:"title"`
+		}
+		if err := decodeJSON(w, r, &body); err != nil {
+			return
+		}
+		title := strings.TrimSpace(body.Title)
+		if utf8.RuneCountInString(title) > 100 {
+			writeError(w, http.StatusBadRequest, "bad_title", "显示名太长")
+			return
+		}
+		fav, err := deps.Store.RenameShareFavorite(r.Context(), id.UID, favID, title)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "favorite_not_found", "收藏不存在")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", "重命名失败")
+			return
+		}
+		writeJSON(w, http.StatusOK, fav)
 	})
 
 	mux.HandleFunc("DELETE /api/share-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {

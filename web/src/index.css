@@ -1416,6 +1416,38 @@ button.primary {
   gap: 12px;
 }
 
+/* 分享收藏夹: the pasted-link form sits on one line under the toolbar. */
+.fav-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fav-add input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--fg);
+}
+
+.vgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vgroup-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
 .vgroup-row td {
   padding-top: 14px;
   padding-bottom: 6px;

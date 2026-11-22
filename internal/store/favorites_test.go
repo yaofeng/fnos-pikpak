@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -84,5 +85,29 @@ func TestShareFavoritesArePerUser(t *testing.T) {
 	list, _ := s.ListShareFavorites(ctx, 1000)
 	if len(list) != 0 {
 		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestShareFavoriteRenameIsDisplayOnly(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	fav, err := s.AddShareFavorite(ctx, 1000, "VOabc123", "大模型资料", "7f3a")
+	if err != nil {
+		t.Fatalf("AddShareFavorite: %v", err)
+	}
+	renamed, err := s.RenameShareFavorite(ctx, 1000, fav.ID, "网课")
+	if err != nil {
+		t.Fatalf("RenameShareFavorite: %v", err)
+	}
+	if renamed.DisplayTitle != "网课" || renamed.Title != "大模型资料" {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+	if _, err := s.RenameShareFavorite(ctx, 2000, fav.ID, "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user's rename: %v", err)
+	}
+	cleared, err := s.RenameShareFavorite(ctx, 1000, fav.ID, "")
+	if err != nil || cleared.DisplayTitle != "" {
+		t.Fatalf("clear = %+v err=%v", cleared, err)
 	}
 }
