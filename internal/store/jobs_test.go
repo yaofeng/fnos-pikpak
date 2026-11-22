@@ -118,3 +118,68 @@ func TestDownloadJobTimestampsSurviveUpdate(t *testing.T) {
 		t.Fatalf("updated_at did not advance: %v → %v", first.UpdatedAt, second.UpdatedAt)
 	}
 }
+
+func sampleUpload(id string, uid int, status string) UploadJob {
+	return UploadJob{
+		ID: id, UID: uid, LocalPath: "/vol1/1001/src/" + id + ".mkv",
+		ParentID: "p1", RemoteName: id + ".mkv", Size: 100, Uploaded: 10, Status: status,
+	}
+}
+
+func TestUploadJobRoundTripAndScope(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	job := sampleUpload("u1", 1000, "queued")
+	if err := s.PutUploadJob(ctx, job); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	got, err := s.GetUploadJob(ctx, 1000, "u1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.RemoteName != "u1.mkv" || got.Size != 100 || got.Uploaded != 10 {
+		t.Fatalf("got %+v", got)
+	}
+	if _, err := s.GetUploadJob(ctx, 1001, "u1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user err = %v", err)
+	}
+
+	job.Uploaded = 99
+	job.Status = "running"
+	if err := s.PutUploadJob(ctx, job); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, _ = s.GetUploadJob(ctx, 1000, "u1")
+	if got.Uploaded != 99 || got.Status != "running" {
+		t.Fatalf("after update: %+v", got)
+	}
+}
+
+func TestListUploadJobsFiltersStatus(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	for _, st := range []string{"queued", "running", "done"} {
+		_ = s.PutUploadJob(ctx, sampleUpload("u-"+st, 1000, st))
+	}
+	jobs, err := s.ListUploadJobs(ctx, 1000, "queued", "running")
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %+v err = %v", jobs, err)
+	}
+}
+
+func TestResetRunningUploadJobs(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	_ = s.PutUploadJob(ctx, sampleUpload("u1", 1000, "running"))
+	_ = s.PutUploadJob(ctx, sampleUpload("u2", 1000, "done"))
+	if err := s.ResetRunningUploadJobs(ctx); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if j, _ := s.GetUploadJob(ctx, 1000, "u1"); j.Status != "queued" {
+		t.Fatalf("u1 = %q", j.Status)
+	}
+	if j, _ := s.GetUploadJob(ctx, 1000, "u2"); j.Status != "done" {
+		t.Fatalf("u2 = %q", j.Status)
+	}
+}

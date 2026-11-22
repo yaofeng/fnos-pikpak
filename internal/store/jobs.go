@@ -127,3 +127,115 @@ UPDATE download_jobs SET status = 'queued', updated_at = ? WHERE status = 'runni
 		time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
+
+// UploadJob is one file being pushed to PikPak. LocalPath is an absolute path
+// already validated against the user's fnOS access.
+type UploadJob struct {
+	ID           string
+	UID          int
+	LocalPath    string
+	ParentID     string
+	RemoteName   string
+	Size         int64
+	Uploaded     int64
+	Status       string
+	ErrorCode    string
+	ErrorMessage string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (s *Store) PutUploadJob(ctx context.Context, j UploadJob) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO upload_jobs(id, uid, local_path, parent_id, remote_name, size, uploaded,
+  status, error_code, error_message, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET
+  local_path=excluded.local_path,
+  parent_id=excluded.parent_id,
+  remote_name=excluded.remote_name,
+  size=excluded.size,
+  uploaded=excluded.uploaded,
+  status=excluded.status,
+  error_code=excluded.error_code,
+  error_message=excluded.error_message,
+  updated_at=excluded.updated_at`,
+		j.ID, j.UID, j.LocalPath, j.ParentID, j.RemoteName, j.Size, j.Uploaded,
+		j.Status, j.ErrorCode, j.ErrorMessage, now, now)
+	return err
+}
+
+func (s *Store) GetUploadJob(ctx context.Context, uid int, id string) (UploadJob, error) {
+	var (
+		j                UploadJob
+		created, updated string
+	)
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, uid, local_path, parent_id, remote_name, size, uploaded,
+       status, error_code, error_message, created_at, updated_at
+FROM upload_jobs WHERE uid = ? AND id = ?`, uid, id).
+		Scan(&j.ID, &j.UID, &j.LocalPath, &j.ParentID, &j.RemoteName, &j.Size, &j.Uploaded,
+			&j.Status, &j.ErrorCode, &j.ErrorMessage, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UploadJob{}, ErrNotFound
+	}
+	if err != nil {
+		return UploadJob{}, err
+	}
+	j.CreatedAt = parseTime(created)
+	j.UpdatedAt = parseTime(updated)
+	return j, nil
+}
+
+func (s *Store) ListUploadJobs(ctx context.Context, uid int, statuses ...string) ([]UploadJob, error) {
+	query := `
+SELECT id, uid, local_path, parent_id, remote_name, size, uploaded,
+       status, error_code, error_message, created_at, updated_at
+FROM upload_jobs WHERE uid = ?`
+	args := []any{uid}
+	if len(statuses) > 0 {
+		placeholders := make([]string, len(statuses))
+		for i, st := range statuses {
+			placeholders[i] = "?"
+			args = append(args, st)
+		}
+		query += " AND status IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	query += " ORDER BY created_at DESC, id DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []UploadJob{}
+	for rows.Next() {
+		var (
+			j                UploadJob
+			created, updated string
+		)
+		if err := rows.Scan(&j.ID, &j.UID, &j.LocalPath, &j.ParentID, &j.RemoteName,
+			&j.Size, &j.Uploaded, &j.Status, &j.ErrorCode, &j.ErrorMessage,
+			&created, &updated); err != nil {
+			return nil, err
+		}
+		j.CreatedAt = parseTime(created)
+		j.UpdatedAt = parseTime(updated)
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteUploadJob(ctx context.Context, uid int, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM upload_jobs WHERE uid = ? AND id = ?`, uid, id)
+	return err
+}
+
+func (s *Store) ResetRunningUploadJobs(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE upload_jobs SET status = 'queued', updated_at = ? WHERE status = 'running'`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}

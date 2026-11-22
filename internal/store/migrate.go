@@ -83,4 +83,21 @@ CREATE TABLE download_jobs (
 );
 CREATE INDEX idx_download_jobs_uid_status ON download_jobs(uid, status);
 `,
+	`
+CREATE TABLE upload_jobs (
+  id            TEXT PRIMARY KEY,
+  uid           INTEGER NOT NULL,
+  local_path    TEXT NOT NULL,
+  parent_id     TEXT NOT NULL,
+  remote_name   TEXT NOT NULL,
+  size          INTEGER NOT NULL DEFAULT 0,
+  uploaded      INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL,
+  error_code    TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX idx_upload_jobs_uid_status ON upload_jobs(uid, status);
+`,
 }
