@@ -112,10 +112,14 @@ func (c *Client) ListTasks(ctx context.Context, pageToken string) (TaskPage, err
 	return TaskPage{Items: raw.Tasks, NextPageToken: raw.NextPageToken}, nil
 }
 
-// RetryTask asks PikPak to run a failed offline task again.
+// RetryTask asks PikPak to run a failed offline task again. PikPak has no
+// retry sub-resource: a retry is a new task with create_type RETRY.
 func (c *Client) RetryTask(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost,
-		c.BaseDrive+"/drive/v1/tasks/"+url.PathEscape(id)+"/retry", map[string]any{}, nil)
+	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/task", map[string]any{
+		"type":        "offline",
+		"create_type": "RETRY",
+		"id":          id,
+	}, nil)
 }
 
 // ClearTasks removes every finished task from the list. The body is what the

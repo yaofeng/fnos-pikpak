@@ -38,7 +38,7 @@ func newFnosTestClient(t *testing.T) *fnos.Client {
 }
 
 func TestProbeACL(t *testing.T) {
-	h := NewMux(Deps{Version: "test", Fnos: newFnosTestClient(t)})
+	h := NewMux(Deps{Version: "test", Fnos: newFnosTestClient(t), Debug: true})
 
 	body := strings.NewReader(`{"paths":["/vol1/home/me"]}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/probe-acl", body)
@@ -87,7 +87,7 @@ func TestProbeACL(t *testing.T) {
 }
 
 func TestProbeACLRejectsEmptyPaths(t *testing.T) {
-	h := NewMux(Deps{Version: "test", Fnos: newFnosTestClient(t)})
+	h := NewMux(Deps{Version: "test", Fnos: newFnosTestClient(t), Debug: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/probe-acl", strings.NewReader(`{"paths":[]}`))
 	req.Header.Set("X-Trim-Userid", "1000")

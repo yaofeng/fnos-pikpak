@@ -3,11 +3,12 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestStreamProbeRange(t *testing.T) {
-	h := NewMux(Deps{Version: "test"})
+	h := NewMux(Deps{Version: "test", Debug: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stream-probe?size=4096", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
@@ -27,7 +28,7 @@ func TestStreamProbeRange(t *testing.T) {
 }
 
 func TestStreamProbeRejectsTooLarge(t *testing.T) {
-	h := NewMux(Deps{Version: "test"})
+	h := NewMux(Deps{Version: "test", Debug: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stream-probe?size=999999999999", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
@@ -36,5 +37,26 @@ func TestStreamProbeRejectsTooLarge(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400", rec.Code)
+	}
+}
+
+func TestProbeRoutesNeedTheDebugFlag(t *testing.T) {
+	h := NewMux(Deps{Version: "test"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stream-probe?size=4096", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("stream probe without --debug: status=%d, want 404", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/upload/probe", strings.NewReader(`{}`))
+	req.Header.Set("X-Trim-Userid", "1000")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("upload probe without --debug: status=%d, want 404", rec.Code)
 	}
 }

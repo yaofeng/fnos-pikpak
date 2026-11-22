@@ -18,6 +18,7 @@ type Me = {
   status: string
   display_name: string
   vip_type: string
+  debug?: boolean
   capabilities: Record<string, boolean>
 }
 
@@ -132,9 +133,11 @@ export default function App() {
               {t('action.bind')}
             </NavLink>
           )}
-          <NavLink to="/debug" className="nav-item subtle">
-            {t('nav.debug')}
-          </NavLink>
+          {me?.debug && (
+            <NavLink to="/debug" className="nav-item subtle">
+              {t('nav.debug')}
+            </NavLink>
+          )}
         </div>
       </aside>
 
@@ -173,7 +176,7 @@ export default function App() {
             <Route path="/trash" element={<Trash />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bind" element={<Bind />} />
-            <Route path="/debug" element={<Debug />} />
+            {me?.debug && <Route path="/debug" element={<Debug />} />}
             <Route path="*" element={<Navigate to="/files" replace />} />
           </Routes>
         </main>

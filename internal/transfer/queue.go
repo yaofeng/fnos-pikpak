@@ -3,6 +3,7 @@ package transfer
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -42,8 +43,11 @@ type Queue struct {
 	NewUploader   func(uid int) (*Uploader, error)
 	// CheckDir re-validates a destination directory at write time; the API
 	// checked it when the job was created.
-	CheckDir  func(ctx context.Context, uid int, dir string) error
+	CheckDir func(ctx context.Context, uid int, dir string) error
+	// MaxGlobal caps transfers across all users; PerUser caps one user's
+	// concurrent transfers (default 1).
 	MaxGlobal int
+	PerUser   int
 	Tick      time.Duration
 
 	mu      sync.Mutex
@@ -51,6 +55,10 @@ type Queue struct {
 	perUser map[int]int
 	wake    chan struct{}
 	wg      sync.WaitGroup
+	// lastServed orders users for the next scheduling round: the user served
+	// longest ago goes first. Only the scheduler goroutine touches it.
+	lastServed map[int]uint64
+	serveSeq   uint64
 }
 
 func (q *Queue) Start(ctx context.Context) {
@@ -59,9 +67,15 @@ func (q *Queue) Start(ctx context.Context) {
 		q.running = map[string]*runState{}
 		q.perUser = map[int]int{}
 		q.wake = make(chan struct{}, 1)
+		q.lastServed = map[int]uint64{}
+		// 0 means "never served", so the first turn starts at 1.
+		q.serveSeq = 1
 	}
 	if q.MaxGlobal <= 0 {
 		q.MaxGlobal = 2
+	}
+	if q.PerUser <= 0 {
+		q.PerUser = 1
 	}
 	if q.Tick <= 0 {
 		q.Tick = time.Second
@@ -90,6 +104,22 @@ func (q *Queue) Notify() {
 	}
 }
 
+// CancelUser stops every running job of uid. Unbinding the account is the
+// caller: the credentials are gone, so those workers can never finish.
+func (q *Queue) CancelUser(uid int) {
+	q.mu.Lock()
+	var cancels []context.CancelFunc
+	for _, st := range q.running {
+		if st.uid == uid && st.cancel != nil {
+			cancels = append(cancels, st.cancel)
+		}
+	}
+	q.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
 // CancelRunning stops a job's worker. The caller has already written the new
 // status, so the worker will not overwrite it as a failure.
 func (q *Queue) CancelRunning(jobID string) {
@@ -115,6 +145,18 @@ func (q *Queue) loop(ctx context.Context) {
 	}
 }
 
+// pendingJob is one queued transfer of either kind, in creation order.
+type pendingJob struct {
+	uid      int
+	id       string
+	created  time.Time
+	download *store.DownloadJob
+	upload   *store.UploadJob
+}
+
+// schedule fills the free slots fairly: jobs are grouped per user, and users
+// take turns one job at a time, so a user with a long queue cannot hold every
+// slot. Downloads and uploads share the same turn order, oldest first.
 func (q *Queue) schedule(ctx context.Context) {
 	q.mu.Lock()
 	capacity := q.MaxGlobal - len(q.running)
@@ -123,41 +165,79 @@ func (q *Queue) schedule(ctx context.Context) {
 		return
 	}
 
-	downloads, err := q.Store.QueuedDownloadJobs(ctx, 50)
-	if err == nil {
-		for _, job := range downloads {
-			if !q.reserve(job.ID, job.UID) {
-				continue
-			}
-			capacity--
-			q.wg.Add(1)
-			go func(j store.DownloadJob) {
-				defer q.wg.Done()
-				defer q.release(j.ID)
-				q.runDownload(ctx, j)
-			}(job)
-			if capacity <= 0 {
-				return
-			}
+	downloads, _ := q.Store.QueuedDownloadJobs(ctx, 50)
+	uploads, _ := q.Store.QueuedUploadJobs(ctx, 50)
+	merged := make([]pendingJob, 0, len(downloads)+len(uploads))
+	i, j := 0, 0
+	for i < len(downloads) || j < len(uploads) {
+		takeDownload := i < len(downloads) &&
+			(j >= len(uploads) || !downloads[i].CreatedAt.After(uploads[j].CreatedAt))
+		if takeDownload {
+			d := downloads[i]
+			i++
+			merged = append(merged, pendingJob{uid: d.UID, id: d.ID, created: d.CreatedAt, download: &d})
+			continue
 		}
+		u := uploads[j]
+		j++
+		merged = append(merged, pendingJob{uid: u.UID, id: u.ID, created: u.CreatedAt, upload: &u})
 	}
 
-	uploads, err := q.Store.QueuedUploadJobs(ctx, 50)
-	if err == nil {
-		for _, job := range uploads {
-			if !q.reserve(job.ID, job.UID) {
-				continue
-			}
-			capacity--
-			q.wg.Add(1)
-			go func(j store.UploadJob) {
-				defer q.wg.Done()
-				defer q.release(j.ID)
-				q.runUpload(ctx, j)
-			}(job)
+	// One FIFO per user. Users take turns: the one served longest ago starts
+	// the next round, so a long queue at one user does not starve the others.
+	order := make([]int, 0, len(merged))
+	queues := make(map[int][]pendingJob, len(merged))
+	for _, p := range merged {
+		if _, ok := queues[p.uid]; !ok {
+			order = append(order, p.uid)
+		}
+		queues[p.uid] = append(queues[p.uid], p)
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return q.lastServed[order[a]] < q.lastServed[order[b]]
+	})
+
+	for capacity > 0 {
+		progress := false
+		for _, uid := range order {
 			if capacity <= 0 {
 				return
 			}
+			list := queues[uid]
+			for len(list) > 0 {
+				p := list[0]
+				list = list[1:]
+				if !q.reserve(p.id, p.uid) {
+					continue
+				}
+				queues[uid] = list
+				q.lastServed[uid] = q.serveSeq
+				q.serveSeq++
+				capacity--
+				progress = true
+				if p.download != nil {
+					job := *p.download
+					q.wg.Add(1)
+					go func() {
+						defer q.wg.Done()
+						defer q.release(job.ID)
+						q.runDownload(ctx, job)
+					}()
+				} else {
+					job := *p.upload
+					q.wg.Add(1)
+					go func() {
+						defer q.wg.Done()
+						defer q.release(job.ID)
+						q.runUpload(ctx, job)
+					}()
+				}
+				break // one job per user per turn
+			}
+			queues[uid] = list
+		}
+		if !progress {
+			return
 		}
 	}
 }
@@ -170,7 +250,7 @@ func (q *Queue) reserve(id string, uid int) bool {
 	if _, ok := q.running[id]; ok {
 		return false
 	}
-	if q.perUser[uid] > 0 {
+	if q.perUser[uid] >= q.PerUser {
 		return false
 	}
 	q.running[id] = &runState{uid: uid}

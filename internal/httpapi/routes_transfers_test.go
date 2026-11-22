@@ -382,3 +382,31 @@ func TestBatchDownloadsWithSameNameGetDistinctPaths(t *testing.T) {
 		t.Fatalf("names = %+v", jobs)
 	}
 }
+
+func TestDirGuardAcceptsACachedGrant(t *testing.T) {
+	client := newFnosTestClient(t)
+	dir := t.TempDir()
+	dbDir := t.TempDir()
+	st, err := store.Open(filepath.Join(dbDir, "pikpak.db"), filepath.Join(dbDir, "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	guard := fnosDirGuard(client, CachedGrants(st))
+
+	// The live fnOS list does not contain dir yet (its sync lags), but the
+	// user authorized it and the ACL says yes.
+	if err := st.GrantFolder(t.Context(), 1000, dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard(t.Context(), 1000, dir, true); err != nil {
+		t.Fatalf("cached grant rejected: %v", err)
+	}
+
+	if err := st.RevokeFolder(t.Context(), 1000, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard(t.Context(), 1000, dir, true); !errors.Is(err, ErrDirForbidden) {
+		t.Fatalf("dir outside every grant accepted: %v", err)
+	}
+}

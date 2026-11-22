@@ -23,7 +23,7 @@ func newAuthTestDeps(t *testing.T, pikpakURL string) (Deps, *store.Store) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	sessions := pikpak.NewSessionStore(st, pikpak.NewClient(pikpak.ClientOptions{BaseUser: pikpakURL, BaseDrive: pikpakURL}))
-	return Deps{Version: "test", Store: st, Sessions: sessions}, st
+	return Deps{Version: "test", Store: st, Sessions: sessions, Debug: true}, st
 }
 
 func pikpakAuthServer(t *testing.T, tokenBody string, tokenStatus int) *httptest.Server {

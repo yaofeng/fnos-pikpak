@@ -269,10 +269,12 @@ func TestListTasksSendsPageToken(t *testing.T) {
 	}
 }
 
-func TestRetryTaskPostsToRetryEndpoint(t *testing.T) {
+func TestRetryTaskCreatesARetryTask(t *testing.T) {
 	var gotPath, gotMethod string
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
@@ -281,8 +283,11 @@ func TestRetryTaskPostsToRetryEndpoint(t *testing.T) {
 	if err := c.RetryTask(context.Background(), "t1"); err != nil {
 		t.Fatalf("RetryTask: %v", err)
 	}
-	if gotMethod != http.MethodPost || gotPath != "/drive/v1/tasks/t1/retry" {
+	if gotMethod != http.MethodPost || gotPath != "/drive/v1/task" {
 		t.Fatalf("%s %s", gotMethod, gotPath)
+	}
+	if gotBody["type"] != "offline" || gotBody["create_type"] != "RETRY" || gotBody["id"] != "t1" {
+		t.Fatalf("body = %v", gotBody)
 	}
 }
 

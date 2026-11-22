@@ -185,7 +185,7 @@ func (c *Client) uploadMultipart(ctx context.Context, bucket *oss.Bucket, key st
 			go func(pn int, data []byte) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				part, err := bucket.UploadPart(imur, bytes.NewReader(data), int64(len(data)), pn)
+				part, err := uploadPart(ctx, bucket, imur, data, pn)
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
@@ -222,6 +222,34 @@ func (c *Client) uploadMultipart(ctx context.Context, bucket *oss.Bucket, key st
 		return fmt.Errorf("pikpak: oss complete multipart: %w", err)
 	}
 	return nil
+}
+
+const (
+	partAttempts   = 3
+	partRetryDelay = 200 * time.Millisecond
+)
+
+// uploadPart retries a part a few times before giving up: a single transient
+// 5xx otherwise fails an upload that is already 90% done.
+func uploadPart(ctx context.Context, bucket *oss.Bucket, imur oss.InitiateMultipartUploadResult, data []byte, pn int) (oss.UploadPart, error) {
+	delay := partRetryDelay
+	var lastErr error
+	for attempt := 0; attempt < partAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return oss.UploadPart{}, ctx.Err()
+			case <-time.After(delay):
+			}
+			delay *= 2
+		}
+		part, err := bucket.UploadPart(imur, bytes.NewReader(data), int64(len(data)), pn)
+		if err == nil {
+			return part, nil
+		}
+		lastErr = err
+	}
+	return oss.UploadPart{}, lastErr
 }
 
 // normalizeOSSEndpoint applies OpenList's rule: some clients get a

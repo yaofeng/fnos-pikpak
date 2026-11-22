@@ -142,7 +142,10 @@ type fakeOSS struct {
 	uploads   int
 	completes int
 	aborts    int
-	tokens    []string
+	// failFirstPart makes the first part upload fail once, to exercise retry.
+	failFirstPart bool
+	partAttempts  int
+	tokens        []string
 }
 
 func (f *fakeOSS) handler(t *testing.T) http.Handler {
@@ -168,8 +171,14 @@ func (f *fakeOSS) handler(t *testing.T) http.Handler {
 		case r.Method == http.MethodPut && q.Get("partNumber") != "":
 			body, _ := io.ReadAll(r.Body)
 			f.mu.Lock()
+			f.partAttempts++
+			fail := f.failFirstPart && f.partAttempts == 1
 			f.parts = append(f.parts, len(body))
 			f.mu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			w.Header().Set("ETag", `"etag-`+q.Get("partNumber")+`"`)
 		case r.Method == http.MethodPost && q.Get("uploadId") != "":
 			f.mu.Lock()
@@ -390,5 +399,23 @@ func TestCanceledSmallUploadDoesNotPutObject(t *testing.T) {
 	}
 	if len(fake.puts) != 0 {
 		t.Fatalf("puts = %v, want none", fake.puts)
+	}
+}
+
+func TestCompleteUploadRetriesAFailedPart(t *testing.T) {
+	fake := &fakeOSS{failFirstPart: true}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+
+	const size = 13 << 20
+	c := NewClient(ClientOptions{})
+	if err := c.CompleteUpload(t.Context(), ossTicket(srv.URL, size), io.LimitReader(zeroReader{}, size)); err != nil {
+		t.Fatalf("a transient part failure should be retried: %v", err)
+	}
+	if fake.completes != 1 {
+		t.Fatalf("completes = %d", fake.completes)
+	}
+	if fake.partAttempts < 4 {
+		t.Fatalf("part attempts = %d, want the failed one retried", fake.partAttempts)
 	}
 }

@@ -21,7 +21,7 @@ func (fakeProbe) Run(context.Context) probe.Result {
 func TestProbeRunStoresReport(t *testing.T) {
 	reg := &probe.Registry{}
 	reg.Add(fakeProbe{})
-	h := NewMux(Deps{Version: "test", Probes: reg})
+	h := NewMux(Deps{Version: "test", Probes: reg, Debug: true})
 
 	run := httptest.NewRequest(http.MethodPost, "/api/probes/run", nil)
 	run.Header.Set("X-Trim-Userid", "1000")
@@ -65,7 +65,7 @@ func TestProbeRunStoresReport(t *testing.T) {
 func TestReportIsPerUser(t *testing.T) {
 	reg := &probe.Registry{}
 	reg.Add(fakeProbe{})
-	h := NewMux(Deps{Version: "test", Probes: reg})
+	h := NewMux(Deps{Version: "test", Probes: reg, Debug: true})
 
 	run := httptest.NewRequest(http.MethodPost, "/api/probes/run", nil)
 	run.Header.Set("X-Trim-Userid", "1000")

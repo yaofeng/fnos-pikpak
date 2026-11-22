@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -44,6 +45,11 @@ type Deps struct {
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
+	// Debug exposes the probe/report endpoints and the Debug page. It is off
+	// in production: one of those endpoints writes probe files on demand.
+	Debug bool
+	// Logger receives one line per request. Nil means slog's default logger.
+	Logger *slog.Logger
 }
 
 // NewMux builds the API surface. Every /api route requires a gateway identity.
@@ -76,10 +82,10 @@ func NewMux(deps Deps) *http.ServeMux {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 	})
 
-	if deps.Probes != nil {
+	if deps.Debug && deps.Probes != nil {
 		registerProbeRoutes(inner, deps, newReportStore())
 	}
-	if deps.Fnos != nil {
+	if deps.Debug && deps.Fnos != nil {
 		registerFSProbe(inner, deps)
 	}
 	if deps.Store != nil {
@@ -95,7 +101,9 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerPlayRoutes(inner, deps)
 	}
 	registerGatewayRoutes(inner)
-	registerStreamRoutes(inner)
+	if deps.Debug {
+		registerStreamRoutes(inner)
+	}
 	if deps.Store != nil {
 		registerSettingsRoutes(inner, deps)
 		registerDiagRoutes(inner, deps)
@@ -114,7 +122,11 @@ func NewMux(deps Deps) *http.ServeMux {
 	// header, because a <video> element cannot send one.
 	registerStreamRoutesPlay(root, deps)
 
-	root.Handle("/", stripGatewayPrefix(gatewayPrefix, fnos.WithIdentity(deps.DevUID, inner)))
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	root.Handle("/", stripGatewayPrefix(gatewayPrefix, fnos.WithIdentity(deps.DevUID, withRequestLog(inner, logger))))
 	return root
 }
 

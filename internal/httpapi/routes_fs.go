@@ -42,12 +42,12 @@ func registerFSProbe(mux *http.ServeMux, deps Deps) {
 		ctx := r.Context()
 		folders, err := deps.Fnos.GetUserAccessibleFolders(ctx, id.UID)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "fnos_error", err.Error())
+			writeError(w, http.StatusBadGateway, "fnos_error", probe.Redact(err.Error()))
 			return
 		}
 		acl, err := deps.Fnos.CheckUserACL(ctx, id.UID, body.Paths)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "fnos_error", err.Error())
+			writeError(w, http.StatusBadGateway, "fnos_error", probe.Redact(err.Error()))
 			return
 		}
 

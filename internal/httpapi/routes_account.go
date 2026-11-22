@@ -180,6 +180,7 @@ func meResponse(ctx context.Context, deps Deps, uid int, bound bool) map[string]
 		"uid":          uid,
 		"bound":        bound,
 		"status":       status,
+		"debug":        deps.Debug,
 		"display_name": user.DisplayName,
 		"vip_type":     user.VIPType,
 		"capabilities": map[string]bool{

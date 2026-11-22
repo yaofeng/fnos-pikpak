@@ -106,6 +106,10 @@ func ensureFreshProbeFile() (string, error) {
 
 func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/upload/probe/config", func(w http.ResponseWriter, r *http.Request) {
+		if !deps.Debug {
+			writeError(w, http.StatusNotFound, "not_found", "接口不存在")
+			return
+		}
 		id, _ := fnos.IdentityFrom(r.Context())
 		bound := false
 		if _, err := deps.Sessions.Get(r.Context(), id.UID); err == nil {
@@ -119,6 +123,10 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("POST /api/upload/probe", func(w http.ResponseWriter, r *http.Request) {
+		if !deps.Debug {
+			writeError(w, http.StatusNotFound, "not_found", "接口不存在")
+			return
+		}
 		id, _ := fnos.IdentityFrom(r.Context())
 
 		var body struct {
@@ -252,7 +260,8 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		if body.Fresh {
 			// A fresh payload exists only for this probe; purge it so repeated
-			// runs do not fill the account.
+			// runs do not fill the account — locally as well as remotely.
+			defer func() { _ = os.Remove(path) }()
 			resp["fresh"] = true
 			resp["deleted"] = false
 			if file != nil && file.ID != "" {

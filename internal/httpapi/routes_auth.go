@@ -119,7 +119,11 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		deps.Accounts.drop(id.UID)
 		// Unbinding throws the account away; its transfer jobs can never run
-		// again, so the records go with it. Files on disk stay.
+		// again, so their workers stop and the records go with them. Files on
+		// disk stay.
+		if deps.Queue != nil {
+			deps.Queue.CancelUser(id.UID)
+		}
 		if deps.Store != nil {
 			if err := deps.Store.DeleteUserJobs(r.Context(), id.UID); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "解绑失败")

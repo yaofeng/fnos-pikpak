@@ -28,10 +28,35 @@ var (
 type DirGuard func(ctx context.Context, uid int, dir string, needWrite bool) error
 
 // FnosDirGuard is the production directory guard: the folder must be one fnOS
-// lists for the user and the ACL must allow the requested access.
-func FnosDirGuard(c *fnos.Client) DirGuard { return fnosDirGuard(c) }
+// lists for the user and the ACL must allow the requested access. Cached
+// grants are consulted too, because fnOS's list lags behind an authorization
+// the user just made in the file picker.
+func FnosDirGuard(c *fnos.Client, cached func(ctx context.Context, uid int) []string) DirGuard {
+	return fnosDirGuard(c, cached)
+}
 
-func fnosDirGuard(c *fnos.Client) DirGuard {
+// CachedGrants reads the folders the user authorized through this app. It is
+// exported so the launcher can build the same guard.
+func CachedGrants(st *store.Store) func(ctx context.Context, uid int) []string {
+	if st == nil {
+		return nil
+	}
+	return func(ctx context.Context, uid int) []string {
+		grants, err := st.ListGrantedFolders(ctx, uid)
+		if err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(grants))
+		for _, g := range grants {
+			if g.Path != "" {
+				out = append(out, g.Path)
+			}
+		}
+		return out
+	}
+}
+
+func fnosDirGuard(c *fnos.Client, cached func(ctx context.Context, uid int) []string) DirGuard {
 	return func(ctx context.Context, uid int, dir string, needWrite bool) error {
 		if c == nil {
 			return ErrDirUnavailable
@@ -40,7 +65,13 @@ func fnosDirGuard(c *fnos.Client) DirGuard {
 		if err != nil {
 			return err
 		}
-		if !fnos.IsUnderAny(dir, folders) {
+		allowed := fnos.IsUnderAny(dir, folders)
+		if !allowed && cached != nil {
+			// The ACL check below stays authoritative; a cached grant only
+			// keeps a just-authorized folder from being rejected for a while.
+			allowed = fnos.IsUnderAny(dir, cached(ctx, uid))
+		}
+		if !allowed {
 			return ErrDirForbidden
 		}
 		acl, err := c.CheckUserACL(ctx, uid, []string{dir})
@@ -430,7 +461,7 @@ func writeUploadSourceError(w http.ResponseWriter, err error) {
 func checkDir(r *http.Request, deps Deps, uid int, dir string, needWrite bool) error {
 	guard := deps.DirGuard
 	if guard == nil {
-		guard = fnosDirGuard(deps.Fnos)
+		guard = fnosDirGuard(deps.Fnos, CachedGrants(deps.Store))
 	}
 	err := guard(r.Context(), uid, dir, needWrite)
 	if errors.Is(err, ErrDirUnavailable) {

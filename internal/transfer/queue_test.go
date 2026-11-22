@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -346,5 +347,152 @@ func TestShutdownRequeuesRunningUploads(t *testing.T) {
 	}
 	if got.Status != "queued" {
 		t.Fatalf("status after shutdown = %q, want queued", got.Status)
+	}
+}
+
+func TestCancelUserStopsOnlyThatUsersJobs(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 2, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.Start(ctx)
+
+	for _, job := range []store.DownloadJob{
+		{ID: "j1", UID: 1000, FileID: "f1", FileName: "a", DestDir: t.TempDir(), Size: 10, Status: "queued"},
+		{ID: "j2", UID: 2000, FileID: "f2", FileName: "b", DestDir: t.TempDir(), Size: 10, Status: "queued"},
+	} {
+		job.DestPath = filepath.Join(job.DestDir, job.FileName)
+		if err := st.PutDownloadJob(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.Notify()
+	waitFor(t, "both downloads to start", func() bool {
+		a, _ := st.GetDownloadJob(context.Background(), 1000, "j1")
+		b, _ := st.GetDownloadJob(context.Background(), 2000, "j2")
+		return a.Status == "running" && b.Status == "running"
+	})
+
+	// Unbinding one account must not disturb the other user's transfer.
+	q.CancelUser(1000)
+	waitFor(t, "the unbound user's job to stop", func() bool {
+		got, _ := st.GetDownloadJob(context.Background(), 1000, "j1")
+		return got.Status != "running"
+	})
+	if got, _ := st.GetDownloadJob(context.Background(), 2000, "j2"); got.Status != "running" {
+		t.Fatalf("other user's job = %q", got.Status)
+	}
+}
+
+func TestQueueStartsTheOldestJobWhateverItsKind(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 1, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.NewUploader = func(int) (*Uploader, error) {
+		return &Uploader{Client: &blockingUploadClient{}}, nil
+	}
+
+	// The upload is older than the download; scheduling downloads first would
+	// let a busy download queue starve it forever. Both rows exist before the
+	// scheduler starts, so the first pass decides the order.
+	up := uploadJob(t, "a.mkv")
+	up.ID = "u-old"
+	up.UID = 2000
+	up.Status = "queued"
+	if err := st.PutUploadJob(context.Background(), up); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	queuedDownload(t, st, "j-new", 10)
+	q.Start(ctx)
+	waitFor(t, "the older upload to start", func() bool {
+		got, err := st.GetUploadJob(context.Background(), 2000, "u-old")
+		return err == nil && got.Status == "running"
+	})
+	time.Sleep(100 * time.Millisecond)
+	if got, _ := st.GetDownloadJob(context.Background(), 1000, "j-new"); got.Status != "queued" {
+		t.Fatalf("download status = %q, want it still queued behind the upload", got.Status)
+	}
+}
+
+func TestQueueHonorsAPerUserCapAboveOne(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 2, PerUser: 2, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+
+	queuedDownload(t, st, "j1", 10)
+	queuedDownload(t, st, "j2", 10)
+	q.Start(ctx)
+	waitFor(t, "both jobs of one user to run", func() bool {
+		a, _ := st.GetDownloadJob(context.Background(), 1000, "j1")
+		b, _ := st.GetDownloadJob(context.Background(), 1000, "j2")
+		return a.Status == "running" && b.Status == "running"
+	})
+}
+
+func TestQueueServesUsersRoundRobin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "0123456789")
+	}))
+	defer srv.Close()
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 1, Tick: 20 * time.Millisecond}
+
+	// User 1000 has a long queue; user 2000 queued one job later.
+	for _, id := range []string{"a1", "a2", "a3"} {
+		queuedDownload(t, st, id, 10)
+	}
+	time.Sleep(5 * time.Millisecond)
+	dir := t.TempDir()
+	if err := st.PutDownloadJob(context.Background(), store.DownloadJob{
+		ID: "b1", UID: 2000, FileID: "f-b1", FileName: "b1.bin",
+		DestDir: dir, DestPath: filepath.Join(dir, "b1.bin"), Size: 10, Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var started []int
+	q.NewDownloader = func(uid int) (*Downloader, error) {
+		mu.Lock()
+		started = append(started, uid)
+		mu.Unlock()
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.Start(ctx)
+
+	waitFor(t, "all four downloads to finish", func() bool {
+		for _, tc := range []struct {
+			uid int
+			id  string
+		}{{1000, "a1"}, {1000, "a2"}, {1000, "a3"}, {2000, "b1"}} {
+			got, err := st.GetDownloadJob(context.Background(), tc.uid, tc.id)
+			if err != nil || got.Status != "done" {
+				return false
+			}
+		}
+		return true
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(started) < 2 || started[0] != 1000 || started[1] != 2000 {
+		t.Fatalf("start order = %v, want the second user served before the first user's second job", started)
 	}
 }

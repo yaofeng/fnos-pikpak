@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -41,6 +42,7 @@ func main() {
 	socket := flag.String("socket", defaultSocket(), "unix socket path to listen on")
 	listen := flag.String("listen", "", "development only: listen on a TCP address instead of the unix socket")
 	devUID := flag.Int("dev-uid", 0, "development only: identity to use when the gateway header is absent")
+	debug := flag.Bool("debug", false, "expose the probe/report endpoints and the Debug page")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -48,6 +50,8 @@ func main() {
 		fmt.Println(version.Version)
 		return
 	}
+	// One JSON line per request; the launcher appends stderr to app.log.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 
 	dir := dataDir()
 	st, err := store.Open(filepath.Join(dir, "pikpak.db"), filepath.Join(dir, "secret.key"))
@@ -85,7 +89,7 @@ func main() {
 	if *devUID != 0 && fnosClient == nil {
 		dirGuard = httpapi.DevDirGuard()
 	} else {
-		dirGuard = httpapi.FnosDirGuard(fnosClient)
+		dirGuard = httpapi.FnosDirGuard(fnosClient, httpapi.CachedGrants(st))
 	}
 
 	queue := &transfer.Queue{
@@ -121,6 +125,7 @@ func main() {
 		// leaked URL cannot be turned back into the credential key.
 		PlaySecret: playtoken.DeriveSecret(st.SecretKey()),
 		DevUID:     *devUID,
+		Debug:      *debug,
 		Probes:     probes,
 		Fnos:       fnosClient,
 		Store:      st,

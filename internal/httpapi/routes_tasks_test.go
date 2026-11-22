@@ -53,7 +53,7 @@ func newTasksEnv(t *testing.T, quota bool) *tasksEnv {
 		}
 		_, _ = io.WriteString(w, `{"task":{"id":"t9","phase":"PHASE_TYPE_PENDING","file_name":"x"}}`)
 	})
-	mux.HandleFunc("POST /drive/v1/tasks/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /drive/v1/task", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{}`)
 	})
 	mux.HandleFunc("DELETE /drive/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
