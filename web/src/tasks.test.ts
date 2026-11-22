@@ -1,0 +1,63 @@
+import { describe, expect, test } from 'vitest'
+import { canRetry, isTaskActive, taskPercent, taskStatusText, taskTitle } from './tasks'
+
+function task(extra: Record<string, unknown> = {}) {
+  return { id: 't1', phase: 'PHASE_TYPE_RUNNING', progress: 40, ...extra } as never
+}
+
+describe('isTaskActive', () => {
+  test('is true while pending or running', () => {
+    expect(isTaskActive(task({ phase: 'PHASE_TYPE_PENDING' }))).toBe(true)
+    expect(isTaskActive(task({ phase: 'PHASE_TYPE_RUNNING' }))).toBe(true)
+  })
+
+  test('is false once the task finished or failed', () => {
+    expect(isTaskActive(task({ phase: 'PHASE_TYPE_COMPLETE' }))).toBe(false)
+    expect(isTaskActive(task({ phase: 'PHASE_TYPE_ERROR' }))).toBe(false)
+  })
+})
+
+describe('taskPercent', () => {
+  test('passes the upstream progress through', () => {
+    expect(taskPercent(task({ progress: 42 }))).toBe(42)
+  })
+
+  test('clamps out-of-range progress', () => {
+    expect(taskPercent(task({ progress: -5 }))).toBe(0)
+    expect(taskPercent(task({ progress: 140 }))).toBe(100)
+  })
+
+  test('treats a finished task as complete even without progress', () => {
+    expect(taskPercent(task({ phase: 'PHASE_TYPE_COMPLETE', progress: 0 }))).toBe(100)
+  })
+})
+
+describe('taskStatusText', () => {
+  test('names the phases', () => {
+    expect(taskStatusText(task({ phase: 'PHASE_TYPE_PENDING' }))).toBe('排队中')
+    expect(taskStatusText(task({ phase: 'PHASE_TYPE_RUNNING' }))).toBe('下载中')
+    expect(taskStatusText(task({ phase: 'PHASE_TYPE_COMPLETE' }))).toBe('已完成')
+  })
+
+  test('shows the upstream message for failures', () => {
+    expect(taskStatusText(task({ phase: 'PHASE_TYPE_ERROR', message: 'link expired' }))).toBe('失败：link expired')
+    expect(taskStatusText(task({ phase: 'PHASE_TYPE_ERROR' }))).toBe('失败')
+  })
+})
+
+describe('taskTitle', () => {
+  test('prefers the downloaded file name', () => {
+    expect(taskTitle(task({ file_name: 'a.mkv', name: 'task' }))).toBe('a.mkv')
+    expect(taskTitle(task({ name: 'task' }))).toBe('task')
+    expect(taskTitle(task({}))).toBe('t1')
+  })
+})
+
+describe('canRetry', () => {
+  test('only finished or failed tasks can be retried', () => {
+    expect(canRetry(task({ phase: 'PHASE_TYPE_ERROR' }))).toBe(true)
+    expect(canRetry(task({ phase: 'PHASE_TYPE_COMPLETE' }))).toBe(true)
+    expect(canRetry(task({ phase: 'PHASE_TYPE_RUNNING' }))).toBe(false)
+    expect(canRetry(task({ phase: 'PHASE_TYPE_PENDING' }))).toBe(false)
+  })
+})

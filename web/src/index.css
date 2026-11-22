@@ -755,3 +755,28 @@ button.link {
   background: var(--accent);
   transition: width 0.3s ease;
 }
+
+/* 离线任务页 */
+.task-form {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.task-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.task-delete-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
