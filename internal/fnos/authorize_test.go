@@ -60,3 +60,12 @@ func TestValidateWritableACL(t *testing.T) {
 		t.Fatal("empty ACL accepted")
 	}
 }
+
+func TestIsUnderAnyAcceptsMissingPathUnderRoot(t *testing.T) {
+	root := t.TempDir()
+	// A download target that does not exist yet must still count as inside the
+	// granted folder, even when the root itself has a symlinked prefix.
+	if !IsUnderAny(filepath.Join(root, "not-created-yet", "a.mkv"), []string{root}) {
+		t.Fatalf("missing path under %q was rejected", root)
+	}
+}

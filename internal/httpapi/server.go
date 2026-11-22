@@ -63,7 +63,10 @@ func NewMux(deps Deps) *http.ServeMux {
 		registerProbeRoutes(inner, deps, newReportStore())
 	}
 	if deps.Fnos != nil {
-		registerFSRoutes(inner, deps)
+		registerFSProbe(inner, deps)
+	}
+	if deps.Store != nil {
+		registerFSFolderRoutes(inner, deps)
 	}
 	if deps.Sessions != nil {
 		registerAuthRoutes(inner, deps)
