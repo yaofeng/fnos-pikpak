@@ -98,6 +98,7 @@ func NewMux(deps Deps) *http.ServeMux {
 	registerStreamRoutes(inner)
 	if deps.Store != nil {
 		registerSettingsRoutes(inner, deps)
+		registerDiagRoutes(inner, deps)
 	}
 
 	inner.Handle("/", spaHandler())

@@ -25,6 +25,8 @@ export const apiPost = <T,>(path: string, data: unknown) =>
   request<T>(path, { method: 'POST', body: JSON.stringify(data ?? {}) })
 export const apiPatch = <T,>(path: string, data: unknown) =>
   request<T>(path, { method: 'PATCH', body: JSON.stringify(data ?? {}) })
+export const apiPut = <T,>(path: string, data: unknown) =>
+  request<T>(path, { method: 'PUT', body: JSON.stringify(data ?? {}) })
 export const apiDelete = <T,>(path: string, data?: unknown) =>
   request<T>(path, { method: 'DELETE', body: data === undefined ? undefined : JSON.stringify(data) })
 

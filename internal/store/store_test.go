@@ -404,3 +404,104 @@ func TestSecretKeyReturnsCopy(t *testing.T) {
 		t.Fatal("SecretKey must hand out a copy, not the live key")
 	}
 }
+
+func TestJobCountsAndRecentFailures(t *testing.T) {
+	st, _ := newStore(t)
+	ctx := context.Background()
+
+	for _, j := range []DownloadJob{
+		{ID: "d1", UID: 1000, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
+		{ID: "d2", UID: 1000, FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "done"},
+		{ID: "d3", UID: 1000, FileID: "f3", FileName: "c", DestDir: "/tmp", DestPath: "/tmp/c", Status: "failed",
+			ErrorCode: "download_failed", ErrorMessage: "boom"},
+		{ID: "d4", UID: 2000, FileID: "f4", FileName: "d", DestDir: "/tmp", DestPath: "/tmp/d", Status: "failed",
+			ErrorCode: "download_failed", ErrorMessage: "other user"},
+	} {
+		if err := st.PutDownloadJob(ctx, j); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+	}
+	if err := st.PutUploadJob(ctx, UploadJob{
+		ID: "u1", UID: 1000, LocalPath: "/tmp/a", RemoteName: "a", Status: "skipped",
+		ErrorCode: "conflict", ErrorMessage: "exists",
+	}); err != nil {
+		t.Fatalf("put upload: %v", err)
+	}
+
+	counts, err := st.JobCounts(ctx, 1000)
+	if err != nil {
+		t.Fatalf("JobCounts: %v", err)
+	}
+	if counts.Downloads["queued"] != 1 || counts.Downloads["done"] != 1 || counts.Downloads["failed"] != 1 {
+		t.Fatalf("downloads = %v", counts.Downloads)
+	}
+	if counts.Uploads["skipped"] != 1 {
+		t.Fatalf("uploads = %v", counts.Uploads)
+	}
+
+	failures, err := st.RecentJobFailures(ctx, 1000, 10)
+	if err != nil {
+		t.Fatalf("RecentJobFailures: %v", err)
+	}
+	if len(failures) != 2 {
+		t.Fatalf("failures = %+v", failures)
+	}
+	// Scoped to the caller: the other user's failure must not appear.
+	for _, f := range failures {
+		if f.ID == "d4" {
+			t.Fatalf("leaked another user's job: %+v", failures)
+		}
+	}
+	if failures[0].Kind == failures[1].Kind {
+		t.Fatalf("expected one download and one upload failure: %+v", failures)
+	}
+}
+
+func TestDBSize(t *testing.T) {
+	st, dbPath := newStore(t)
+	size, err := st.DBSize()
+	if err != nil {
+		t.Fatalf("DBSize: %v", err)
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size <= 0 || size > info.Size()+1<<20 {
+		t.Fatalf("size = %d, file = %d", size, info.Size())
+	}
+}
+
+func TestDeleteUserJobs(t *testing.T) {
+	st, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := st.PutDownloadJob(ctx, DownloadJob{
+		ID: "d1", UID: 1000, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutUploadJob(ctx, UploadJob{
+		ID: "u1", UID: 1000, LocalPath: "/tmp/a", RemoteName: "a", Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutDownloadJob(ctx, DownloadJob{
+		ID: "d2", UID: 2000, FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.DeleteUserJobs(ctx, 1000); err != nil {
+		t.Fatalf("DeleteUserJobs: %v", err)
+	}
+	if jobs, _ := st.ListDownloadJobs(ctx, 1000); len(jobs) != 0 {
+		t.Fatalf("downloads left: %+v", jobs)
+	}
+	if jobs, _ := st.ListUploadJobs(ctx, 1000); len(jobs) != 0 {
+		t.Fatalf("uploads left: %+v", jobs)
+	}
+	if jobs, _ := st.ListDownloadJobs(ctx, 2000); len(jobs) != 1 {
+		t.Fatalf("another user's job was deleted: %+v", jobs)
+	}
+}

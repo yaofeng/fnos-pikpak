@@ -69,8 +69,9 @@ type GrantedFolder struct {
 }
 
 type Store struct {
-	db  *sql.DB
-	key []byte
+	db   *sql.DB
+	key  []byte
+	path string
 }
 
 func Open(dbPath, keyPath string) (*Store, error) {
@@ -88,7 +89,7 @@ func Open(dbPath, keyPath string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 
-	s := &Store{db: db, key: key}
+	s := &Store{db: db, key: key, path: dbPath}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err

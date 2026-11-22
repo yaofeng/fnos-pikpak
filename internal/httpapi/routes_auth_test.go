@@ -127,6 +127,16 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 		t.Fatalf("me = %v", me)
 	}
 
+	// Unbinding drops this user's transfer jobs and leaves everyone else's.
+	for _, job := range []store.DownloadJob{
+		{ID: "d1", UID: 1000, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
+		{ID: "d2", UID: 2000, FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "queued"},
+	} {
+		if err := st.PutDownloadJob(t.Context(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 	logout.Header.Set("X-Trim-Userid", "1000")
 	logout.Header.Set("Content-Type", "application/json")
@@ -139,6 +149,12 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 	_, me = getJSON(t, h, "/api/me", "1000")
 	if me["bound"] != false {
 		t.Fatalf("after logout me = %v", me)
+	}
+	if jobs, _ := st.ListDownloadJobs(t.Context(), 1000); len(jobs) != 0 {
+		t.Fatalf("jobs survived logout: %+v", jobs)
+	}
+	if jobs, _ := st.ListDownloadJobs(t.Context(), 2000); len(jobs) != 1 {
+		t.Fatalf("another user's job was deleted: %+v", jobs)
 	}
 }
 
@@ -248,6 +264,16 @@ func TestLogoutCancelsPendingFlow(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &start)
+
+	// Unbinding drops this user's transfer jobs and leaves everyone else's.
+	for _, job := range []store.DownloadJob{
+		{ID: "d1", UID: 1000, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
+		{ID: "d2", UID: 2000, FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "queued"},
+	} {
+		if err := st.PutDownloadJob(t.Context(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 	logout.Header.Set("X-Trim-Userid", "1000")
