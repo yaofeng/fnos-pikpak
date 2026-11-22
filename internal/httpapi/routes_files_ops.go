@@ -178,21 +178,10 @@ func registerBatch(mux *http.ServeMux, deps Deps, op string, needTarget bool) {
 			return
 		}
 
-		resp := map[string]any{"ok": true, "pending": false}
-		if taskID != "" {
-			task, done, err := client.WaitTaskSettled(r.Context(), taskID, batchWaitTimeout, taskPollInterval)
-			if err != nil {
-				writeUpstreamError(w, err)
-				return
-			}
-			resp["task_id"] = taskID
-			resp["pending"] = !done
-			if task.Phase != "" {
-				resp["phase"] = task.Phase
-			}
-			if !done && task.Phase == "PHASE_TYPE_ERROR" {
-				resp["ok"] = false
-			}
+		resp, err := batchResult(r, client, taskID)
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
