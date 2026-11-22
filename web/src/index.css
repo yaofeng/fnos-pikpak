@@ -780,3 +780,68 @@ button.link {
   gap: 6px;
   margin-bottom: 8px;
 }
+
+/* 播放器 */
+.player-backdrop {
+  z-index: 60;
+}
+
+.player {
+  width: min(1080px, 96vw);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.player:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  background: #000;
+}
+
+.player-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.player-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.player-actions button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.player-video {
+  width: 100%;
+  max-height: 72vh;
+  background: #000;
+  border-radius: 6px;
+}
+
+.player:fullscreen .player-video {
+  max-height: calc(100vh - 96px);
+}
+
+.player-foot {
+  display: flex;
+  justify-content: space-between;
+}

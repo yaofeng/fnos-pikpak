@@ -3,10 +3,12 @@ import { apiGet, apiPatch, apiPost } from '../api'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
+import Player from '../components/Player'
 import { askPath, hostAvailable, pickDirectory, pickFiles } from '../fnosSdk'
 import {
   filterFiles,
   isFolder,
+  isVideo,
   sortFiles,
   type FileItem,
   type KindFilter,
@@ -37,6 +39,7 @@ export default function Files() {
   const [menu, setMenu] = useState<{ x: number; y: number; file: FileItem } | null>(null)
   const [move, setMove] = useState<{ mode: 'move' | 'copy'; ids: string[] } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [playing, setPlaying] = useState<FileItem | null>(null)
 
   const reqId = useRef(0)
   const sentinel = useRef<HTMLDivElement | null>(null)
@@ -397,6 +400,17 @@ export default function Files() {
           <button type="button" onClick={() => setMove({ mode: 'copy', ids: [menu.file.id] })}>
             复制到…
           </button>
+          {isVideo(menu.file) && (
+            <button
+              type="button"
+              onClick={() => {
+                setPlaying(menu.file)
+                setMenu(null)
+              }}
+            >
+              播放
+            </button>
+          )}
           {!isFolder(menu.file) && (
             <button type="button" onClick={() => void downloadTo([menu.file.id])}>
               下载到…
@@ -407,6 +421,8 @@ export default function Files() {
           </button>
         </div>
       )}
+
+      {playing && <Player fileId={playing.id} name={playing.name} onClose={() => setPlaying(null)} />}
 
       {move && (
         <div className="modal-backdrop" onClick={() => setMove(null)}>
