@@ -35,6 +35,9 @@ type Deps struct {
 	Queue *transfer.Queue
 	// DirGuard answers the fnOS ACL question. Nil falls back to Fnos.
 	DirGuard DirGuard
+	// Links caches signed download URLs. Nil means the default 10-minute
+	// cache; tests may inject one.
+	Links *linkCache
 	// PlaySecret signs stream tokens. Nil means a random per-process secret,
 	// which keeps tests hermetic; production derives one from the store key.
 	PlaySecret []byte
@@ -48,6 +51,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	inner := http.NewServeMux()
 	if deps.Accounts == nil {
 		deps.Accounts = newAccountCache(defaultAccountTTL)
+	}
+	if deps.Links == nil {
+		deps.Links = newLinkCache(linkTTL)
 	}
 	if len(deps.PlaySecret) == 0 {
 		secret := make([]byte, 32)

@@ -47,12 +47,17 @@ func registerPlayRoutes(mux *http.ServeMux, deps Deps) {
 // only identity this route accepts.
 func registerStreamRoutesPlay(root *http.ServeMux, deps Deps) {
 	for _, prefix := range []string{"", gatewayPrefix} {
-		root.HandleFunc("GET "+prefix+"/api/stream/{id}", deps.streamFile)
-		root.HandleFunc("HEAD "+prefix+"/api/stream/{id}", deps.streamFile)
+		// Registered without a method so a stray POST gets 405 here instead of
+		// falling into the identity middleware and answering 401.
+		root.HandleFunc(prefix+"/api/stream/{id}", deps.streamFile)
 	}
 }
 
 func (deps Deps) streamFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "只支持 GET 和 HEAD")
+		return
+	}
 	if deps.Sessions == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "PikPak 会话未配置")
 		return
@@ -71,21 +76,14 @@ func (deps Deps) streamFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := deps.Sessions.ClientFor(r.Context(), claims.UID)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "not_bound", "PikPak 账号未绑定")
+	if playMode(r.Context(), deps, claims.UID) == "redirect" {
+		url, err := deps.linkFor(r.Context(), claims.UID, claims.FileID, false)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
+			return
+		}
+		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
-	link, err := client.GetDownloadLink(r.Context(), claims.FileID)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
-		return
-	}
-	if link.URL == "" {
-		writeError(w, http.StatusBadGateway, "pikpak_error", "PikPak 没有返回下载地址")
-		return
-	}
-	// Task 19 replaces this redirect with a Range proxy; the signed URL stays
-	// server-side once proxying lands.
-	http.Redirect(w, r, link.URL, http.StatusFound)
+	deps.proxyStream(w, r, claims.UID, claims.FileID)
 }
