@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { filterFiles, formatSize, isVideo, sortFiles, type FileItem } from './files'
+import { fileKind, filterFiles, formatSize, isVideo, sortFiles, type FileItem } from './files'
 
 function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem {
   return { id, parent_id: '', name, kind: 'drive#file', size: 0, ...extra }
@@ -66,5 +66,16 @@ describe('helpers', () => {
     expect(isVideo(file('1', 'a', { category: 'VIDEO' }))).toBe(true)
     expect(isVideo(file('2', 'a', { mime_type: 'video/mp4' }))).toBe(true)
     expect(isVideo(file('3', 'a', { mime_type: 'text/plain' }))).toBe(false)
+  })
+
+  test('fileKind picks the icon the file manager shows', () => {
+    expect(fileKind(folder('1', 'dir'))).toBe('folder')
+    expect(fileKind(file('2', 'a', { category: 'VIDEO' }))).toBe('video')
+    expect(fileKind(file('3', 'a.mp3', { mime_type: 'audio/mpeg' }))).toBe('audio')
+    expect(fileKind(file('4', 'a.png', { mime_type: 'image/png' }))).toBe('image')
+    expect(fileKind(file('5', 'a.zip'))).toBe('archive')
+    expect(fileKind(file('6', 'a.MKV'))).toBe('video')
+    expect(fileKind(file('7', 'a.pdf'))).toBe('doc')
+    expect(fileKind(file('8', 'a.bin'))).toBe('other')
   })
 })

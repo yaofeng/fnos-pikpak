@@ -1,5 +1,6 @@
 import type { MouseEvent } from 'react'
-import { formatSize, isFolder, isVideo, type FileItem } from '../files'
+import { formatSize, isFolder, type FileItem } from '../files'
+import { FileIcon } from './icons'
 
 type Props = {
   items: FileItem[]
@@ -32,8 +33,8 @@ export default function FileGrid({ items, selected, onToggle, onOpen, onMenu, on
           onDoubleClick={() => onOpen(f)}
           onContextMenu={(e) => onMenu(e, f)}
         >
-          <div className={`tile-icon ${isFolder(f) ? 'folder' : isVideo(f) ? 'video' : ''}`}>
-            {isFolder(f) ? '📁' : isVideo(f) ? '🎬' : '📄'}
+          <div className="tile-icon">
+            <FileIcon file={f} size={44} />
           </div>
           <div className="tile-name" title={f.name}>
             {f.name}

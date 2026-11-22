@@ -267,44 +267,165 @@ button.primary {
   font-weight: 600;
 }
 
-/* Files */
-.file-toolbar {
+/* Files — toolbar layout follows fnOS 文件管理: a navigation row (back,
+   refresh, breadcrumb box, search) above an action row (icon+label buttons,
+   then filters and the view switch on the right). */
+.fm-nav {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
-.file-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.icon-btn {
+  display: inline-flex;
   align-items: center;
-}
-
-.file-tools select,
-.file-tools input,
-.file-tools button {
-  font-size: 13px;
-  padding: 5px 8px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--card);
   color: var(--fg);
+  flex: none;
 }
 
-.file-tools .search {
-  min-width: 180px;
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.crumb-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.fm-title {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--muted);
+  flex: none;
+  width: 240px;
+}
+
+.fm-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.fm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.fm-spacer {
+  flex: 1;
+}
+
+.fm-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--muted);
+}
+
+.fm-pick select {
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--card);
+  color: var(--muted);
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+
+.segmented button.active {
+  background: var(--bg);
+  color: var(--fg);
 }
 
 .breadcrumb {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 2px;
   font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .crumb {
@@ -314,6 +435,7 @@ button.primary {
   color: var(--accent);
   cursor: pointer;
   font-size: 14px;
+  white-space: nowrap;
 }
 
 .crumb.current {
@@ -350,10 +472,12 @@ button.primary {
   color: var(--muted);
   font-weight: 500;
   font-size: 12px;
+  background: var(--bg);
 }
 
 .file-table tbody tr {
   cursor: default;
+  height: 44px;
 }
 
 .file-table tbody tr:hover {
@@ -372,6 +496,32 @@ button.primary {
   width: 28px;
 }
 
+.col-open {
+  width: 24px;
+}
+
+.file-table td.col-open {
+  padding-right: 0;
+}
+
+.row-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+}
+
+.row-open:hover {
+  background: var(--card);
+  color: var(--fg);
+}
+
 .col-size {
   width: 110px;
 }
@@ -380,8 +530,28 @@ button.primary {
   width: 170px;
 }
 
+.col-name {
+  width: auto;
+}
+
+.name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file-icon {
-  margin-right: 8px;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
 }
 
 .file-grid {
@@ -405,7 +575,11 @@ button.primary {
 }
 
 .tile-icon {
-  font-size: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  margin-bottom: 6px;
 }
 
 .tile-name {

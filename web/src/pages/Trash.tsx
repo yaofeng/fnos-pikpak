@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../api'
-import { formatSize, isFolder, type FileItem } from '../files'
+import FileTable from '../components/FileTable'
+import { RefreshIcon, RestoreIcon, TrashIcon } from '../components/icons'
+import type { FileItem } from '../files'
 import { cacheKeys, readCache, writeCache } from '../listCache'
 
 type Page = { items: FileItem[]; next_page_token: string }
@@ -107,16 +109,45 @@ export default function Trash() {
 
   return (
     <section>
-      <div className="file-toolbar">
-        <span />
-        <div className="file-tools">
-          <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
-            刷新
-          </button>
-          <button type="button" onClick={emptyTrash} disabled={busy || items.length === 0} className="danger">
-            清空回收站
-          </button>
+      <div className="fm-nav">
+        <div className="crumb-box">
+          <span className="fm-title">回收站</span>
         </div>
+        <button
+          className="icon-btn"
+          type="button"
+          onClick={() => void fetchPage('', true)}
+          disabled={loading}
+          title="刷新"
+          aria-label="刷新"
+        >
+          <RefreshIcon />
+        </button>
+      </div>
+
+      <div className="fm-actions">
+        <button
+          className="btn-icon"
+          type="button"
+          onClick={() => void run('untrash', ids)}
+          disabled={busy || ids.length === 0}
+        >
+          <RestoreIcon />
+          恢复
+        </button>
+        <button
+          className="btn-icon"
+          type="button"
+          onClick={() => void run('delete', ids)}
+          disabled={busy || ids.length === 0}
+        >
+          <TrashIcon />
+          永久删除
+        </button>
+        <span className="fm-spacer" />
+        <button type="button" className="danger" onClick={emptyTrash} disabled={busy || items.length === 0}>
+          清空回收站
+        </button>
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -140,51 +171,7 @@ export default function Trash() {
       {!loading && items.length === 0 && !error && <p className="muted">回收站是空的。</p>}
 
       {items.length > 0 && (
-        <table className="file-table">
-          <thead>
-            <tr>
-              <th className="col-check" />
-              <th>名称</th>
-              <th className="col-size">大小</th>
-              <th className="col-time">删除前修改时间</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((f) => (
-              <tr key={f.id} className={selected.has(f.id) ? 'selected' : ''} onClick={() => toggle(f.id)}>
-                <td className="col-check">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(f.id)}
-                    onChange={() => toggle(f.id)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </td>
-                <td>
-                  <span className="file-icon">{isFolder(f) ? '📁' : '📄'}</span>
-                  {f.name}
-                </td>
-                <td className="col-size muted">{isFolder(f) ? '—' : formatSize(f.size)}</td>
-                <td className="col-time muted">
-                  {f.modified_time ? new Date(f.modified_time).toLocaleString() : '—'}
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void run('untrash', [f.id])
-                    }}
-                    disabled={busy}
-                  >
-                    恢复
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <FileTable items={items} selected={selected} selectable onToggle={toggle} />
       )}
 
       <div ref={sentinel} className="sentinel" />

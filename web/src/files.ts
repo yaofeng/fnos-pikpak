@@ -69,3 +69,29 @@ export function isVideo(f: FileItem): boolean {
   if (f.category === 'VIDEO') return true
   return (f.mime_type ?? '').startsWith('video/')
 }
+
+export type FileKind = 'folder' | 'video' | 'audio' | 'image' | 'archive' | 'doc' | 'other'
+
+const videoExtensions = ['mkv', 'mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm4v', 'mpg', 'mpeg']
+const archiveExtensions = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso']
+const docExtensions = ['pdf', 'txt', 'md', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'epub']
+
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase()
+}
+
+// fileKind decides which icon a row shows, the way fnOS 文件管理 picks icons:
+// the server's category and mime type first, then the extension.
+export function fileKind(f: FileItem): FileKind {
+  if (isFolder(f)) return 'folder'
+  if (isVideo(f)) return 'video'
+  const mime = f.mime_type ?? ''
+  if (mime.startsWith('audio/') || f.category === 'AUDIO') return 'audio'
+  if (mime.startsWith('image/') || f.category === 'IMAGE') return 'image'
+  const ext = extensionOf(f.name)
+  if (videoExtensions.includes(ext)) return 'video'
+  if (archiveExtensions.includes(ext)) return 'archive'
+  if (docExtensions.includes(ext)) return 'doc'
+  return 'other'
+}

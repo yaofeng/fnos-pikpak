@@ -1,9 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { apiGet, apiPatch, apiPost, type ApiError } from '../api'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
 import Player from '../components/Player'
+import {
+  ChevronLeft,
+  DownloadIcon,
+  FolderPlusIcon,
+  GridIcon,
+  ListIcon,
+  MoreIcon,
+  RefreshIcon,
+  SearchIcon,
+  SortIcon,
+  TrashIcon,
+  UploadIcon,
+} from '../components/icons'
 import { askPath, hostAvailable, pickFiles } from '../fnosSdk'
 import { cacheKeys, dropCachePrefix, readCache, writeCache } from '../listCache'
 import {
@@ -38,7 +51,7 @@ export default function Files() {
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
-  const [menu, setMenu] = useState<{ x: number; y: number; file: FileItem } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; file: FileItem | null } | null>(null)
   const [move, setMove] = useState<{ mode: 'move' | 'copy'; ids: string[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [playing, setPlaying] = useState<FileItem | null>(null)
@@ -286,29 +299,101 @@ export default function Files() {
 
   const selectedIds = [...selected]
 
+  function goUp() {
+    if (stack.length === 0) return
+    navigate(stack.length - 2)
+  }
+
+  // 更多 opens the same context menu at the button, with the actions that act
+  // on the current selection.
+  function openMore(e: MouseEvent<HTMLButtonElement>) {
+    const r = e.currentTarget.getBoundingClientRect()
+    setMenu({ x: r.left, y: r.bottom + 4, file: null })
+  }
+
   return (
     <section className="file-page">
-      <div className="file-toolbar">
-        <Breadcrumb stack={stack} onNavigate={navigate} onDropOn={handleDrop} />
-        <div className="file-tools">
+      <div className="fm-nav">
+        <button className="icon-btn" type="button" onClick={goUp} disabled={stack.length === 0} title="上一级" aria-label="上一级">
+          <ChevronLeft />
+        </button>
+        <button
+          className="icon-btn"
+          type="button"
+          onClick={() => void fetchPage('', true)}
+          disabled={loading}
+          title="刷新"
+          aria-label="刷新"
+        >
+          <RefreshIcon />
+        </button>
+        <div className="crumb-box">
+          <Breadcrumb stack={stack} onNavigate={navigate} onDropOn={handleDrop} />
+        </div>
+        <label className="fm-search">
+          <SearchIcon />
           <input
-            className="search"
             type="search"
             placeholder="在当前目录中筛选"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             title="PikPak 不支持服务端搜索，这里只筛选已加载的条目"
           />
-          <select value={kind} onChange={(e) => setKind(e.target.value as KindFilter)}>
+        </label>
+      </div>
+
+      <div className="fm-actions">
+        <button className="btn-icon" type="button" onClick={() => void uploadFiles()} disabled={busy}>
+          <UploadIcon />
+          上传
+        </button>
+        <button className="btn-icon" type="button" onClick={createFolder} disabled={busy}>
+          <FolderPlusIcon />
+          新建文件夹
+        </button>
+        <button
+          className="btn-icon"
+          type="button"
+          onClick={() => void download(selectedIds)}
+          disabled={busy || selectedIds.length === 0}
+        >
+          <DownloadIcon />
+          下载
+        </button>
+        <button
+          className="btn-icon"
+          type="button"
+          onClick={() => void trash(selectedIds)}
+          disabled={busy || selectedIds.length === 0}
+        >
+          <TrashIcon />
+          删除
+        </button>
+        <button className="btn-icon" type="button" onClick={openMore}>
+          <MoreIcon />
+          更多
+        </button>
+
+        <span className="fm-spacer" />
+
+        <label className="fm-pick">
+          <select value={kind} onChange={(e) => setKind(e.target.value as KindFilter)} aria-label="筛选">
             <option value="all">全部</option>
             <option value="folder">文件夹</option>
             <option value="file">文件</option>
           </select>
-          <select value={`${sortKey}:${sortDir}`} onChange={(e) => {
-            const [k, d] = e.target.value.split(':')
-            setSortKey(k as SortKey)
-            setSortDir(d as SortDir)
-          }}>
+        </label>
+        <label className="fm-pick">
+          <SortIcon />
+          <select
+            value={`${sortKey}:${sortDir}`}
+            onChange={(e) => {
+              const [k, d] = e.target.value.split(':')
+              setSortKey(k as SortKey)
+              setSortDir(d as SortDir)
+            }}
+            aria-label="排序"
+          >
             <option value="name:asc">名称 ↑</option>
             <option value="name:desc">名称 ↓</option>
             <option value="modified:desc">时间 ↓</option>
@@ -316,17 +401,25 @@ export default function Files() {
             <option value="size:desc">大小 ↓</option>
             <option value="size:asc">大小 ↑</option>
           </select>
-          <button type="button" onClick={() => setView(view === 'list' ? 'grid' : 'list')}>
-            {view === 'list' ? '网格' : '列表'}
+        </label>
+        <div className="segmented" role="group" aria-label="视图">
+          <button
+            type="button"
+            className={view === 'list' ? 'active' : ''}
+            onClick={() => setView('list')}
+            title="列表视图"
+            aria-label="列表视图"
+          >
+            <ListIcon />
           </button>
-          <button type="button" onClick={createFolder} disabled={busy}>
-            新建文件夹
-          </button>
-          <button type="button" onClick={() => void uploadFiles()} disabled={busy}>
-            上传
-          </button>
-          <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
-            刷新
+          <button
+            type="button"
+            className={view === 'grid' ? 'active' : ''}
+            onClick={() => setView('grid')}
+            title="网格视图"
+            aria-label="网格视图"
+          >
+            <GridIcon />
           </button>
         </div>
       </div>
@@ -367,6 +460,7 @@ export default function Files() {
         <FileTable
           items={shown}
           selected={selected}
+          selectable
           onToggle={toggle}
           onOpen={openFile}
           onMenu={(e, f) => {
@@ -400,39 +494,72 @@ export default function Files() {
 
       {menu && (
         <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
-          {isFolder(menu.file) && (
-            <button type="button" onClick={() => openFile(menu.file)}>
-              打开
-            </button>
+          {menu.file ? (
+            <>
+              {isFolder(menu.file) && (
+                <button type="button" onClick={() => openFile(menu.file!)}>
+                  打开
+                </button>
+              )}
+              <button type="button" onClick={() => void rename(menu.file!)}>
+                重命名
+              </button>
+              <button type="button" onClick={() => setMove({ mode: 'move', ids: [menu.file!.id] })}>
+                移动到…
+              </button>
+              <button type="button" onClick={() => setMove({ mode: 'copy', ids: [menu.file!.id] })}>
+                复制到…
+              </button>
+              {isVideo(menu.file) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlaying(menu.file!)
+                    setMenu(null)
+                  }}
+                >
+                  播放
+                </button>
+              )}
+              {!isFolder(menu.file) && (
+                <button type="button" onClick={() => void download([menu.file!.id])}>
+                  下载
+                </button>
+              )}
+              <button type="button" className="danger" onClick={() => void trash([menu.file!.id])}>
+                移入回收站
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={selectedIds.length === 0}
+                onClick={() => {
+                  setMenu(null)
+                  setMove({ mode: 'move', ids: selectedIds })
+                }}
+              >
+                移动到…
+              </button>
+              <button
+                type="button"
+                disabled={selectedIds.length === 0}
+                onClick={() => {
+                  setMenu(null)
+                  setMove({ mode: 'copy', ids: selectedIds })
+                }}
+              >
+                复制到…
+              </button>
+              <button type="button" onClick={() => setSelected(new Set(shown.map((f) => f.id)))}>
+                全选
+              </button>
+              <button type="button" onClick={() => setSelected(new Set())}>
+                取消选择
+              </button>
+            </>
           )}
-          <button type="button" onClick={() => void rename(menu.file)}>
-            重命名
-          </button>
-          <button type="button" onClick={() => setMove({ mode: 'move', ids: [menu.file.id] })}>
-            移动到…
-          </button>
-          <button type="button" onClick={() => setMove({ mode: 'copy', ids: [menu.file.id] })}>
-            复制到…
-          </button>
-          {isVideo(menu.file) && (
-            <button
-              type="button"
-              onClick={() => {
-                setPlaying(menu.file)
-                setMenu(null)
-              }}
-            >
-              播放
-            </button>
-          )}
-          {!isFolder(menu.file) && (
-            <button type="button" onClick={() => void download([menu.file.id])}>
-              下载
-            </button>
-          )}
-          <button type="button" className="danger" onClick={() => void trash([menu.file.id])}>
-            移入回收站
-          </button>
         </div>
       )}
 

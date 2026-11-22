@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet } from '../api'
-import { formatSize, isFolder, type FileItem } from '../files'
+import FileTable from '../components/FileTable'
+import { RefreshIcon } from '../components/icons'
 import { cacheKeys, readCache, writeCache } from '../listCache'
+import type { FileItem } from '../files'
 
 type Page = { items: FileItem[]; next_page_token: string }
 type CachedList = { items: FileItem[]; token: string }
@@ -62,41 +64,26 @@ export default function Recent() {
 
   return (
     <section>
-      <div className="file-toolbar">
-        <p className="muted small">最近添加来自 PikPak 的事件流，包含新增、恢复等操作。</p>
-        <div className="file-tools">
-          <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
-            刷新
-          </button>
+      <div className="fm-nav">
+        <div className="crumb-box">
+          <span className="fm-title">最近</span>
         </div>
+        <button
+          className="icon-btn"
+          type="button"
+          onClick={() => void fetchPage('', true)}
+          disabled={loading}
+          title="刷新"
+          aria-label="刷新"
+        >
+          <RefreshIcon />
+        </button>
       </div>
+      <p className="muted small">最近添加来自 PikPak 的事件流，包含新增、恢复等操作。</p>
+
       {error && <p className="error">{error}</p>}
       {!loading && items.length === 0 && !error && <p className="muted">暂无记录。</p>}
-      {items.length > 0 && (
-        <table className="file-table">
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th className="col-size">大小</th>
-              <th className="col-time">修改时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((f) => (
-              <tr key={f.id}>
-                <td>
-                  <span className="file-icon">{isFolder(f) ? '📁' : '📄'}</span>
-                  {f.name}
-                </td>
-                <td className="col-size muted">{isFolder(f) ? '—' : formatSize(f.size)}</td>
-                <td className="col-time muted">
-                  {f.modified_time ? new Date(f.modified_time).toLocaleString() : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {items.length > 0 && <FileTable items={items} />}
       <div ref={sentinel} className="sentinel" />
       {loading && <p className="muted">加载中…</p>}
     </section>
