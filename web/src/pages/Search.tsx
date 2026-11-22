@@ -181,6 +181,7 @@ export default function Search() {
           key={active.id}
           url={active.url}
           initialTitle={active.title}
+          initialPassCode={tabStates[active.id]?.passCode}
           onTitle={(title) => noteTabTitle(active.id, title)}
           onState={(state) => setTabStates((prev) => ({ ...prev, [active.id]: state }))}
         />

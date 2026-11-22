@@ -49,12 +49,16 @@ export default function ShareBrowser({
   url,
   favoriteId,
   initialTitle,
+  initialPassCode,
   onState,
   onTitle,
 }: {
   url?: string
   favoriteId?: number
   initialTitle?: string
+  // initialPassCode reopens a share whose tab was switched away: the code was
+  // already typed and accepted, so asking for it again would be churn.
+  initialPassCode?: string
   onState?: (state: ShareState) => void
   onTitle?: (title: string) => void
 }) {
@@ -89,6 +93,8 @@ export default function ShareBrowser({
   // must not reopen the share, so the fallback title lives in a ref too.
   const fallbackTitle = useRef(initialTitle)
   fallbackTitle.current = initialTitle
+  const rememberedCode = useRef(initialPassCode ?? '')
+  rememberedCode.current = initialPassCode ?? rememberedCode.current
 
   const open = useCallback(
     async (code: string) => {
@@ -133,8 +139,8 @@ export default function ShareBrowser({
   )
 
   useEffect(() => {
-    setPassCode('')
-    void open('')
+    setPassCode(rememberedCode.current)
+    void open(rememberedCode.current)
   }, [open])
 
   async function loadFolder(parentId: string) {
