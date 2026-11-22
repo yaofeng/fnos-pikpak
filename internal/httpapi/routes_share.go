@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -115,14 +116,20 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		now := time.Now()
 		t := playtoken.SignShare(deps.PlaySecret, id.UID, shareID, fileID, playTokenTTL, now)
 		escShare, escFile := url.PathEscape(shareID), url.PathEscape(fileID)
-		writeJSON(w, http.StatusOK, map[string]any{
+		out := map[string]any{
 			"file_id":      fileID,
 			"name":         link.Name,
 			"mime":         link.Mime,
 			"size":         link.Size,
 			"stream_url":   "/api/share/stream/" + escShare + "/" + escFile + "?t=" + t,
 			"download_url": "/api/share/download/" + escShare + "/" + escFile + "?t=" + t,
-		})
+		}
+		// IINA plays the share's own link; the proxy URL cannot be handed to
+		// an external player.
+		if videoPlayer(r.Context(), deps, id.UID) == "iina" {
+			out["direct_url"] = link.URL
+		}
+		writeJSON(w, http.StatusOK, out)
 	})
 
 	mux.HandleFunc("POST /api/share/restore", func(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +219,40 @@ func shareToken(w http.ResponseWriter, deps Deps, uid int, shareID string) (stri
 	return token, true
 }
 
+// migrateShareFavorites rewrites rows saved before links were parsed on add:
+// a favorite stored under a pasted link becomes its share id, with the code
+// re-sealed under the new key. The list is the only writer, so a read of
+// 分享收藏夹 is where historical data is tidied.
+func migrateShareFavorites(ctx context.Context, deps Deps, uid int, items []store.ShareFavorite) []store.ShareFavorite {
+	out := make([]store.ShareFavorite, 0, len(items))
+	for _, fav := range items {
+		shareID, fromLink, err := pikpak.ParseShareLink(fav.ShareID)
+		if err != nil || shareID == fav.ShareID {
+			out = append(out, fav)
+			continue
+		}
+		code := fromLink
+		if full, err := deps.Store.GetShareFavorite(ctx, uid, fav.ID); err == nil && full.PassCode != "" {
+			code = full.PassCode
+		}
+		title := fav.Title
+		if title == "" || title == fav.ShareID {
+			title = shareID
+		}
+		updated, err := deps.Store.MoveShareFavoriteShare(ctx, uid, fav.ID, shareID, title, code)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				continue // merged into a row that already had this share
+			}
+			out = append(out, fav)
+			continue
+		}
+		updated.PassCode = ""
+		out = append(out, updated)
+	}
+	return out
+}
+
 func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/share-favorites", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
@@ -220,6 +261,7 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusInternalServerError, "internal", "读取收藏失败")
 			return
 		}
+		items = migrateShareFavorites(r.Context(), deps, id.UID, items)
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	})
 

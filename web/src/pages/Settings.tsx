@@ -47,6 +47,17 @@ const playModeOptions = [
   { value: 'redirect', label: '跳转（省带宽，浏览器直连 CDN）' },
 ]
 
+const playerOptions = [
+  { value: 'builtin', label: '内置播放器（应用内）' },
+  { value: 'iina', label: 'IINA（仅 macOS，直接使用原始链接）' },
+]
+
+const tileSizeOptions = [
+  { value: 'small', label: '小（默认）' },
+  { value: 'medium', label: '中（1.5 倍）' },
+  { value: 'large', label: '大（2 倍）' },
+]
+
 const languageOptions = [
   { value: 'zh-CN', label: '中文' },
   { value: 'en', label: 'English' },
@@ -123,6 +134,9 @@ export default function Settings() {
         baseline.current.user = next
         if (next.language) {
           window.dispatchEvent(new CustomEvent('pikpak:language', { detail: next.language }))
+        }
+        if (next.tile_size) {
+          window.dispatchEvent(new CustomEvent('pikpak:tile-size', { detail: next.tile_size }))
         }
         notes.push('已保存')
       }
@@ -308,6 +322,33 @@ export default function Settings() {
           </select>
         </label>
         <p className="muted small">当前：{optionLabel(playModeOptions, userSettings.play_mode ?? 'proxy')}</p>
+
+        <label className="field">
+          <span>播放器</span>
+          <select value={userSettings.player ?? 'builtin'} onChange={(e) => editUser('player', e.target.value)}>
+            {playerOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          当前：{optionLabel(playerOptions, userSettings.player ?? 'builtin')}
+          。选 IINA 后，预览和完整播放直接把原始链接交给 IINA，不再每次询问；IINA 只在 macOS 上有效。
+        </p>
+
+        <label className="field">
+          <span>大图标尺寸</span>
+          <select value={userSettings.tile_size ?? 'small'} onChange={(e) => editUser('tile_size', e.target.value)}>
+            {tileSizeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">当前：{optionLabel(tileSizeOptions, userSettings.tile_size ?? 'small')}。作用于所有大图标视图。</p>
 
         <label className="field">
           <span>界面语言</span>

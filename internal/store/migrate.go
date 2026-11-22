@@ -132,4 +132,7 @@ CREATE INDEX idx_video_favorites_uid ON video_favorites(uid, created_at);
 	`
 ALTER TABLE share_favorites ADD COLUMN display_title TEXT NOT NULL DEFAULT '';
 `,
+	`
+ALTER TABLE video_favorites ADD COLUMN group_label TEXT NOT NULL DEFAULT '';
+`,
 }

@@ -12,6 +12,8 @@ export type VideoJob = {
   name?: string
   size?: number
   stream_url?: string
+  // Set only when 播放器 = IINA: the original CDN link for the external player.
+  direct_url?: string
 }
 
 export type WaitOptions = {

@@ -25,6 +25,10 @@ type videoPrepareResult struct {
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
 	StreamURL string `json:"stream_url"`
+	// DirectURL is the original CDN link, set only when the user chose IINA
+	// in 设置: an external player cannot reach the server's proxy, and the
+	// choice is theirs to make.
+	DirectURL string `json:"direct_url,omitempty"`
 }
 
 type videoJob struct {

@@ -56,7 +56,14 @@ var settingSpecs = map[string]settingSpec{
 	"upload_concurrency":   {def: "2", valid: intInRange(1, 4)},
 	"conflict":             {def: "rename", valid: oneOf("rename", "skip", "overwrite")},
 	"play_mode":            {def: "proxy", valid: oneOf("proxy", "redirect")},
-	"language":             {def: "zh-CN", valid: oneOf("zh-CN", "en")},
+	// player picks the macOS external player once, instead of asking on every
+	// play: builtin keeps 预览/完整播放 in the app, iina hands the original
+	// CDN link to IINA.
+	"player": {def: "builtin", valid: oneOf("builtin", "iina")},
+	// tile_size picks the icon view's tile: small is the fnOS default,
+	// medium is 1.5x and large 2x its width and height.
+	"tile_size": {def: "small", valid: oneOf("small", "medium", "large")},
+	"language":  {def: "zh-CN", valid: oneOf("zh-CN", "en")},
 	// Empty means "not set yet". Whether the directory may be written is a
 	// question only fnOS can answer, so it is checked separately.
 	"download_dir": {def: "", valid: func(s string) bool { return s == "" || filepath.IsAbs(s) }},

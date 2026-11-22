@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -265,5 +266,62 @@ func TestShareFavoritesPatch(t *testing.T) {
 	rec, cleared := patchJSON(t, h, "/api/share-favorites/"+id, "1000", `{"title":""}`)
 	if rec.Code != http.StatusOK || cleared["display_title"] != "" {
 		t.Fatalf("clear = %d %v", rec.Code, cleared)
+	}
+}
+
+func TestShareFileHandsIINATheDirectLink(t *testing.T) {
+	srv, media := shareUpstream(t)
+	deps, _ := newAuthTestDeps(t, srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	if rec, body := getJSON(t, h, "/api/share?url=VOabc123&pass_code=7f3a", "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("open: %d %v", rec.Code, body)
+	}
+	_, builtin := getJSON(t, h, "/api/share/file?share_id=VOabc123&file_id=sf2", "1000")
+	if _, ok := builtin["direct_url"]; ok {
+		t.Fatalf("builtin player got a direct link: %v", builtin["direct_url"])
+	}
+
+	if err := deps.Store.SetUserSetting(context.Background(), 1000, "player", "iina"); err != nil {
+		t.Fatalf("set player: %v", err)
+	}
+	_, body := getJSON(t, h, "/api/share/file?share_id=VOabc123&file_id=sf2", "1000")
+	if body["direct_url"] != media.URL+"/notes.pdf" {
+		t.Fatalf("direct_url = %v", body["direct_url"])
+	}
+}
+
+// Older favorites stored the pasted link; opening 分享收藏夹 rewrites the row
+// to the share id (keeping the sealed code) so every consumer sees an id.
+func TestShareFavoritesMigrateStoredLinksToShareIDs(t *testing.T) {
+	srv, _ := shareUpstream(t)
+	deps, _ := newAuthTestDeps(t, srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	stale, err := deps.Store.AddShareFavorite(context.Background(), 1000,
+		"https://mypikpak.com/s/VOabc123?pwd=7f3a", "", "7f3a")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, body := getJSON(t, h, "/api/share-favorites", "1000")
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", body["items"])
+	}
+	first := items[0].(map[string]any)
+	if first["share_id"] != "VOabc123" {
+		t.Fatalf("share_id = %v", first["share_id"])
+	}
+	if first["title"] != "VOabc123" {
+		t.Fatalf("title = %v", first["title"])
+	}
+	got, err := deps.Store.GetShareFavorite(context.Background(), 1000, stale.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ShareID != "VOabc123" || got.PassCode != "7f3a" {
+		t.Fatalf("migrated row = %+v", got)
 	}
 }

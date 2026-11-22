@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -11,16 +12,19 @@ import (
 // at rest so a later "完整播放" can open the share without asking again, and the
 // list path never decrypts it.
 type VideoFavorite struct {
-	ID          int64     `json:"id"`
-	UID         int       `json:"-"`
-	ShareID     string    `json:"share_id"`
-	FileID      string    `json:"file_id"`
-	Name        string    `json:"name"`
-	Size        int64     `json:"size"`
-	Owner       string    `json:"owner"`
-	ShareTitle  string    `json:"share_title"`
-	DisplayName string    `json:"display_name"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          int64  `json:"id"`
+	UID         int    `json:"-"`
+	ShareID     string `json:"share_id"`
+	FileID      string `json:"file_id"`
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	Owner       string `json:"owner"`
+	ShareTitle  string `json:"share_title"`
+	DisplayName string `json:"display_name"`
+	// GroupLabel groups a saved video under a local name instead of its
+	// sharing user; 视频收藏夹 lets the group be renamed and videos dragged.
+	GroupLabel string    `json:"group_label"`
+	CreatedAt  time.Time `json:"created_at"`
 
 	PassCode string `json:"-"`
 	encPass  []byte
@@ -62,7 +66,7 @@ ON CONFLICT(uid, share_id, file_id) DO UPDATE SET
 
 func (s *Store) videoFavoriteByKey(ctx context.Context, uid int, shareID, fileID string) (VideoFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND share_id = ? AND file_id = ?`, uid, shareID, fileID)
 	return scanVideoFavorite(row)
 }
@@ -91,7 +95,7 @@ WHERE uid = ? AND share_id = ? AND length(pass_code_enc) > 0 LIMIT 1`, uid, shar
 // ListVideoFavorites returns the user's saved videos, newest first.
 func (s *Store) ListVideoFavorites(ctx context.Context, uid int) ([]VideoFavorite, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 	if err != nil {
 		return nil, err
@@ -112,7 +116,7 @@ FROM video_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 // GetVideoFavorite returns one saved video with its pass code decrypted.
 func (s *Store) GetVideoFavorite(ctx context.Context, uid int, id int64) (VideoFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanVideoFavorite(row)
 	if err != nil {
@@ -144,7 +148,7 @@ func (s *Store) RenameVideoFavorite(ctx context.Context, uid int, id int64, name
 		return VideoFavorite{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanVideoFavorite(row)
 	if err != nil {
@@ -173,7 +177,7 @@ func scanVideoFavorite(row rowScanner) (VideoFavorite, error) {
 	var fav VideoFavorite
 	var created string
 	if err := row.Scan(&fav.ID, &fav.UID, &fav.ShareID, &fav.FileID, &fav.Name, &fav.Size,
-		&fav.Owner, &fav.ShareTitle, &fav.DisplayName, &fav.encPass, &created); err != nil {
+		&fav.Owner, &fav.ShareTitle, &fav.DisplayName, &fav.GroupLabel, &fav.encPass, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return VideoFavorite{}, ErrNotFound
 		}
@@ -181,4 +185,67 @@ func scanVideoFavorite(row rowScanner) (VideoFavorite, error) {
 	}
 	fav.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	return fav, nil
+}
+
+// VideoGroupKey is the group a saved video shows in when nothing local was
+// chosen: the sharing user, then the share title, then 未知分享. The browser
+// builds the same key, so group operations can name one.
+func VideoGroupKey(fav VideoFavorite) string {
+	if label := strings.TrimSpace(fav.GroupLabel); label != "" {
+		return "label:" + label
+	}
+	if owner := strings.TrimSpace(fav.Owner); owner != "" {
+		return "owner:" + owner
+	}
+	if title := strings.TrimSpace(fav.ShareTitle); title != "" {
+		return "title:" + title
+	}
+	return "unknown"
+}
+
+// MoveVideoFavoriteGroup files one saved video under a local group label.
+func (s *Store) MoveVideoFavoriteGroup(ctx context.Context, uid int, id int64, label string) (VideoFavorite, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE video_favorites SET group_label = ? WHERE uid = ? AND id = ?`, label, uid, id)
+	if err != nil {
+		return VideoFavorite{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return VideoFavorite{}, err
+	}
+	if n == 0 {
+		return VideoFavorite{}, ErrNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
+FROM video_favorites WHERE uid = ? AND id = ?`, uid, id)
+	fav, err := scanVideoFavorite(row)
+	if err != nil {
+		return VideoFavorite{}, err
+	}
+	fav.PassCode = ""
+	return fav, nil
+}
+
+// RenameVideoGroup gives every saved video currently grouped under fromKey a
+// local label, so the group shows the new name. It returns how many moved.
+func (s *Store) RenameVideoGroup(ctx context.Context, uid int, fromKey, label string) (int, error) {
+	items, err := s.ListVideoFavorites(ctx, uid)
+	if err != nil {
+		return 0, err
+	}
+	ids := make([]int64, 0, len(items))
+	for _, f := range items {
+		if VideoGroupKey(f) == fromKey {
+			ids = append(ids, f.ID)
+		}
+	}
+	for _, id := range ids {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE video_favorites SET group_label = ? WHERE uid = ? AND id = ?`, label, uid, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(ids), nil
 }

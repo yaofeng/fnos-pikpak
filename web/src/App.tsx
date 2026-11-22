@@ -34,6 +34,13 @@ type Account = {
   cached_at: string
 }
 
+// applyTileSize scales the icon view through one CSS variable; the option is
+// stored per fnOS user and read back on every load.
+function applyTileSize(size?: string) {
+  const value = size === 'medium' || size === 'large' ? size : 'small'
+  document.documentElement.dataset.tileSize = value
+}
+
 const navItems = [
   { to: '/files', key: 'nav.files' },
   { to: '/recent', key: 'nav.recent' },
@@ -111,20 +118,26 @@ export default function App() {
     return () => window.removeEventListener('pikpak:account-changed', load)
   }, [])
 
-  // The stored language belongs to the fnOS user; the browser's is only the
-  // starting guess.
+  // The stored language and tile size belong to the fnOS user; the browser
+  // only supplies the starting guess for the language.
   useEffect(() => {
     apiGet<Record<string, string>>('user-settings')
       .then((s) => {
         if (s.language === 'en' || s.language === 'zh-CN') setLanguage(s.language)
+        applyTileSize(s.tile_size)
       })
       .catch(() => undefined)
     const onLanguage = (e: Event) => {
       const detail = (e as CustomEvent<string>).detail
       if (detail === 'en' || detail === 'zh-CN') setLanguage(detail)
     }
+    const onTileSize = (e: Event) => applyTileSize((e as CustomEvent<string>).detail)
     window.addEventListener('pikpak:language', onLanguage)
-    return () => window.removeEventListener('pikpak:language', onLanguage)
+    window.addEventListener('pikpak:tile-size', onTileSize)
+    return () => {
+      window.removeEventListener('pikpak:language', onLanguage)
+      window.removeEventListener('pikpak:tile-size', onTileSize)
+    }
   }, [])
 
   const titleKey = Object.keys(titles).find((p) => location.pathname.startsWith(p))

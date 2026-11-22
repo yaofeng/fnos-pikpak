@@ -98,7 +98,7 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 			return videoPrepareResult{}, videoUpstreamMessage(err)
 		}
 		if existing, ok := findSameVideo(items, link.Name, link.Size); ok {
-			return signVideoResult(deps, uid, existing), nil
+			return finishedVideoResult(ctx, deps, client, uid, existing)
 		}
 	}
 
@@ -163,28 +163,76 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 	if err := waitTask(ctx, client, moveTask); err != nil {
 		return videoPrepareResult{}, err
 	}
-	return signVideoResult(deps, uid, restored), nil
+	return finishedVideoResult(ctx, deps, client, uid, restored)
+}
+
+// finishedVideoResult signs the proxy URL and, when 设置 says IINA, adds the
+// file's own CDN link so the external player never goes through the proxy.
+func finishedVideoResult(ctx context.Context, deps Deps, client *pikpak.Client, uid int, file pikpak.File) (videoPrepareResult, error) {
+	out := signVideoResult(deps, uid, file)
+	if videoPlayer(ctx, deps, uid) == "iina" {
+		link, err := client.GetDownloadLink(ctx, file.ID)
+		if err != nil {
+			return videoPrepareResult{}, videoUpstreamMessage(err)
+		}
+		if link.URL == "" {
+			return videoPrepareResult{}, errVideoNoLink
+		}
+		out.DirectURL = link.URL
+	}
+	return out, nil
 }
 
 // previewShareVideo signs the share's own stream URL: nothing is restored, so
 // the video plays straight from the share.
-func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (string, error) {
+func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (videoPreviewResult, error) {
 	client, err := deps.Sessions.ClientFor(ctx, uid)
 	if errors.Is(err, pikpak.ErrNotBound) {
-		return "", errNotBound
+		return videoPreviewResult{}, errNotBound
 	}
 	if err != nil {
-		return "", errSessionLoad
+		return videoPreviewResult{}, errSessionLoad
 	}
 	source, err := resolveVideoSource(ctx, deps, uid, req, client)
 	if err != nil {
-		return "", err
+		return videoPreviewResult{}, err
 	}
-	if _, err := client.GetShareFileLink(ctx, source.shareID, source.fileID, source.token); err != nil {
-		return "", videoUpstreamMessage(err)
+	link, err := client.GetShareFileLink(ctx, source.shareID, source.fileID, source.token)
+	if err != nil {
+		return videoPreviewResult{}, videoUpstreamMessage(err)
 	}
 	token := playtoken.SignShare(deps.PlaySecret, uid, source.shareID, source.fileID, playTokenTTL, time.Now())
-	return "/api/share/stream/" + url.PathEscape(source.shareID) + "/" + url.PathEscape(source.fileID) + "?t=" + token, nil
+	out := videoPreviewResult{
+		StreamURL: "/api/share/stream/" + url.PathEscape(source.shareID) + "/" + url.PathEscape(source.fileID) + "?t=" + token,
+	}
+	if videoPlayer(ctx, deps, uid) == "iina" {
+		out.DirectURL = link.URL
+	}
+	return out, nil
+}
+
+// videoPreviewResult is what 预览 answers: the proxy URL the built-in player
+// uses, and, for IINA, the share's own CDN link.
+type videoPreviewResult struct {
+	StreamURL string `json:"stream_url"`
+	DirectURL string `json:"direct_url,omitempty"`
+}
+
+// videoPlayer returns "iina" when the user chose IINA in 设置, else "builtin".
+func videoPlayer(ctx context.Context, deps Deps, uid int) string {
+	if deps.Store == nil {
+		return "builtin"
+	}
+	value := ""
+	if v, err := deps.Store.GetUserSetting(ctx, uid, "player"); err == nil {
+		value = v
+	} else if v, err := deps.Store.GetSetting(ctx, "player"); err == nil {
+		value = v
+	}
+	if value == "iina" {
+		return "iina"
+	}
+	return "builtin"
 }
 
 func resolveVideoSource(ctx context.Context, deps Deps, uid int, req videoPrepareRequest, client *pikpak.Client) (videoSource, error) {

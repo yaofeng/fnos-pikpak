@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { groupVideoFavorites, selectedFileIDs, type VideoFavorite } from './videoFavorites'
+import { groupKeyOf, groupVideoFavorites, selectedFileIDs, type VideoFavorite } from './videoFavorites'
 
 function fav(id: number, extra: Partial<VideoFavorite> = {}): VideoFavorite {
   return {
@@ -11,6 +11,7 @@ function fav(id: number, extra: Partial<VideoFavorite> = {}): VideoFavorite {
     owner: '',
     share_title: '',
     display_name: '',
+    group_label: '',
     created_at: '2026-11-20T10:00:00Z',
     ...extra,
   }
@@ -54,5 +55,22 @@ describe('selectedFileIDs', () => {
 
   test('is empty when nothing is picked', () => {
     expect(selectedFileIDs([]).size).toBe(0)
+  })
+})
+
+describe('local groups', () => {
+  test('an explicit group label wins over the sharing user', () => {
+    const groups = groupVideoFavorites([
+      fav(1, { owner: 'alice', group_label: '我的功夫片' }),
+      fav(2, { owner: 'alice' }),
+    ])
+    expect(groups.map((g) => g.label)).toEqual(['我的功夫片', 'alice'])
+  })
+
+  test('groupKeyOf names the group a video currently sits in', () => {
+    expect(groupKeyOf(fav(1, { group_label: '甲' }))).toBe('label:甲')
+    expect(groupKeyOf(fav(1, { owner: 'alice' }))).toBe('owner:alice')
+    expect(groupKeyOf(fav(1, { share_title: '资料' }))).toBe('title:资料')
+    expect(groupKeyOf(fav(1))).toBe('unknown')
   })
 })

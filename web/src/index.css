@@ -572,9 +572,23 @@ button.primary {
 
 /* Icon view of the Finder: no card per item, the selected name carries the
    blue highlight, the caption below it turns blue. */
+/* 大图标尺寸 is a per-user setting: small is the fnOS size, medium 1.5x and
+   large 2x, applied to the tile box, its image and its glyph. */
+:root {
+  --tile-scale: 1;
+}
+
+:root[data-tile-size='medium'] {
+  --tile-scale: 1.5;
+}
+
+:root[data-tile-size='large'] {
+  --tile-scale: 2;
+}
+
 .file-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(112px * var(--tile-scale, 1)), 1fr));
   gap: 4px;
   padding: 4px 0;
 }
@@ -608,12 +622,17 @@ button.primary {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 60px;
+  height: calc(60px * var(--tile-scale, 1));
+}
+
+.tile-icon svg {
+  width: calc(56px * var(--tile-scale, 1));
+  height: calc(56px * var(--tile-scale, 1));
 }
 
 .tile-thumb {
-  width: 96px;
-  height: 60px;
+  width: calc(96px * var(--tile-scale, 1));
+  height: calc(60px * var(--tile-scale, 1));
   object-fit: cover;
   border-radius: 6px;
 }
@@ -1420,6 +1439,11 @@ button.primary {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.vgroup-rename {
+  margin-left: 8px;
+  font-size: 12px;
 }
 
 .vgroup-head {

@@ -179,3 +179,38 @@ func scanShareFavorite(row rowScanner) (ShareFavorite, error) {
 	fav.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	return fav, nil
 }
+
+// MoveShareFavoriteShare rewrites a favorite saved under an old key — a
+// pasted link, from before links were parsed on add — to its share id, and
+// re-seals the code under the new key. When that share id is already
+// favorited the stale row is dropped and ErrNotFound returned.
+func (s *Store) MoveShareFavoriteShare(ctx context.Context, uid int, id int64, shareID, title, passCode string) (ShareFavorite, error) {
+	enc := []byte{}
+	var err error
+	if passCode != "" {
+		enc, err = Encrypt(s.key, sharePassAAD(uid, shareID), []byte(passCode))
+		if err != nil {
+			return ShareFavorite{}, err
+		}
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE share_favorites SET share_id = ?, title = ?,
+  pass_code_enc = CASE WHEN length(?) > 0 THEN ? ELSE pass_code_enc END
+WHERE uid = ? AND id = ?`, shareID, title, enc, enc, uid, id)
+	if err != nil {
+		// The share id is already favorited: the old row is redundant.
+		if _, delErr := s.db.ExecContext(ctx,
+			`DELETE FROM share_favorites WHERE uid = ? AND id = ?`, uid, id); delErr != nil {
+			return ShareFavorite{}, err
+		}
+		return ShareFavorite{}, ErrNotFound
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return ShareFavorite{}, err
+	}
+	if n == 0 {
+		return ShareFavorite{}, ErrNotFound
+	}
+	return s.shareFavoriteByShareID(ctx, uid, shareID)
+}

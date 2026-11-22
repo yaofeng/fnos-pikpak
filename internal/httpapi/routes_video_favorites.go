@@ -83,28 +83,75 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
 			return
 		}
+		// A missing field keeps what is stored; an empty string clears it
+		// (the original name, or the sharing user's group).
 		var body struct {
-			Name string `json:"name"`
+			Name       *string `json:"name"`
+			GroupLabel *string `json:"group_label"`
 		}
 		if err := decodeJSON(w, r, &body); err != nil {
 			return
 		}
-		name := strings.TrimSpace(body.Name)
-		if utf8.RuneCountInString(name) > 100 {
-			writeError(w, http.StatusBadRequest, "bad_name", "显示名太长")
-			return
-		}
 		id, _ := fnos.IdentityFrom(r.Context())
-		fav, err := deps.Store.RenameVideoFavorite(r.Context(), id.UID, favID, name)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "favorite_not_found", "收藏不存在")
+		var fav store.VideoFavorite
+		if body.Name != nil {
+			name := strings.TrimSpace(*body.Name)
+			if utf8.RuneCountInString(name) > 100 {
+				writeError(w, http.StatusBadRequest, "bad_name", "显示名太长")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", "重命名失败")
+			fav, err = deps.Store.RenameVideoFavorite(r.Context(), id.UID, favID, name)
+			if err != nil {
+				writeVideoFavoriteError(w, err, "重命名失败")
+				return
+			}
+		}
+		if body.GroupLabel != nil {
+			label := strings.TrimSpace(*body.GroupLabel)
+			if utf8.RuneCountInString(label) > 100 {
+				writeError(w, http.StatusBadRequest, "bad_name", "分组名太长")
+				return
+			}
+			fav, err = deps.Store.MoveVideoFavoriteGroup(r.Context(), id.UID, favID, label)
+			if err != nil {
+				writeVideoFavoriteError(w, err, "移动分组失败")
+				return
+			}
+		}
+		if body.Name == nil && body.GroupLabel == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "没有要修改的字段")
 			return
 		}
 		writeJSON(w, http.StatusOK, fav)
+	})
+
+	// Renaming a group is local: every saved video currently grouped under
+	// from_key gets the new label.
+	mux.HandleFunc("PATCH /api/video-favorites/groups", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			FromKey string `json:"from_key"`
+			Label   string `json:"label"`
+		}
+		if err := decodeJSON(w, r, &body); err != nil {
+			return
+		}
+		fromKey := strings.TrimSpace(body.FromKey)
+		label := strings.TrimSpace(body.Label)
+		if fromKey == "" || utf8.RuneCountInString(fromKey) > 200 {
+			writeError(w, http.StatusBadRequest, "bad_ids", "分组不存在")
+			return
+		}
+		if label == "" || utf8.RuneCountInString(label) > 100 {
+			writeError(w, http.StatusBadRequest, "bad_name", "分组名不能为空或太长")
+			return
+		}
+		id, _ := fnos.IdentityFrom(r.Context())
+		moved, err := deps.Store.RenameVideoGroup(r.Context(), id.UID, fromKey, label)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "重命名分组失败")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "moved": moved})
 	})
 
 	mux.HandleFunc("DELETE /api/video-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -124,4 +171,14 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+}
+
+// writeVideoFavoriteError maps the store's one sentinel onto the same 404 the
+// rename and move paths answer with.
+func writeVideoFavoriteError(w http.ResponseWriter, err error, fallback string) {
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "favorite_not_found", "收藏不存在")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal", fallback)
 }

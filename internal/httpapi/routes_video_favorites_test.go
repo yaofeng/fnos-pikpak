@@ -109,3 +109,34 @@ func TestVideoFavoriteInheritsTheShareFavoritePassCode(t *testing.T) {
 		t.Fatalf("pass code = %q, want the share favorite's", saved.PassCode)
 	}
 }
+
+// 视频收藏夹 lets a group be renamed and a video dragged into another one;
+// both are local display changes.
+func TestVideoFavoriteGroupsRenameAndMove(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := postJSON(t, h, "/api/video-favorites", "1000",
+		`{"share_id":"VOabc123","file_id":"sf2","name":"a.mp4","size":9,"owner":"bob"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add: %d %v", rec.Code, body)
+	}
+	id := strconv.FormatInt(int64(body["id"].(float64)), 10)
+
+	rec, moved := patchJSON(t, h, "/api/video-favorites/"+id, "1000", `{"group_label":"我的功夫片"}`)
+	if rec.Code != http.StatusOK || moved["group_label"] != "我的功夫片" {
+		t.Fatalf("move: %d %v", rec.Code, moved)
+	}
+
+	rec, out := patchJSON(t, h, "/api/video-favorites/groups", "1000",
+		`{"from_key":"label:我的功夫片","label":"朋友分享"}`)
+	if rec.Code != http.StatusOK || out["moved"] != float64(1) {
+		t.Fatalf("rename group: %d %v", rec.Code, out)
+	}
+	_, list := getJSON(t, h, "/api/video-favorites", "1000")
+	items, _ := list["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["group_label"] != "朋友分享" {
+		t.Fatalf("items = %v", list["items"])
+	}
+}

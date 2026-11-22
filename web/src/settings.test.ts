@@ -6,6 +6,8 @@ const all = {
   upload_concurrency: '2',
   conflict: 'skip',
   play_mode: 'redirect',
+  player: 'iina',
+  tile_size: 'medium',
   language: 'en',
   download_dir: '/vol1/media',
 }
@@ -21,6 +23,8 @@ describe('pickSettings', () => {
       'download_dir',
       'language',
       'play_mode',
+      'player',
+      'tile_size',
     ])
   })
 

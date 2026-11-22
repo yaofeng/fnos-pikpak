@@ -150,6 +150,14 @@ func (u *videoUpstream) handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]any{"phase": "PHASE_TYPE_COMPLETE"})
 	})
 
+	mux.HandleFunc("/drive/v1/files/", func(w http.ResponseWriter, r *http.Request) {
+		// A fresh direct link for one drive file (GetDownloadLink).
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":               strings.TrimPrefix(r.URL.Path, "/drive/v1/files/"),
+			"web_content_link": "https://cdn.example/direct.mp4",
+		})
+	})
+
 	mux.HandleFunc("/drive/v1/files", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var body struct {
@@ -495,5 +503,41 @@ func TestPrepareFindsTheVideoInsidePackFromShared(t *testing.T) {
 	}
 	if temp := up.children("f3"); len(temp) != 1 || temp[0]["id"] != "df1" {
 		t.Fatalf("temp folder = %v", temp)
+	}
+}
+
+// 播放器 = IINA is a global preference: the server hands the browser the
+// original CDN link so IINA never goes through the proxy.
+func TestPrepareHandsIINATheDirectLink(t *testing.T) {
+	deps, h, _ := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("f1", "我的视频"))
+		up.set("f1", folderEntry("f3", "临时"))
+	})
+	if err := deps.Store.SetUserSetting(context.Background(), 1000, "player", "iina"); err != nil {
+		t.Fatalf("set player: %v", err)
+	}
+	job := readyVideoJob(t, h, `{"share_id":"VOabc123","file_id":"sf2"}`)
+	if job["state"] != "ready" {
+		t.Fatalf("job = %v", job)
+	}
+	if job["direct_url"] != "https://cdn.example/direct.mp4" {
+		t.Fatalf("direct_url = %v", job["direct_url"])
+	}
+	if url, _ := job["stream_url"].(string); !strings.HasPrefix(url, "/api/stream/df1?t=") {
+		t.Fatalf("stream url = %v", job["stream_url"])
+	}
+}
+
+func TestPreviewHandsIINATheDirectLink(t *testing.T) {
+	deps, h, _ := newVideoEnv(t, nil)
+	if err := deps.Store.SetUserSetting(context.Background(), 1000, "player", "iina"); err != nil {
+		t.Fatalf("set player: %v", err)
+	}
+	rec, body := postJSON(t, h, "/api/videos/preview", "1000", `{"share_id":"VOabc123","file_id":"sf2"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview = %d %v", rec.Code, body)
+	}
+	if body["direct_url"] != "https://cdn.example/new.mp4" {
+		t.Fatalf("direct_url = %v", body["direct_url"])
 	}
 }

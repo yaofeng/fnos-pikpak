@@ -50,12 +50,12 @@ func registerVideoRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
-		streamURL, err := previewShareVideo(r.Context(), deps, id.UID, req)
+		got, err := previewShareVideo(r.Context(), deps, id.UID, req)
 		if err != nil {
 			writeVideoError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"stream_url": streamURL})
+		writeJSON(w, http.StatusOK, got)
 	})
 }
 

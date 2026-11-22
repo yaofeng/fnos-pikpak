@@ -11,6 +11,9 @@ export type VideoFavorite = {
   owner: string
   share_title: string
   display_name: string
+  // group_label files the video under a local group name instead of its
+  // sharing user; empty means "derive it from the share".
+  group_label: string
   created_at: string
 }
 
@@ -18,13 +21,25 @@ export type VideoFavoriteGroup = { key: string; label: string; items: VideoFavor
 
 const unknownLabel = '未知分享'
 
+// groupKeyOf names the group a saved video sits in. The server builds the
+// same key, so 重命名分组 can address one.
+export function groupKeyOf(item: VideoFavorite): string {
+  if (item.group_label.trim()) return 'label:' + item.group_label.trim()
+  if (item.owner.trim()) return 'owner:' + item.owner.trim()
+  if (item.share_title.trim()) return 'title:' + item.share_title.trim()
+  return 'unknown'
+}
+
 export function groupVideoFavorites(items: VideoFavorite[]): VideoFavoriteGroup[] {
   const groups: VideoFavoriteGroup[] = []
   const byKey = new Map<string, VideoFavoriteGroup>()
   for (const item of items) {
     let key: string
     let label: string
-    if (item.owner.trim()) {
+    if (item.group_label.trim()) {
+      key = 'label:' + item.group_label.trim()
+      label = item.group_label.trim()
+    } else if (item.owner.trim()) {
       key = 'owner:' + item.owner.trim()
       label = item.owner.trim()
     } else if (item.share_title.trim()) {

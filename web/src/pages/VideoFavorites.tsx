@@ -4,9 +4,9 @@ import Player from '../components/Player'
 import FileGrid from '../components/FileGrid'
 import { FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
 import { formatSize, thumbPath, type FileItem } from '../files'
-import { iinaURL, isMacOS } from '../iina'
+import { iinaURL } from '../iina'
 import { useFileSelection } from '../useFileSelection'
-import { groupVideoFavorites, selectedFileIDs, type VideoFavorite } from '../videoFavorites'
+import { groupKeyOf, groupVideoFavorites, selectedFileIDs, type VideoFavorite, type VideoFavoriteGroup } from '../videoFavorites'
 import { waitForVideoJob } from '../videoPrepare'
 
 type PlayTarget = { file_id: string; name: string; stream_url: string }
@@ -26,12 +26,11 @@ export default function VideoFavorites() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [playing, setPlaying] = useState<PlayTarget | null>(null)
-  // An external protocol needs a fresh user gesture after the async prepare,
-  // so macOS gets an explicit 用 IINA 播放 button. onFallback plays the same
-  // stream in the built-in player, for a Mac (or iPad) without IINA.
-  const [iinaPending, setIinaPending] = useState<{ url: string; name: string; onFallback: () => void } | null>(null)
   // 我的文件 opens in the large-icon view; 视频收藏夹 does the same.
   const [view, setView] = useState<'list' | 'grid'>('grid')
+  // A tile being dragged toward another group; drop files it under that
+  // group's local label.
+  const [dragging, setDragging] = useState<VideoFavorite | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -63,30 +62,31 @@ export default function VideoFavorites() {
     setItems((prev) => (prev ?? []).map((f) => (f.id === id ? { ...f, display_name: displayName } : f)))
   }
 
-  function absolute(path: string): string {
-    return window.location.origin + basePath + path
-  }
-
   function playInline(target: PlayTarget) {
-    setIinaPending(null)
     setNotice('')
     setPlaying(target)
+  }
+
+  // handToIINA opens the external player with the original link the server
+  // supplied for 播放器 = IINA; nothing goes through this app.
+  function handToIINA(directURL: string) {
+    window.location.href = iinaURL(directURL)
+    setNotice('已交给 IINA 打开；若没有打开，可能尚未安装 IINA（可在设置里改回内置播放器）')
   }
 
   async function preview(f: VideoFavorite) {
     setBusy('preview')
     setError('')
     setNotice('')
-    setIinaPending(null)
     try {
-      const got = await apiPost<{ stream_url: string }>('videos/preview', { video_favorite_id: f.id })
-      const target = { file_id: f.file_id, name: f.display_name || f.name, stream_url: got.stream_url }
-      if (isMacOS(navigator.userAgent)) {
-        setIinaPending({ url: absolute(got.stream_url), name: target.name, onFallback: () => playInline(target) })
-        setNotice('点「用 IINA 播放」开始预览')
-      } else {
-        playInline(target)
+      const got = await apiPost<{ stream_url: string; direct_url?: string }>('videos/preview', {
+        video_favorite_id: f.id,
+      })
+      if (got.direct_url) {
+        handToIINA(got.direct_url)
+        return
       }
+      playInline({ file_id: f.file_id, name: f.display_name || f.name, stream_url: got.stream_url })
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -98,28 +98,63 @@ export default function VideoFavorites() {
     setBusy('prepare')
     setError('')
     setNotice('正在把视频转存到「我的视频/临时」…')
-    setIinaPending(null)
     try {
       const started = await apiPost<{ job_id: string }>('videos/prepare', { video_favorite_id: f.id })
       const job = await waitForVideoJob(started.job_id, {
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
       if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
-      const target = {
+      if (job.direct_url) {
+        handToIINA(job.direct_url)
+        return
+      }
+      playInline({
         file_id: job.file_id || f.file_id,
         name: job.name || f.display_name || f.name,
         stream_url: job.stream_url,
-      }
-      if (isMacOS(navigator.userAgent)) {
-        setIinaPending({ url: absolute(job.stream_url), name: target.name, onFallback: () => playInline(target) })
-        setNotice('已准备好，点「用 IINA 播放」开始播放')
-      } else {
-        playInline(target)
-        setNotice('')
-      }
+      })
     } catch (err) {
       setError((err as Error).message)
       setNotice('')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  // Groups are local: renaming one labels every video in it, and dragging a
+  // video between groups writes its label. PikPak knows nothing about either.
+  async function renameGroup(group: VideoFavoriteGroup) {
+    const next = window.prompt('分组名称（仅本机显示）', group.label)
+    if (next === null) return
+    const label = next.trim()
+    if (!label || label === group.label) return
+    setBusy('group')
+    setError('')
+    try {
+      await apiPatch('video-favorites/groups', { from_key: group.key, label })
+      await load()
+      setNotice(`分组已改为「${label}」`)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function dropOnGroup(target: VideoFavoriteGroup) {
+    const fav = dragging
+    setDragging(null)
+    if (!fav || groupKeyOf(fav) === target.key) return
+    setBusy('group')
+    setError('')
+    try {
+      await apiPatch(`video-favorites/${fav.id}`, { group_label: target.label })
+      setItems((prev) =>
+        (prev ?? []).map((f) => (f.id === fav.id ? { ...f, group_label: target.label } : f)),
+      )
+      setNotice(`「${fav.display_name || fav.name}」已移到「${target.label}」`)
+    } catch (err) {
+      setError((err as Error).message)
     } finally {
       setBusy('')
     }
@@ -211,20 +246,6 @@ export default function VideoFavorites() {
 
       {notice && <p className="ok small">{notice}</p>}
 
-      {iinaPending && (
-        <p className="share-iina">
-          <button type="button" className="primary" onClick={() => { window.location.href = iinaURL(iinaPending.url) }}>
-            用 IINA 播放
-          </button>
-          <button type="button" onClick={iinaPending.onFallback}>
-            用内置播放器
-          </button>
-          <span className="muted small">
-            {iinaPending.name} · 若没有打开，可能尚未安装 IINA
-          </span>
-        </p>
-      )}
-
       {error && <p className="error">{error}</p>}
 
       {items === null || (loading && items.length === 0) ? (
@@ -237,10 +258,27 @@ export default function VideoFavorites() {
         </div>
       ) : view === 'grid' ? (
         groups.map((group) => (
-          <section className="vgroup" key={group.key}>
+          <section
+            className="vgroup"
+            key={group.key}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              void dropOnGroup(group)
+            }}
+          >
             <h3 className="vgroup-head">
               {group.label}
               <span className="muted small">{group.items.length} 个视频</span>
+              <button
+                type="button"
+                className="link vgroup-rename"
+                disabled={busy !== ''}
+                title="重命名这个分组（仅本机显示）"
+                onClick={() => void renameGroup(group)}
+              >
+                重命名
+              </button>
             </h3>
             <FileGrid
               items={group.items.map(toFileItem)}
@@ -257,7 +295,10 @@ export default function VideoFavorites() {
                 if (fav) void preview(fav)
               }}
               onMenu={() => undefined}
-              onDragStart={() => undefined}
+              onDragStart={(f) => {
+                const fav = group.items.find((g) => g.file_id === f.id)
+                if (fav) setDragging(fav)
+              }}
               onDropOn={() => undefined}
             />
           </section>
@@ -277,10 +318,26 @@ export default function VideoFavorites() {
           <tbody>
             {groups.map((group) => (
               <Fragment key={group.key}>
-                <tr className="vgroup-row">
+                <tr
+                  className="vgroup-row"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    void dropOnGroup(group)
+                  }}
+                >
                   <td colSpan={4}>
                     {group.label}
                     <span className="muted small"> · {group.items.length} 个视频</span>
+                    <button
+                      type="button"
+                      className="link vgroup-rename"
+                      disabled={busy !== ''}
+                      title="重命名这个分组（仅本机显示）"
+                      onClick={() => void renameGroup(group)}
+                    >
+                      重命名
+                    </button>
                   </td>
                 </tr>
                 {group.items.map((f) => (

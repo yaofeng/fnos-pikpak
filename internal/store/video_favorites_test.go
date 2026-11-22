@@ -128,3 +128,46 @@ func TestVideoFavoriteRefreshKeepsMetadataTheShareOmits(t *testing.T) {
 		t.Fatalf("refresh blanked metadata: %+v", again)
 	}
 }
+
+func TestVideoFavoriteGroupsMoveAndRename(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	aliceFav, err := s.AddVideoFavorite(ctx, 1000, videoFav("VOabc123", "sf2", "a.mp4", 9))
+	if err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
+	bob := videoFav("VOabc123", "sf3", "b.mp4", 9)
+	bob.Owner = "bob"
+	bobFav, err := s.AddVideoFavorite(ctx, 1000, bob)
+	if err != nil {
+		t.Fatalf("add bob: %v", err)
+	}
+
+	moved, err := s.MoveVideoFavoriteGroup(ctx, 1000, aliceFav.ID, "我的功夫片")
+	if err != nil || moved.GroupLabel != "我的功夫片" {
+		t.Fatalf("move = %+v err=%v", moved, err)
+	}
+	if _, err := s.MoveVideoFavoriteGroup(ctx, 2000, aliceFav.ID, "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user's move: %v", err)
+	}
+
+	n, err := s.RenameVideoGroup(ctx, 1000, "owner:bob", "朋友分享")
+	if err != nil || n != 1 {
+		t.Fatalf("rename group = %d err=%v", n, err)
+	}
+	list, err := s.ListVideoFavorites(ctx, 1000)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[int64]VideoFavorite{}
+	for _, f := range list {
+		byID[f.ID] = f
+	}
+	if byID[aliceFav.ID].GroupLabel != "我的功夫片" {
+		t.Fatalf("alice after rename = %+v", byID[aliceFav.ID])
+	}
+	if byID[bobFav.ID].GroupLabel != "朋友分享" {
+		t.Fatalf("bob after rename = %+v", byID[bobFav.ID])
+	}
+}

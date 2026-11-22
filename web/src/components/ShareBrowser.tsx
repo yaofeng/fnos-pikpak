@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
-import { iinaURL, isMacOS } from '../iina'
+import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
 import { useFileSelection } from '../useFileSelection'
@@ -44,6 +44,9 @@ type ShareFileUrls = {
   size: number
   stream_url: string
   download_url: string
+  // Set only when 播放器 = IINA: the share's own CDN link for the external
+  // player.
+  direct_url?: string
 }
 
 type Crumb = { id: string; name: string }
@@ -88,15 +91,6 @@ export default function ShareBrowser({
   const [playing, setPlaying] = useState<FileItem | null>(null)
   // directPlay carries a prepared copy's signed URL straight into the player.
   const [directPlay, setDirectPlay] = useState<{ file_id: string; name: string; stream_url: string } | null>(null)
-  // iinaPending is a signed URL waiting for the click that opens IINA: an
-  // external protocol needs a fresh user gesture after the async prepare.
-  // onFallback plays the same stream in the built-in player, for a Mac (or
-  // iPad) without IINA installed.
-  const [iinaPending, setIinaPending] = useState<{
-    url: string
-    name: string
-    onFallback: () => void
-  } | null>(null)
   const [favorited, setFavorited] = useState(false)
 
   // The toolbars follow 我的文件: a local filter, a sort key, and the view.
@@ -201,10 +195,11 @@ export default function ShareBrowser({
     else void preview(f)
   }
 
-  // absoluteURL turns a server path such as /api/stream/f1?t=… into the URL an
-  // external player has to be handed.
-  function absoluteURL(path: string): string {
-    return window.location.origin + basePath + path
+  // handToIINA opens the external player with the original link the server
+  // supplied for 播放器 = IINA. Nothing is proxied through this app.
+  function handToIINA(directURL: string) {
+    window.location.href = iinaURL(directURL)
+    setNotice('已交给 IINA 打开；若没有打开，可能尚未安装 IINA（可在设置里改回内置播放器）')
   }
 
   // preview plays the share's own stream: nothing is restored.
@@ -213,26 +208,16 @@ export default function ShareBrowser({
       enter(f)
       return
     }
-    if (!isMacOS(navigator.userAgent)) {
-      setPlaying(f)
-      return
-    }
     setError('')
-    setIinaPending(null)
     try {
       const got = await apiGet<ShareFileUrls>(
         `share/file?share_id=${encodeURIComponent(shareId)}&file_id=${encodeURIComponent(f.id)}`,
       )
-      setIinaPending({
-        url: absoluteURL(got.stream_url),
-        name: f.name,
-        onFallback: () => {
-          setIinaPending(null)
-          setNotice('')
-          setPlaying(f)
-        },
-      })
-      setNotice('点「用 IINA 播放」开始预览')
+      if (got.direct_url) {
+        handToIINA(got.direct_url)
+        return
+      }
+      setPlaying(f)
     } catch (err) {
       if (err instanceof ApiError && err.code === 'share_session_missing') void open(passCode)
       else setError((err as Error).message)
@@ -274,7 +259,6 @@ export default function ShareBrowser({
     setBusy('prepare')
     setError('')
     setNotice('正在把视频转存到「我的视频/临时」…')
-    setIinaPending(null)
     try {
       const started = await apiPost<{ job_id: string }>('videos/prepare', {
         share_id: shareId,
@@ -284,26 +268,16 @@ export default function ShareBrowser({
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
       if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
-      const direct = {
+      if (job.direct_url) {
+        handToIINA(job.direct_url)
+        return
+      }
+      setDirectPlay({
         file_id: job.file_id || f.id,
         name: job.name || f.name,
         stream_url: job.stream_url,
-      }
-      if (isMacOS(navigator.userAgent)) {
-        setIinaPending({
-          url: absoluteURL(job.stream_url),
-          name: direct.name,
-          onFallback: () => {
-            setIinaPending(null)
-            setNotice('')
-            setDirectPlay(direct)
-          },
-        })
-        setNotice('已准备好，点「用 IINA 播放」开始播放')
-      } else {
-        setDirectPlay(direct)
-        setNotice('')
-      }
+      })
+      setNotice('')
     } catch (err) {
       setError((err as Error).message)
       setNotice('')
@@ -367,26 +341,6 @@ export default function ShareBrowser({
 
   return (
     <section className="share-browser">
-      {iinaPending && (
-        <p className="share-iina">
-          <button
-            type="button"
-            className="primary"
-            onClick={() => {
-              window.location.href = iinaURL(iinaPending.url)
-            }}
-          >
-            用 IINA 播放
-          </button>
-          <button type="button" onClick={iinaPending.onFallback}>
-            用内置播放器
-          </button>
-          <span className="muted small">
-            {iinaPending.name} · 若没有打开，可能尚未安装 IINA
-          </span>
-        </p>
-      )}
-
       {needPass ? (
         <form
           className="share-pass"
