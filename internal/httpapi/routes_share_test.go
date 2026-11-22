@@ -40,6 +40,7 @@ func shareUpstream(t *testing.T) (*httptest.Server, *httptest.Server) {
 				"share_status":    status,
 				"pass_code_token": "tok-1",
 				"title":           "大模型资料",
+				"share_creator":   map[string]any{"name": "张三"},
 				"files": []map[string]any{
 					{"id": "sf1", "parent_id": "", "name": "资料", "kind": "drive#folder"},
 					{"id": "sf2", "parent_id": "", "name": "notes.pdf", "kind": "drive#file", "size": "9"},
@@ -93,6 +94,9 @@ func TestShareOpenAsksForThePassCodeThenKeepsTheTokenServerSide(t *testing.T) {
 	}
 	if body["title"] != "大模型资料" || body["protected"] != true {
 		t.Fatalf("body = %v", body)
+	}
+	if body["owner"] != "张三" {
+		t.Fatalf("owner = %v", body["owner"])
 	}
 	items, _ := body["items"].([]any)
 	if len(items) != 2 {

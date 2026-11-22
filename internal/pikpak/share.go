@@ -27,6 +27,7 @@ var (
 type ShareInfo struct {
 	ShareID       string
 	Title         string
+	Owner         string
 	PassCodeToken string
 	Files         []File
 	NextPageToken string
@@ -93,6 +94,13 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 		PassCodeToken string `json:"pass_code_token"`
 		Files         []File `json:"files"`
 		NextPageToken string `json:"next_page_token"`
+		ShareCreator  struct {
+			Name     string `json:"name"`
+			UserName string `json:"user_name"`
+		} `json:"share_creator"`
+		Creator struct {
+			Name string `json:"name"`
+		} `json:"creator"`
 	}
 	if err := c.do(ctx, http.MethodGet, u, nil, &raw); err != nil {
 		return ShareInfo{}, err
@@ -109,10 +117,20 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 	return ShareInfo{
 		ShareID:       shareID,
 		Title:         raw.Title,
+		Owner:         firstNonEmpty(raw.ShareCreator.Name, raw.Creator.Name, raw.ShareCreator.UserName),
 		PassCodeToken: raw.PassCodeToken,
 		Files:         raw.Files,
 		NextPageToken: raw.NextPageToken,
 	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ListShareFiles browses one folder of an opened share. parentID "" is the
@@ -214,12 +232,19 @@ func (c *Client) GetShareFileLink(ctx context.Context, shareID, fileID, passToke
 	}, nil
 }
 
-// RestoreShare saves the selected share files into the user's own drive root.
-func (c *Client) RestoreShare(ctx context.Context, shareID, passToken string, fileIDs []string) error {
+// RestoreShare saves the selected share files into the user's own drive root
+// and returns the task id a caller can wait on.
+func (c *Client) RestoreShare(ctx context.Context, shareID, passToken string, fileIDs []string) (string, error) {
 	u := c.BaseDrive + "/drive/v1/share/restore"
-	return c.do(ctx, http.MethodPost, u, map[string]any{
+	var out struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := c.do(ctx, http.MethodPost, u, map[string]any{
 		"share_id":        shareID,
 		"pass_code_token": passToken,
 		"file_ids":        fileIDs,
-	}, nil)
+	}, &out); err != nil {
+		return "", err
+	}
+	return out.TaskID, nil
 }

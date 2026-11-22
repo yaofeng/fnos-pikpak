@@ -59,6 +59,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"share_id":        shareID,
 			"title":           title,
+			"owner":           info.Owner,
 			"protected":       passCode != "",
 			"items":           nonNilFiles(info.Files),
 			"next_page_token": info.NextPageToken,
@@ -145,7 +146,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		if err := client.RestoreShare(r.Context(), shareID, token, body.FileIDs); err != nil {
+		if _, err := client.RestoreShare(r.Context(), shareID, token, body.FileIDs); err != nil {
 			writeUpstreamError(w, err)
 			return
 		}

@@ -159,7 +159,7 @@ func TestRestoreSharePostsTheSelectedFiles(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
 
-	if err := c.RestoreShare(context.Background(), "VOabc123", "tok-1", []string{"sf2", "sf3"}); err != nil {
+	if _, err := c.RestoreShare(context.Background(), "VOabc123", "tok-1", []string{"sf2", "sf3"}); err != nil {
 		t.Fatalf("RestoreShare: %v", err)
 	}
 	if gotPath != "/drive/v1/share/restore" {
@@ -171,5 +171,53 @@ func TestRestoreSharePostsTheSelectedFiles(t *testing.T) {
 	ids, _ := body["file_ids"].([]any)
 	if len(ids) != 2 || ids[0] != "sf2" {
 		t.Fatalf("file_ids = %v", body["file_ids"])
+	}
+}
+
+func TestShareReportsItsCreator(t *testing.T) {
+	cases := []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{"share_creator name", map[string]any{"share_creator": map[string]any{"name": "张三"}}, "张三"},
+		{"creator name", map[string]any{"creator": map[string]any{"name": "李四"}}, "李四"},
+		{"share_creator user_name", map[string]any{"share_creator": map[string]any{"user_name": "wangwu"}}, "wangwu"},
+		{"missing", map[string]any{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tc.body["share_status"] = "OK"
+				tc.body["pass_code_token"] = "tok-1"
+				_ = json.NewEncoder(w).Encode(tc.body)
+			}))
+			t.Cleanup(srv.Close)
+			c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+
+			info, err := c.GetShare(context.Background(), "VOabc123", "")
+			if err != nil {
+				t.Fatalf("GetShare: %v", err)
+			}
+			if info.Owner != tc.want {
+				t.Fatalf("owner = %q, want %q", info.Owner, tc.want)
+			}
+		})
+	}
+}
+
+func TestRestoreShareReturnsTheTaskID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"task_id": "t1"})
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+
+	taskID, err := c.RestoreShare(context.Background(), "VOabc123", "tok-1", []string{"sf2"})
+	if err != nil {
+		t.Fatalf("RestoreShare: %v", err)
+	}
+	if taskID != "t1" {
+		t.Fatalf("task id = %q", taskID)
 	}
 }
