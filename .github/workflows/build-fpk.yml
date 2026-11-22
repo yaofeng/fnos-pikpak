@@ -54,8 +54,16 @@ jobs:
           chmod +x tools/bin/fnpack
           tools/bin/fnpack --help > /dev/null
 
+      # The frontend is embedded into the binary, so it must exist before any
+      # go build or go test; a fresh checkout only carries a placeholder.
+      - name: Build frontend
+        run: make web
+
       - name: Run tests
         run: go test ./...
+
+      - name: Build everything
+        run: go build ./...
 
       - name: Write developer certificate
         # secrets are not available in `if`; expose presence through env

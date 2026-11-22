@@ -18,6 +18,12 @@ var (
 	ErrSizeMismatch      = errors.New("transfer: downloaded size does not match the file")
 	ErrInsufficientSpace = errors.New("transfer: not enough free space")
 	ErrLinkExpired       = errors.New("transfer: download link expired")
+	// ErrDirRejected is a directory the guard will not accept; the worker
+	// re-checks before touching the disk so a folder swapped after the job was
+	// accepted cannot redirect the write.
+	ErrDirRejected = errors.New("transfer: destination directory is not allowed")
+	// ErrUnsafePath means a symlink sits where a plain file must be.
+	ErrUnsafePath = errors.New("transfer: refusing to follow a symlink at the destination")
 )
 
 const (
@@ -53,6 +59,10 @@ type Downloader struct {
 	// OnProgress is called while bytes arrive, throttled to roughly every
 	// 4 MiB or 2 seconds.
 	OnProgress func(downloaded int64)
+	// CheckDir re-validates the destination directory at write time. The job
+	// was checked when it was created; this catches a folder swapped for a
+	// symlink (or a grant revoked) in between.
+	CheckDir func(dir string) error
 }
 
 func (d *Downloader) client() *http.Client {
@@ -74,6 +84,11 @@ func statfsFree(dir string) (int64, error) {
 }
 
 func (d *Downloader) Run(ctx context.Context, job *store.DownloadJob) error {
+	if d.CheckDir != nil {
+		if err := d.CheckDir(filepath.Dir(job.DestPath)); err != nil {
+			return ErrDirRejected
+		}
+	}
 	if job.Size > 0 {
 		free, err := freeBytes(filepath.Dir(job.DestPath))
 		if err != nil {
@@ -86,8 +101,15 @@ func (d *Downloader) Run(ctx context.Context, job *store.DownloadJob) error {
 
 	part := job.DestPath + partSuffix
 	offset := int64(0)
-	if st, err := os.Stat(part); err == nil {
+	// Lstat, not Stat: a symlink at the part path would otherwise send the
+	// write wherever it points.
+	if st, err := os.Lstat(part); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return ErrUnsafePath
+		}
 		offset = st.Size()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	if job.Size > 0 && offset > job.Size {
 		// A stale part file larger than the file cannot be resumed.
@@ -109,7 +131,7 @@ func (d *Downloader) Run(ctx context.Context, job *store.DownloadJob) error {
 		job.Size = link.Size
 	}
 
-	f, err := os.OpenFile(part, os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(part, os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {
 		return err
 	}

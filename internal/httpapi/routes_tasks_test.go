@@ -26,16 +26,19 @@ type tasksEnv struct {
 func newTasksEnv(t *testing.T, quota bool) *tasksEnv {
 	t.Helper()
 	env := &tasksEnv{}
+	// The upstream keeps a task list so a delete actually shrinks it; a fixed
+	// answer would make the clear loop spin until its round cap.
+	live := []map[string]any{
+		{"id": "t1", "phase": "PHASE_TYPE_RUNNING", "progress": 30, "file_name": "a.mkv", "file_size": "10"},
+		{"id": "t2", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "b.mkv", "file_size": "20"},
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /drive/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		env.listQuery = map[string]string{}
 		for k := range r.URL.Query() {
 			env.listQuery[k] = r.URL.Query().Get(k)
 		}
-		_, _ = io.WriteString(w, `{"tasks":[
-			{"id":"t1","phase":"PHASE_TYPE_RUNNING","progress":30,"file_name":"a.mkv","file_size":"10"},
-			{"id":"t2","phase":"PHASE_TYPE_COMPLETE","progress":100,"file_name":"b.mkv","file_size":"20"}
-		],"next_page_token":"n1"}`)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tasks": live, "next_page_token": "n1"})
 	})
 	mux.HandleFunc("POST /drive/v1/tasks:clear", func(w http.ResponseWriter, r *http.Request) {
 		env.clearCalled = true
@@ -58,6 +61,17 @@ func newTasksEnv(t *testing.T, quota bool) *tasksEnv {
 		for k := range r.URL.Query() {
 			env.deleteQuery[k] = r.URL.Query().Get(k)
 		}
+		drop := map[string]bool{}
+		for _, id := range strings.Split(r.URL.Query().Get("task_ids"), ",") {
+			drop[id] = true
+		}
+		kept := live[:0]
+		for _, task := range live {
+			if !drop[task["id"].(string)] {
+				kept = append(kept, task)
+			}
+		}
+		live = kept
 		_, _ = io.WriteString(w, `{}`)
 	})
 
@@ -176,13 +190,28 @@ func TestDeleteTasksForwardsIDsAndDeleteFiles(t *testing.T) {
 	}
 }
 
-func TestClearTasks(t *testing.T) {
+func TestClearTasksDeletesOnlyFinishedOnes(t *testing.T) {
 	env := newTasksEnv(t, false)
 	h := NewMux(env.deps)
 
 	rec, body := postJSON(t, h, "/api/tasks/clear", "1000", `{}`)
-	if rec.Code != http.StatusOK || !env.clearCalled {
-		t.Fatalf("status = %d body=%v clear=%v", rec.Code, body, env.clearCalled)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	if body["deleted"] != float64(1) {
+		t.Fatalf("deleted = %v", body["deleted"])
+	}
+	if env.deleteQuery["task_ids"] != "t2" {
+		t.Fatalf("task_ids = %q", env.deleteQuery["task_ids"])
+	}
+	// The running task is still there.
+	_, after := getJSON(t, h, "/api/tasks", "1000")
+	items, _ := after["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("tasks after clear = %v", items)
+	}
+	if first, _ := items[0].(map[string]any); first["id"] != "t1" {
+		t.Fatalf("surviving task = %v", first)
 	}
 }
 

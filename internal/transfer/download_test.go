@@ -241,3 +241,68 @@ func TestRunHonorsCancellation(t *testing.T) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
+
+func TestRunRefusesSymlinkedPartFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "0123456789")
+	}))
+	defer srv.Close()
+
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	job := testJob(t, 10)
+	part := job.DestPath + partSuffix
+	if err := os.Symlink(outside, part); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Downloader{Links: staticLink(srv.URL, 10)}
+	if err := d.Run(context.Background(), &job); err == nil {
+		t.Fatal("Run followed a symlinked part file")
+	}
+	if got, _ := os.ReadFile(outside); string(got) != "keep me" {
+		t.Fatalf("outside file was written through the symlink: %q", got)
+	}
+}
+
+func TestRunRefusesDirectoryTheGuardRejects(t *testing.T) {
+	job := testJob(t, 10)
+	d := &Downloader{
+		Links:    staticLink("http://127.0.0.1:1", 10),
+		CheckDir: func(string) error { return ErrDirRejected },
+	}
+	err := d.Run(context.Background(), &job)
+	if !errors.Is(err, ErrDirRejected) {
+		t.Fatalf("err = %v, want the guard's refusal", err)
+	}
+	if _, err := os.Stat(job.DestPath + partSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a part file was created despite the refusal")
+	}
+}
+
+func TestRunReplacesSymlinkAtDestinationWithoutFollowingIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "0123456789")
+	}))
+	defer srv.Close()
+
+	job := testJob(t, 10)
+	target := filepath.Join(t.TempDir(), "not-created")
+	if err := os.Symlink(target, job.DestPath); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Downloader{Links: staticLink(srv.URL, 10)}
+	if err := d.Run(context.Background(), &job); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Rename replaces the link itself; the bytes never land on its target.
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the symlink target was written")
+	}
+	if got, _ := os.ReadFile(job.DestPath); string(got) != "0123456789" {
+		t.Fatalf("content = %q", got)
+	}
+}

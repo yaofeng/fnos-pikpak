@@ -107,8 +107,8 @@ export default function Tasks() {
     if (!window.confirm('清理所有已结束的任务记录？已下载的文件会保留。')) return
     setBusy('clear')
     try {
-      await apiPost('tasks/clear', {})
-      setNotice('已清理结束的任务')
+      const res = await apiPost<{ deleted?: number }>('tasks/clear', {})
+      setNotice(res.deleted ? `已清理 ${res.deleted} 个已结束任务` : '没有需要清理的已结束任务')
       await load()
     } catch (e) {
       setError((e as Error).message)

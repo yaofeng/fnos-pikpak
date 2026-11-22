@@ -40,8 +40,11 @@ type Queue struct {
 	// tests inject fakes.
 	NewDownloader func(uid int) (*Downloader, error)
 	NewUploader   func(uid int) (*Uploader, error)
-	MaxGlobal     int
-	Tick          time.Duration
+	// CheckDir re-validates a destination directory at write time; the API
+	// checked it when the job was created.
+	CheckDir  func(ctx context.Context, uid int, dir string) error
+	MaxGlobal int
+	Tick      time.Duration
 
 	mu      sync.Mutex
 	running map[string]*runState
@@ -250,6 +253,10 @@ func (q *Queue) downloader(uid int, job *store.DownloadJob) (*Downloader, error)
 		return nil, err
 	}
 	d := &Downloader{Links: ClientLinks{C: client}}
+	if q.CheckDir != nil {
+		uid := job.UID
+		d.CheckDir = func(dir string) error { return q.CheckDir(context.Background(), uid, dir) }
+	}
 	d.OnProgress = func(n int64) {
 		job.Downloaded = n
 		_ = q.Store.PutDownloadJob(context.Background(), *job)

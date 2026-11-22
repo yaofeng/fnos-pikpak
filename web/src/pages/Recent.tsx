@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet } from '../api'
 import { formatSize, isFolder, type FileItem } from '../files'
+import { cacheKeys, readCache, writeCache } from '../listCache'
 
 type Page = { items: FileItem[]; next_page_token: string }
+type CachedList = { items: FileItem[]; token: string }
 
 export default function Recent() {
   const [items, setItems] = useState<FileItem[]>([])
@@ -10,6 +12,7 @@ export default function Recent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const reqId = useRef(0)
+  const itemsRef = useRef<FileItem[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
 
   const fetchPage = useCallback(async (pageToken: string, reset: boolean) => {
@@ -20,8 +23,12 @@ export default function Recent() {
       const params = pageToken ? `recent?page_token=${encodeURIComponent(pageToken)}` : 'recent'
       const page = await apiGet<Page>(params)
       if (id !== reqId.current) return
-      setItems((prev) => (reset ? page.items : [...prev, ...page.items]))
-      setToken(page.next_page_token || '')
+      const nextItems = reset ? page.items : [...itemsRef.current, ...page.items]
+      itemsRef.current = nextItems
+      const nextToken = page.next_page_token || ''
+      setItems(nextItems)
+      setToken(nextToken)
+      writeCache<CachedList>(cacheKeys.recent(), { items: nextItems, token: nextToken })
     } catch (e) {
       if (id === reqId.current) setError((e as Error).message)
     } finally {
@@ -30,6 +37,13 @@ export default function Recent() {
   }, [])
 
   useEffect(() => {
+    const cached = readCache<CachedList>(cacheKeys.recent())
+    if (cached) {
+      itemsRef.current = cached.items
+      setItems(cached.items)
+      setToken(cached.token)
+      return
+    }
     void fetchPage('', true)
   }, [fetchPage])
 
@@ -48,7 +62,14 @@ export default function Recent() {
 
   return (
     <section>
-      <p className="muted small">最近添加来自 PikPak 的事件流，包含新增、恢复等操作。</p>
+      <div className="file-toolbar">
+        <p className="muted small">最近添加来自 PikPak 的事件流，包含新增、恢复等操作。</p>
+        <div className="file-tools">
+          <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
+            刷新
+          </button>
+        </div>
+      </div>
       {error && <p className="error">{error}</p>}
       {!loading && items.length === 0 && !error && <p className="muted">暂无记录。</p>}
       {items.length > 0 && (

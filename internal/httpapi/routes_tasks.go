@@ -99,11 +99,12 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		if err := client.ClearTasks(r.Context()); err != nil {
+		deleted, err := client.ClearFinishedTasks(r.Context())
+		if err != nil {
 			writeUpstreamError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 	})
 }
 

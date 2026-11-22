@@ -54,11 +54,30 @@ func spaHandler() http.Handler {
 		panic(err)
 	}
 	fileServer := http.FileServer(http.FS(root))
+	_, indexErr := fs.Stat(root, "index.html")
+
+	// serveDocument answers with the SPA shell (or the builder hint when no
+	// frontend has been built into this binary).
+	serveDocument := func(w http.ResponseWriter, r *http.Request) {
+		if indexErr == nil {
+			r = r.Clone(r.Context())
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(webdist.Fallback)
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if p == "" {
 			p = "index.html"
+		}
+		if p == "index.html" {
+			serveDocument(w, r)
+			return
 		}
 		if st, err := fs.Stat(root, p); err == nil && !st.IsDir() {
 			fileServer.ServeHTTP(w, r)
@@ -70,8 +89,6 @@ func spaHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		r = r.Clone(r.Context())
-		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		serveDocument(w, r)
 	})
 }

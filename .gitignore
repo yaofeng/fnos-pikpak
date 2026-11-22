@@ -1,7 +1,8 @@
 target/
-dist/
+/dist/
 tools/bin/
-internal/webdist/dist/assets/
+internal/webdist/dist/*
+!internal/webdist/dist/.keep
 web/node_modules/
 *.fpk
 .DS_Store

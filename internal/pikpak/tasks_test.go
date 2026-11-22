@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -331,5 +332,53 @@ func TestCreateOfflineDailyQuotaIsNotRetried(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("calls = %d, want 1 (quota errors must not be retried)", got)
+	}
+}
+
+func TestClearFinishedTasksDeletesEachFinishedTask(t *testing.T) {
+	var mu sync.Mutex
+	tasks := []map[string]any{
+		{"id": "t1", "phase": "PHASE_TYPE_COMPLETE", "type": "offline"},
+		{"id": "t2", "phase": "PHASE_TYPE_ERROR", "type": "offline"},
+		{"id": "t3", "phase": "PHASE_TYPE_RUNNING", "type": "offline"},
+	}
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/tasks":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tasks": tasks, "next_page_token": ""})
+		case r.Method == http.MethodDelete && r.URL.Path == "/drive/v1/tasks":
+			for _, id := range strings.Split(r.URL.Query().Get("task_ids"), ",") {
+				deleted = append(deleted, id)
+				kept := tasks[:0]
+				for _, task := range tasks {
+					if task["id"] != id {
+						kept = append(kept, task)
+					}
+				}
+				tasks = kept
+			}
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
+	n, err := c.ClearFinishedTasks(context.Background())
+	if err != nil {
+		t.Fatalf("ClearFinishedTasks: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("deleted = %d, want 2", n)
+	}
+	if len(deleted) != 2 || deleted[0] != "t1" || deleted[1] != "t2" {
+		t.Fatalf("deleted ids = %v", deleted)
+	}
+	if len(tasks) != 1 || tasks[0]["id"] != "t3" {
+		t.Fatalf("running task was removed: %v", tasks)
 	}
 }

@@ -1,0 +1,3 @@
+Placeholder so `//go:embed all:dist` finds the directory on a fresh checkout.
+`make web` (or `make fpk`) fills this directory with the built SPA; when the
+build is absent, the server answers with fallback.html instead of the app.

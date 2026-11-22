@@ -103,27 +103,36 @@ export default function Settings() {
     void load()
   }, [load])
 
-  async function save(scope: 'global' | 'user') {
+  // One 保存 button covers the whole page: each scope is sent only when one of
+  // its keys changed, so a save never rewrites settings the user did not touch.
+  async function saveAll() {
     setError('')
     setSaved('')
-    const current = scope === 'global' ? globalSettings : userSettings
-    const keys = scope === 'global' ? globalSettingKeys : userSettingKeys
-    const patch = changedSettings(baseline.current[scope], pickSettings(current, keys))
-    if (Object.keys(patch).length === 0) {
+    const userPatch = changedSettings(baseline.current.user, pickSettings(userSettings, userSettingKeys))
+    const globalPatch = changedSettings(baseline.current.global, pickSettings(globalSettings, globalSettingKeys))
+    if (Object.keys(userPatch).length === 0 && Object.keys(globalPatch).length === 0) {
       setSaved('没有改动')
       return
     }
-    setSaving(scope)
+    setSaving('save')
     try {
-      const path = scope === 'global' ? 'settings' : 'user-settings'
-      const next = await apiPut<SettingValues>(path, patch)
-      if (scope === 'global') setGlobalSettings(next)
-      else setUserSettings(next)
-      baseline.current[scope] = next
-      if (next.language) {
-        window.dispatchEvent(new CustomEvent('pikpak:language', { detail: next.language }))
+      const notes: string[] = []
+      if (Object.keys(userPatch).length > 0) {
+        const next = await apiPut<SettingValues>('user-settings', userPatch)
+        setUserSettings(next)
+        baseline.current.user = next
+        if (next.language) {
+          window.dispatchEvent(new CustomEvent('pikpak:language', { detail: next.language }))
+        }
+        notes.push('已保存')
       }
-      setSaved(scope === 'global' ? '已保存（并发数在服务重启后生效）' : '已保存')
+      if (Object.keys(globalPatch).length > 0) {
+        const next = await apiPut<SettingValues>('settings', globalPatch)
+        setGlobalSettings(next)
+        baseline.current.global = next
+        notes.push('并发数在服务重启后生效')
+      }
+      setSaved(notes.join('；'))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -171,8 +180,24 @@ export default function Settings() {
     setSaved('')
   }
 
+  const dirty =
+    Object.keys(changedSettings(baseline.current.user, pickSettings(userSettings, userSettingKeys))).length > 0 ||
+    Object.keys(changedSettings(baseline.current.global, pickSettings(globalSettings, globalSettingKeys))).length > 0
+
   return (
     <>
+      <div className="settings-bar">
+        {dirty && <span className="muted small">有未保存的修改</span>}
+        <button
+          type="button"
+          className={dirty ? 'primary' : undefined}
+          disabled={saving === 'save'}
+          onClick={() => void saveAll()}
+        >
+          {saving === 'save' ? '保存中…' : '保存'}
+        </button>
+      </div>
+
       {error && <p className="error">{error}</p>}
       {saved && <p className="ok muted small">{saved}</p>}
 
@@ -202,9 +227,6 @@ export default function Settings() {
       <section className="card">
         <div className="card-header">
           <h2>传输</h2>
-          <button type="button" disabled={saving === 'user'} onClick={() => void save('user')}>
-            保存
-          </button>
         </div>
 
         <label className="field">
@@ -250,19 +272,11 @@ export default function Settings() {
           </select>
         </label>
         <p className="muted small">所有用户共享这一上限，修改后需要重启服务才生效。</p>
-        <div className="actions">
-          <button type="button" disabled={saving === 'global'} onClick={() => void save('global')}>
-            保存并发数
-          </button>
-        </div>
       </section>
 
       <section className="card">
         <div className="card-header">
           <h2>播放与语言</h2>
-          <button type="button" disabled={saving === 'user'} onClick={() => void save('user')}>
-            保存
-          </button>
         </div>
 
         <label className="field">
@@ -297,7 +311,7 @@ export default function Settings() {
         {folders.length === 0 ? (
           <p className="muted">fnOS 没有返回可访问的共享文件夹，或当前不是从飞牛网关访问。</p>
         ) : (
-          <ul className="dest-list">
+          <ul className="folder-list">
             {folders.map((f) => (
               <li key={f.path}>
                 <span className="mono">{f.path}</span>

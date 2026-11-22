@@ -27,7 +27,11 @@ var (
 // dependency, which cannot run on a development machine.
 type DirGuard func(ctx context.Context, uid int, dir string, needWrite bool) error
 
-func defaultDirGuard(c *fnos.Client) DirGuard {
+// FnosDirGuard is the production directory guard: the folder must be one fnOS
+// lists for the user and the ACL must allow the requested access.
+func FnosDirGuard(c *fnos.Client) DirGuard { return fnosDirGuard(c) }
+
+func fnosDirGuard(c *fnos.Client) DirGuard {
 	return func(ctx context.Context, uid int, dir string, needWrite bool) error {
 		if c == nil {
 			return ErrDirUnavailable
@@ -52,7 +56,7 @@ func defaultDirGuard(c *fnos.Client) DirGuard {
 
 // DevDirGuard is the DirGuard used by --dev-uid runs: there is no fnOS gateway
 // on a development machine to answer ACL questions, so every absolute path is
-// allowed. Production always goes through defaultDirGuard.
+// allowed. Production always goes through FnosDirGuard.
 func DevDirGuard() DirGuard {
 	return func(_ context.Context, _ int, dir string, _ bool) error {
 		if !filepath.IsAbs(dir) {
@@ -387,7 +391,7 @@ func notifyQueue(deps Deps) {
 func checkDir(r *http.Request, deps Deps, uid int, dir string, needWrite bool) error {
 	guard := deps.DirGuard
 	if guard == nil {
-		guard = defaultDirGuard(deps.Fnos)
+		guard = fnosDirGuard(deps.Fnos)
 	}
 	err := guard(r.Context(), uid, dir, needWrite)
 	if errors.Is(err, ErrDirUnavailable) {

@@ -5,6 +5,7 @@ import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
 import Player from '../components/Player'
 import { askPath, hostAvailable, pickFiles } from '../fnosSdk'
+import { cacheKeys, dropCachePrefix, readCache, writeCache } from '../listCache'
 import {
   filterFiles,
   isFolder,
@@ -18,6 +19,7 @@ import {
 
 type Page = { items: FileItem[]; next_page_token: string }
 type Crumb = { id: string; name: string }
+type CachedList = { items: FileItem[]; token: string }
 
 export default function Files() {
   const [stack, setStack] = useState<Crumb[]>([])
@@ -42,6 +44,7 @@ export default function Files() {
   const [playing, setPlaying] = useState<FileItem | null>(null)
 
   const reqId = useRef(0)
+  const itemsRef = useRef<FileItem[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
   const dragged = useRef<FileItem | null>(null)
 
@@ -56,8 +59,12 @@ export default function Files() {
       try {
         const page = await apiGet<Page>(`files?${params.toString()}`)
         if (id !== reqId.current) return
-        setItems((prev) => (reset ? page.items : [...prev, ...page.items]))
-        setToken(page.next_page_token || '')
+        const nextItems = reset ? page.items : [...itemsRef.current, ...page.items]
+        itemsRef.current = nextItems
+        const nextToken = page.next_page_token || ''
+        setItems(nextItems)
+        setToken(nextToken)
+        writeCache<CachedList>(cacheKeys.files(folderId, kind), { items: nextItems, token: nextToken })
       } catch (e) {
         if (id === reqId.current) setError((e as Error).message)
         if (reset) setItems([])
@@ -69,11 +76,21 @@ export default function Files() {
   )
 
   useEffect(() => {
+    setSelected(new Set())
+    // Coming back to a folder shows the listing it had; 刷新 and the mutation
+    // paths replace it.
+    const cached = readCache<CachedList>(cacheKeys.files(folderId, kind))
+    if (cached) {
+      itemsRef.current = cached.items
+      setItems(cached.items)
+      setToken(cached.token)
+      return
+    }
+    itemsRef.current = []
     setItems([])
     setToken('')
-    setSelected(new Set())
     void fetchPage('', true)
-  }, [fetchPage])
+  }, [fetchPage, folderId, kind])
 
   useEffect(() => {
     const el = sentinel.current
@@ -123,6 +140,7 @@ export default function Files() {
     setBusy(true)
     try {
       await apiPost('folders', { parent_id: folderId, name: name.trim() })
+      dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
       setError((e as Error).message)
@@ -137,6 +155,7 @@ export default function Files() {
     setBusy(true)
     try {
       await apiPatch(`files/${f.id}`, { name: name.trim() })
+      dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
       setError((e as Error).message)
@@ -153,6 +172,7 @@ export default function Files() {
       const res = await apiPost<{ pending: boolean }>('files/trash', { ids })
       setNotice(res.pending ? '任务已提交，稍后自动刷新' : '已移入回收站')
       setSelected(new Set())
+      dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
       setError((e as Error).message)
@@ -172,6 +192,7 @@ export default function Files() {
       setNotice(res.pending ? '任务已提交，稍后自动刷新' : move.mode === 'move' ? '已移动' : '已复制')
       setMove(null)
       setSelected(new Set())
+      dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
       setError((e as Error).message)
@@ -253,7 +274,8 @@ export default function Files() {
         setNotice(res.pending ? '任务已提交，稍后自动刷新' : '已移动')
         setMove(null)
         setSelected(new Set())
-        await fetchPage('', true)
+        dropCachePrefix('files:')
+      await fetchPage('', true)
       } catch (e) {
         setError((e as Error).message)
       } finally {

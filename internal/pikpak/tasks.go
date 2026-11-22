@@ -128,6 +128,52 @@ func (c *Client) ClearTasks(ctx context.Context) error {
 	}, nil)
 }
 
+const (
+	// The first page is re-read after every delete round instead of following
+	// page tokens: deleting shifts the list, and a token would skip entries.
+	clearRounds      = 50
+	clearDeleteChunk = 50
+)
+
+// ClearFinishedTasks deletes the finished tasks one by one. The web client's
+// tasks:clear endpoint answers 200 while leaving the list untouched through
+// the API, but the documented DELETE removes exactly the ids it is given.
+func (c *Client) ClearFinishedTasks(ctx context.Context) (int, error) {
+	deleted := 0
+	for round := 0; round < clearRounds; round++ {
+		page, err := c.ListTasks(ctx, "")
+		if err != nil {
+			return deleted, err
+		}
+		ids := make([]string, 0, len(page.Items))
+		for _, task := range page.Items {
+			if isFinishedTaskPhase(task.Phase) {
+				ids = append(ids, task.ID)
+			}
+		}
+		if len(ids) == 0 {
+			return deleted, nil
+		}
+		for start := 0; start < len(ids); start += clearDeleteChunk {
+			end := start + clearDeleteChunk
+			if end > len(ids) {
+				end = len(ids)
+			}
+			if err := c.DeleteTasks(ctx, ids[start:end], false); err != nil {
+				return deleted, err
+			}
+			deleted += end - start
+		}
+	}
+	return deleted, nil
+}
+
+// isFinishedTaskPhase reports the phases 清理已结束 removes. Running, paused and
+// pending tasks are left alone.
+func isFinishedTaskPhase(phase string) bool {
+	return phase == "PHASE_TYPE_COMPLETE" || phase == "PHASE_TYPE_ERROR"
+}
+
 func (c *Client) GetTask(ctx context.Context, id string) (Task, error) {
 	var task Task
 	err := c.do(ctx, http.MethodGet, c.BaseDrive+"/drive/v1/tasks/"+url.PathEscape(id), nil, &task)

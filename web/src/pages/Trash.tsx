@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../api'
 import { formatSize, isFolder, type FileItem } from '../files'
+import { cacheKeys, readCache, writeCache } from '../listCache'
 
 type Page = { items: FileItem[]; next_page_token: string }
+type CachedList = { items: FileItem[]; token: string }
 
 export default function Trash() {
   const [items, setItems] = useState<FileItem[]>([])
@@ -13,6 +15,7 @@ export default function Trash() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const reqId = useRef(0)
+  const itemsRef = useRef<FileItem[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
 
   const fetchPage = useCallback(async (pageToken: string, reset: boolean) => {
@@ -23,8 +26,12 @@ export default function Trash() {
       const params = pageToken ? `trash?page_token=${encodeURIComponent(pageToken)}` : 'trash'
       const page = await apiGet<Page>(params)
       if (id !== reqId.current) return
-      setItems((prev) => (reset ? page.items : [...prev, ...page.items]))
-      setToken(page.next_page_token || '')
+      const nextItems = reset ? page.items : [...itemsRef.current, ...page.items]
+      itemsRef.current = nextItems
+      const nextToken = page.next_page_token || ''
+      setItems(nextItems)
+      setToken(nextToken)
+      writeCache<CachedList>(cacheKeys.trash(), { items: nextItems, token: nextToken })
       if (reset) setSelected(new Set())
     } catch (e) {
       if (id === reqId.current) setError((e as Error).message)
@@ -34,6 +41,13 @@ export default function Trash() {
   }, [])
 
   useEffect(() => {
+    const cached = readCache<CachedList>(cacheKeys.trash())
+    if (cached) {
+      itemsRef.current = cached.items
+      setItems(cached.items)
+      setToken(cached.token)
+      return
+    }
     void fetchPage('', true)
   }, [fetchPage])
 
@@ -93,13 +107,16 @@ export default function Trash() {
 
   return (
     <section>
-      <div className="file-tools" style={{ marginBottom: 8 }}>
-        <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
-          刷新
-        </button>
-        <button type="button" onClick={emptyTrash} disabled={busy || items.length === 0} className="danger">
-          清空回收站
-        </button>
+      <div className="file-toolbar">
+        <span />
+        <div className="file-tools">
+          <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
+            刷新
+          </button>
+          <button type="button" onClick={emptyTrash} disabled={busy || items.length === 0} className="danger">
+            清空回收站
+          </button>
+        </div>
       </div>
 
       {error && <p className="error">{error}</p>}

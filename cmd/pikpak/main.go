@@ -79,8 +79,20 @@ func main() {
 	_ = st.ResetRunningDownloadJobs(startupCtx)
 	_ = st.ResetRunningUploadJobs(startupCtx)
 
+	// One guard decides where both the API and the workers may write. In
+	// development there is no fnOS gateway to answer the ACL question.
+	var dirGuard httpapi.DirGuard
+	if *devUID != 0 && fnosClient == nil {
+		dirGuard = httpapi.DevDirGuard()
+	} else {
+		dirGuard = httpapi.FnosDirGuard(fnosClient)
+	}
+
 	queue := &transfer.Queue{
 		Store: st,
+		CheckDir: func(ctx context.Context, uid int, dir string) error {
+			return dirGuard(ctx, uid, dir, true)
+		},
 		Clients: func(ctx context.Context, uid int) (*pikpak.Client, error) {
 			return sessions.ClientFor(ctx, uid)
 		},
@@ -115,11 +127,7 @@ func main() {
 		Sessions:   sessions,
 		Queue:      queue,
 	}
-	// Local development has no fnOS gateway, so the ACL question cannot be
-	// answered; allow absolute paths so the transfer flows stay testable.
-	if *devUID != 0 && fnosClient == nil {
-		deps.DirGuard = httpapi.DevDirGuard()
-	}
+	deps.DirGuard = dirGuard
 	handler := httpapi.NewMux(deps)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)

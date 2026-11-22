@@ -9,6 +9,8 @@ export default defineConfig({
   base: './',
   build: {
     outDir: '../internal/webdist/dist',
-    emptyOutDir: true,
+    // The directory also holds the committed dist/.keep that keeps a fresh
+    // checkout compilable, so it must not be emptied. Asset names are hashed.
+    emptyOutDir: false,
   },
 })
