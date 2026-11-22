@@ -50,6 +50,18 @@ func defaultDirGuard(c *fnos.Client) DirGuard {
 	}
 }
 
+// DevDirGuard is the DirGuard used by --dev-uid runs: there is no fnOS gateway
+// on a development machine to answer ACL questions, so every absolute path is
+// allowed. Production always goes through defaultDirGuard.
+func DevDirGuard() DirGuard {
+	return func(_ context.Context, _ int, dir string, _ bool) error {
+		if !filepath.IsAbs(dir) {
+			return ErrDirForbidden
+		}
+		return nil
+	}
+}
+
 func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/downloads", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
@@ -130,6 +142,10 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			if err := deps.Store.PutDownloadJob(r.Context(), job); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "无法创建下载任务")
 				return
+			}
+			// Read the row back so the response carries the stored timestamps.
+			if stored, err := deps.Store.GetDownloadJob(r.Context(), id.UID, job.ID); err == nil {
+				job = stored
 			}
 			created = append(created, job)
 		}
@@ -215,6 +231,9 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			if err := deps.Store.PutUploadJob(r.Context(), job); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "无法创建上传任务")
 				return
+			}
+			if stored, err := deps.Store.GetUploadJob(r.Context(), id.UID, job.ID); err == nil {
+				job = stored
 			}
 			created = append(created, job)
 		}
@@ -351,7 +370,7 @@ func cancelRunning(deps Deps, jobID string) {
 
 func notifyQueue(deps Deps) {
 	if deps.Queue != nil {
-		notifyQueue(deps)
+		deps.Queue.Notify()
 	}
 }
 

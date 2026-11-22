@@ -3,14 +3,17 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"fnos-pikpak/internal/store"
+	"fnos-pikpak/internal/transfer"
 )
 
 func allowAll(context.Context, int, string, bool) error { return nil }
@@ -33,11 +36,24 @@ func newTransferEnv(t *testing.T, guard DirGuard) transferEnv {
 	}))
 	deps, st := newAuthTestDeps(t, srv.URL)
 	deps.DirGuard = guard
+	// A real (unstarted) queue keeps the notify/cancel paths honest: the
+	// handlers must not assume a nil queue.
+	deps.Queue = &transfer.Queue{Store: st}
 	bindTestUser(t, st, 1000)
 	return transferEnv{deps: deps, st: st, upstream: srv}
 }
 
 func (e transferEnv) close() { e.upstream.Close() }
+
+func TestDevDirGuardAllowsAbsolutePathsOnly(t *testing.T) {
+	guard := DevDirGuard()
+	if err := guard(t.Context(), 1000, "/tmp", true); err != nil {
+		t.Fatalf("absolute path rejected: %v", err)
+	}
+	if err := guard(t.Context(), 1000, "relative/path", true); !errors.Is(err, ErrDirForbidden) {
+		t.Fatalf("relative path err = %v", err)
+	}
+}
 
 func TestCreateDownloadCreatesQueuedJob(t *testing.T) {
 	env := newTransferEnv(t, allowAll)
@@ -60,6 +76,12 @@ func TestCreateDownloadCreatesQueuedJob(t *testing.T) {
 	}
 	if job.DestPath != filepath.Join(dir, "a.mkv") {
 		t.Fatalf("dest = %q", job.DestPath)
+	}
+	// The response must describe the stored row, timestamps included.
+	created, _ := body["created"].([]any)
+	first, _ := created[0].(map[string]any)
+	if ts, _ := first["created_at"].(string); ts == "" || strings.HasPrefix(ts, "0001-") {
+		t.Fatalf("created_at = %q", first["created_at"])
 	}
 }
 
@@ -133,6 +155,36 @@ func TestDownloadControls(t *testing.T) {
 		if got.Status != tc.want {
 			t.Fatalf("after %s: %q, want %q", tc.action, got.Status, tc.want)
 		}
+	}
+}
+
+func TestDownloadJobsUseSnakeCaseJSON(t *testing.T) {
+	env := newTransferEnv(t, allowAll)
+	defer env.close()
+	h := NewMux(env.deps)
+
+	if err := env.st.PutDownloadJob(t.Context(), store.DownloadJob{
+		ID: "j1", UID: 1000, FileID: "f1", FileName: "a.mkv",
+		DestDir: "/tmp", DestPath: "/tmp/a.mkv", Size: 10, Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, body := getJSON(t, h, "/api/downloads", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", body)
+	}
+	job, _ := items[0].(map[string]any)
+	for _, key := range []string{"file_name", "dest_path", "status", "size"} {
+		if _, ok := job[key]; !ok {
+			t.Fatalf("missing %q in %v", key, job)
+		}
+	}
+	if _, leaked := job["UID"]; leaked {
+		t.Fatalf("internal UID leaked: %v", job)
 	}
 }
 

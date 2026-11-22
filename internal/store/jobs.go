@@ -12,20 +12,20 @@ import (
 // final path; the worker writes DestPath+".pikpak-part" until it verifies the
 // size and renames.
 type DownloadJob struct {
-	ID           string
-	UID          int
-	FileID       string
-	FileName     string
-	DestDir      string
-	DestPath     string
-	Size         int64
-	Downloaded   int64
-	Status       string
-	ErrorCode    string
-	ErrorMessage string
-	LinkExpireAt string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           string    `json:"id"`
+	UID          int       `json:"-"`
+	FileID       string    `json:"file_id"`
+	FileName     string    `json:"file_name"`
+	DestDir      string    `json:"dest_dir"`
+	DestPath     string    `json:"dest_path"`
+	Size         int64     `json:"size"`
+	Downloaded   int64     `json:"downloaded"`
+	Status       string    `json:"status"`
+	ErrorCode    string    `json:"error_code,omitempty"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	LinkExpireAt string    `json:"link_expire_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (s *Store) PutDownloadJob(ctx context.Context, j DownloadJob) error {
@@ -131,18 +131,18 @@ UPDATE download_jobs SET status = 'queued', updated_at = ? WHERE status = 'runni
 // UploadJob is one file being pushed to PikPak. LocalPath is an absolute path
 // already validated against the user's fnOS access.
 type UploadJob struct {
-	ID           string
-	UID          int
-	LocalPath    string
-	ParentID     string
-	RemoteName   string
-	Size         int64
-	Uploaded     int64
-	Status       string
-	ErrorCode    string
-	ErrorMessage string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           string    `json:"id"`
+	UID          int       `json:"-"`
+	LocalPath    string    `json:"local_path"`
+	ParentID     string    `json:"parent_id"`
+	RemoteName   string    `json:"remote_name"`
+	Size         int64     `json:"size"`
+	Uploaded     int64     `json:"uploaded"`
+	Status       string    `json:"status"`
+	ErrorCode    string    `json:"error_code,omitempty"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (s *Store) PutUploadJob(ctx context.Context, j UploadJob) error {

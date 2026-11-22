@@ -57,12 +57,18 @@ func TestFilesSendsKindFilterAndLimit(t *testing.T) {
 	if q["limit"] != "200" {
 		t.Fatalf("limit = %q, want capped 200", q["limit"])
 	}
-	var filters map[string]map[string]string
+	var filters struct {
+		Kind    struct{ Eq string } `json:"kind"`
+		Trashed struct{ Eq bool }   `json:"trashed"`
+	}
 	if err := json.Unmarshal([]byte(q["filters"]), &filters); err != nil {
 		t.Fatalf("filters %q: %v", q["filters"], err)
 	}
-	if filters["kind"]["eq"] != "drive#folder" {
+	if filters.Kind.Eq != "drive#folder" {
 		t.Fatalf("filters = %v", filters)
+	}
+	if filters.Trashed.Eq {
+		t.Fatalf("trashed filter must be boolean false: %s", q["filters"])
 	}
 	if _, ok := q["order"]; ok {
 		t.Fatalf("order was sent even though PikPak rejects every encoding: %v", q)
@@ -74,6 +80,30 @@ func TestFilesSendsKindFilterAndLimit(t *testing.T) {
 	items, _ := body["items"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("items = %v", body["items"])
+	}
+}
+
+func TestFilesExcludesTrashedByDefault(t *testing.T) {
+	var q map[string]string
+	srv := filesTestServer(t, &q, http.StatusOK, `{"files":[]}`)
+	defer srv.Close()
+
+	deps, _ := newAuthTestDeps(t, srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/files?parent_id=", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	var filters struct {
+		Trashed struct{ Eq bool } `json:"trashed"`
+	}
+	if err := json.Unmarshal([]byte(q["filters"]), &filters); err != nil {
+		t.Fatalf("filters %q: %v", q["filters"], err)
+	}
+	if filters.Trashed.Eq {
+		t.Fatalf("trashed filter must be boolean false: %s", q["filters"])
 	}
 }
 

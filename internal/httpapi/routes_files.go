@@ -110,15 +110,18 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 			}
 		}
 
-		filters := ""
+		// Trashed files are excluded explicitly: PikPak's default listing
+		// otherwise still returns items moved to the trash.
+		query := map[string]any{"trashed": map[string]any{"eq": false}}
 		if kind := r.URL.Query().Get("kind"); kind != "" {
-			raw, err := json.Marshal(map[string]any{"kind": map[string]string{"eq": kind}})
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "bad_kind", "kind 不合法")
-				return
-			}
-			filters = string(raw)
+			query["kind"] = map[string]string{"eq": kind}
 		}
+		rawFilters, err := json.Marshal(query)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_kind", "kind 不合法")
+			return
+		}
+		filters := string(rawFilters)
 
 		page, err := client.ListFiles(r.Context(), r.URL.Query().Get("parent_id"), pikpak.ListOptions{
 			PageToken: r.URL.Query().Get("page_token"),

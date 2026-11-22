@@ -102,7 +102,7 @@ func main() {
 		}
 	}()
 
-	handler := httpapi.NewMux(httpapi.Deps{
+	deps := httpapi.Deps{
 		Version:  version.Version,
 		DevUID:   *devUID,
 		Probes:   probes,
@@ -110,7 +110,13 @@ func main() {
 		Store:    st,
 		Sessions: sessions,
 		Queue:    queue,
-	})
+	}
+	// Local development has no fnOS gateway, so the ACL question cannot be
+	// answered; allow absolute paths so the transfer flows stay testable.
+	if *devUID != 0 && fnosClient == nil {
+		deps.DirGuard = httpapi.DevDirGuard()
+	}
+	handler := httpapi.NewMux(deps)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 
