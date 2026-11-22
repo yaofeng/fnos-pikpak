@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"fnos-pikpak/internal/fnos"
+	"fnos-pikpak/internal/pikpak"
 )
 
 // thumbTTL bounds how long a proxied thumbnail stays in memory. The upstream
@@ -83,7 +84,7 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		var link string
 		if shareID != "" {
-			token, ok := shareToken(w, deps, id.UID, shareID)
+			token, ok := thumbShareToken(w, r, deps, client, id.UID, shareID)
 			if !ok {
 				return
 			}
@@ -114,6 +115,26 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 		deps.Thumbs.put(id.UID, shareID, fileID, data, mime, now)
 		writeThumb(w, data, mime)
 	})
+}
+
+// thumbShareToken returns the pass-code token for a share file. 视频收藏夹
+// shows share thumbnails without ever opening the share, so when no session
+// is cached a saved video's sealed code reopens it and seeds the session.
+func thumbShareToken(w http.ResponseWriter, r *http.Request, deps Deps, client *pikpak.Client, uid int, shareID string) (string, bool) {
+	now := time.Now()
+	if token, ok := deps.ShareSessions.get(uid, shareID, now); ok {
+		return token, true
+	}
+	if deps.Store != nil {
+		if code, err := deps.Store.VideoSharePassCode(r.Context(), uid, shareID); err == nil {
+			if info, gerr := client.GetShare(r.Context(), shareID, code); gerr == nil {
+				deps.ShareSessions.put(uid, shareID, info.PassCodeToken, now)
+				return info.PassCodeToken, true
+			}
+		}
+	}
+	writeError(w, http.StatusBadRequest, "share_session_missing", "分享会话已过期，请重新打开分享")
+	return "", false
 }
 
 func fetchThumb(r *http.Request, link string) ([]byte, string, error) {

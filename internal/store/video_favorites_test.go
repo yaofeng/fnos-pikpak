@@ -104,3 +104,27 @@ func TestVideoFavoriteRenameIsDisplayOnly(t *testing.T) {
 		t.Fatalf("clear = %+v err=%v", cleared, err)
 	}
 }
+
+func TestVideoFavoriteRefreshKeepsMetadataTheShareOmits(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	first, err := s.AddVideoFavorite(ctx, 1000, videoFav("VOabc123", "sf2", "a.mp4", 4096))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	// The prepare worker refreshes the row from share metadata; a share that
+	// stops reporting the owner, title or size must not blank what we saved.
+	again, err := s.AddVideoFavorite(ctx, 1000, VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "a.mp4",
+	})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if again.ID != first.ID {
+		t.Fatalf("ids %d then %d", first.ID, again.ID)
+	}
+	if again.Owner != "alice" || again.ShareTitle != "资料" || again.Size != 4096 {
+		t.Fatalf("refresh blanked metadata: %+v", again)
+	}
+}

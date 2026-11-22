@@ -53,6 +53,14 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
+		// A video starred from a share opened through 分享收藏夹 arrives
+		// without its code; the saved share already holds it, sealed.
+		passCode := strings.TrimSpace(body.PassCode)
+		if passCode == "" {
+			if code, err := deps.Store.SharePassCode(r.Context(), id.UID, shareID); err == nil {
+				passCode = code
+			}
+		}
 		fav, err := deps.Store.AddVideoFavorite(r.Context(), id.UID, store.VideoFavorite{
 			ShareID:    shareID,
 			FileID:     fileID,
@@ -60,7 +68,7 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			Size:       body.Size,
 			Owner:      strings.TrimSpace(body.Owner),
 			ShareTitle: strings.TrimSpace(body.ShareTitle),
-			PassCode:   strings.TrimSpace(body.PassCode),
+			PassCode:   passCode,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "保存视频收藏失败")

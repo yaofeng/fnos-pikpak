@@ -103,6 +103,24 @@ FROM share_favorites WHERE uid = ? AND id = ?`, uid, id)
 	return fav, nil
 }
 
+// SharePassCode returns the decrypted code saved with a share favourite. A
+// video starred from an already-favourited share inherited no code (the
+// browser never saw it), so it takes the code from here.
+func (s *Store) SharePassCode(ctx context.Context, uid int, shareID string) (string, error) {
+	fav, err := s.shareFavoriteByShareID(ctx, uid, shareID)
+	if err != nil {
+		return "", err
+	}
+	if len(fav.encPass) == 0 {
+		return "", ErrNotFound
+	}
+	plain, err := Decrypt(s.key, sharePassAAD(uid, shareID), fav.encPass)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
 // RenameShareFavorite changes only the local display title. An empty title
 // restores the share's own name.
 func (s *Store) RenameShareFavorite(ctx context.Context, uid int, id int64, title string) (ShareFavorite, error) {

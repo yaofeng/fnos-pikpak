@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -80,5 +81,31 @@ func TestVideoFavoriteValidation(t *testing.T) {
 	}
 	if rec, out := patchJSON(t, h, "/api/video-favorites/99", "1000", `{"name":"x"}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing rename → %d %v", rec.Code, out)
+	}
+}
+
+// A video starred from a share opened through 分享收藏夹 arrives without the
+// code (the browser never saw it), so the saved share's code must stand in.
+func TestVideoFavoriteInheritsTheShareFavoritePassCode(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	if rec, body := postJSON(t, h, "/api/share-favorites", "1000",
+		`{"url":"https://mypikpak.com/s/VOabc123","pass_code":"7f3a"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("share favorite: %d %v", rec.Code, body)
+	}
+	rec, body := postJSON(t, h, "/api/video-favorites", "1000",
+		`{"share_id":"VOabc123","file_id":"sf2","name":"a.mp4","size":9,"owner":"bob"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("video favorite: %d %v", rec.Code, body)
+	}
+	id := int64(body["id"].(float64))
+	saved, err := deps.Store.GetVideoFavorite(context.Background(), 1000, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.PassCode != "7f3a" {
+		t.Fatalf("pass code = %q, want the share favorite's", saved.PassCode)
 	}
 }

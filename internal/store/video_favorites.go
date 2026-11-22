@@ -48,9 +48,9 @@ INSERT INTO video_favorites(uid, share_id, file_id, name, size, owner, share_tit
 VALUES(?,?,?,?,?,?,?,?,?)
 ON CONFLICT(uid, share_id, file_id) DO UPDATE SET
   name=excluded.name,
-  size=excluded.size,
-  owner=excluded.owner,
-  share_title=excluded.share_title,
+  size=CASE WHEN excluded.size > 0 THEN excluded.size ELSE video_favorites.size END,
+  owner=CASE WHEN excluded.owner <> '' THEN excluded.owner ELSE video_favorites.owner END,
+  share_title=CASE WHEN excluded.share_title <> '' THEN excluded.share_title ELSE video_favorites.share_title END,
   pass_code_enc=CASE WHEN length(excluded.pass_code_enc) > 0
     THEN excluded.pass_code_enc ELSE video_favorites.pass_code_enc END`,
 		uid, fav.ShareID, fav.FileID, fav.Name, fav.Size, fav.Owner, fav.ShareTitle, enc, now)
@@ -65,6 +65,27 @@ func (s *Store) videoFavoriteByKey(ctx context.Context, uid int, shareID, fileID
 SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND share_id = ? AND file_id = ?`, uid, shareID, fileID)
 	return scanVideoFavorite(row)
+}
+
+// VideoSharePassCode returns the decrypted code of any saved video from this
+// share. 视频收藏夹 never opens its shares, so the thumbnail and replay paths
+// reopen them with this code. ErrNotFound when no saved video carries one.
+func (s *Store) VideoSharePassCode(ctx context.Context, uid int, shareID string) (string, error) {
+	var enc []byte
+	err := s.db.QueryRowContext(ctx, `
+SELECT pass_code_enc FROM video_favorites
+WHERE uid = ? AND share_id = ? AND length(pass_code_enc) > 0 LIMIT 1`, uid, shareID).Scan(&enc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	plain, err := Decrypt(s.key, videoPassAAD(uid, shareID), enc)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
 }
 
 // ListVideoFavorites returns the user's saved videos, newest first.

@@ -31,6 +31,12 @@ func thumbUpstream(t *testing.T) (*httptest.Server, *httptest.Server) {
 				"id": "f2", "name": "b.bin", "kind": "drive#file", "size": "9",
 			})
 		case "/drive/v1/share":
+			// Protect the share so a thumbnail can only be fetched by a caller
+			// that knows the code; tests always pass 7f3a.
+			if r.URL.Query().Get("pass_code") != "7f3a" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"share_status": "PASS_CODE_EMPTY"})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"share_status": "OK", "pass_code_token": "tok-1", "title": "资料",
 				"files": []map[string]any{{"id": "sf2", "name": "notes.mp4", "kind": "drive#file", "size": "9"}},
@@ -112,5 +118,27 @@ func TestThumbReturns404WhenTheFileHasNoThumbnail(t *testing.T) {
 	rec := thumbGet(t, h, "/api/thumb?file_id=f2", "1000")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// 视频收藏夹 never opens the share, so the first thumbnail request has no
+// session; the saved code must be enough to reopen it.
+func TestThumbReopensTheShareFromASavedVideo(t *testing.T) {
+	srv, images := thumbUpstream(t)
+	deps, _ := newAuthTestDeps(t, srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := postJSON(t, h, "/api/video-favorites", "1000",
+		`{"share_id":"VOabc123","file_id":"sf2","name":"notes.mp4","size":9,"pass_code":"7f3a"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("favorite: %d %v", rec.Code, body)
+	}
+	thumb := thumbGet(t, h, "/api/thumb?share_id=VOabc123&file_id=sf2", "1000")
+	if thumb.Code != http.StatusOK || thumb.Body.String() != "JPEG" {
+		t.Fatalf("thumb: status=%d body=%s", thumb.Code, thumb.Body.String())
+	}
+	if strings.Contains(thumb.Body.String(), images.URL) {
+		t.Fatal("the CDN URL reached the browser")
 	}
 }
