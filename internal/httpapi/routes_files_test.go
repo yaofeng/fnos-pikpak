@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"fnos-pikpak/internal/pikpak"
 )
 
 // filesTestServer records the query the list endpoint sent and answers with
@@ -186,5 +188,28 @@ func TestFilesRejectsBadLimit(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "bad_limit") {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestUpstreamReauthIsUnauthorized(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeUpstreamError(rec, pikpak.ErrReauthRequired)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Error.Code != "pikpak_reauth_required" {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+	if !strings.Contains(body.Error.Message, "重新绑定") {
+		t.Fatalf("message = %q", body.Error.Message)
 	}
 }

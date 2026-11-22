@@ -412,18 +412,16 @@ FROM users WHERE uid = ?`, uid).
 }
 
 // SetUserStatus flips active / reauth_required / disabled without touching the
-// stored profile, so a token failure does not erase who the user is.
+// stored profile, so a token failure does not erase who the user is. A user
+// known only by its credential gets a row, because the shell needs the status
+// to show the reauthorization banner.
 func (s *Store) SetUserStatus(ctx context.Context, uid int, status string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE users SET status = ?, updated_at = ? WHERE uid = ?`,
-		status, time.Now().UTC().Format(time.RFC3339), uid)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO users(uid, status, bound_at, updated_at) VALUES(?,?,?,?)
+ON CONFLICT(uid) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`,
+		uid, status, now, now)
+	return err
 }
 
 // GrantFolder records a directory the user authorized. Re-granting updates the

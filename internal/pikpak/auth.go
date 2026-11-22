@@ -282,14 +282,14 @@ func (s *Session) refreshOnce(ctx context.Context) error {
 	rt := s.refreshToken
 	s.mu.Unlock()
 	if rt == "" {
-		s.markReauth()
+		s.markReauth(ctx)
 		return ErrReauthRequired
 	}
 
 	tok, err := s.client.Refresh(ctx, rt)
 	if err != nil {
 		if errors.Is(err, ErrReauthRequired) || errors.Is(err, ErrAccessDenied) {
-			s.markReauth()
+			s.markReauth(ctx)
 		}
 		return err
 	}
@@ -335,10 +335,19 @@ func (s *Session) disable() {
 	s.mu.Unlock()
 }
 
-func (s *Session) markReauth() {
+// markReauth latches the session as needing reauthorization and records that
+// on the user row, which is where the app shell reads it from.
+func (s *Session) markReauth(ctx context.Context) {
 	s.mu.Lock()
 	s.reauth = true
+	st, uid := s.st, s.uid
 	s.mu.Unlock()
+	if st == nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = st.SetUserStatus(writeCtx, uid, "reauth_required")
 }
 
 // SessionStore owns one Session per fnOS uid for the life of the process.

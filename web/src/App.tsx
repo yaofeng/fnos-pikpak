@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { apiGet } from './api'
-import { detectLang, makeT } from './i18n'
+import Toaster from './components/Toaster'
+import { detectLang, makeT, setLang, type Lang } from './i18n'
 import Bind from './pages/Bind'
 import Debug from './pages/Debug'
 import Files from './pages/Files'
@@ -61,7 +62,9 @@ function formatBytes(n: number): string {
 }
 
 export default function App() {
-  const t = makeT(detectLang())
+  const [lang, setLanguage] = useState<Lang>(() => detectLang())
+  const t = makeT(lang)
+  setLang(lang)
   const location = useLocation()
   const [me, setMe] = useState<Me | null>(null)
   const [account, setAccount] = useState<Account | null>(null)
@@ -82,6 +85,22 @@ export default function App() {
     load()
     window.addEventListener('pikpak:account-changed', load)
     return () => window.removeEventListener('pikpak:account-changed', load)
+  }, [])
+
+  // The stored language belongs to the fnOS user; the browser's is only the
+  // starting guess.
+  useEffect(() => {
+    apiGet<Record<string, string>>('user-settings')
+      .then((s) => {
+        if (s.language === 'en' || s.language === 'zh-CN') setLanguage(s.language)
+      })
+      .catch(() => undefined)
+    const onLanguage = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail
+      if (detail === 'en' || detail === 'zh-CN') setLanguage(detail)
+    }
+    window.addEventListener('pikpak:language', onLanguage)
+    return () => window.removeEventListener('pikpak:language', onLanguage)
   }, [])
 
   const titleKey = Object.keys(titles).find((p) => location.pathname.startsWith(p))
@@ -134,6 +153,12 @@ export default function App() {
           </div>
         )}
 
+        {me?.bound && me.status === 'reauth_required' && (
+          <div className="notice danger">
+            {t('state.reauth')} · <NavLink to="/bind">{t('action.rebind')}</NavLink>
+          </div>
+        )}
+
         <main className="page">
           <Routes>
             <Route path="/" element={<Navigate to="/files" replace />} />
@@ -148,6 +173,8 @@ export default function App() {
             <Route path="*" element={<Navigate to="/files" replace />} />
           </Routes>
         </main>
+
+        <Toaster />
 
         {account && (
           <div className="quota-bar" title={`${pct.toFixed(1)}%`}>

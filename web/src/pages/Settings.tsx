@@ -119,6 +119,9 @@ export default function Settings() {
       if (scope === 'global') setGlobalSettings(next)
       else setUserSettings(next)
       baseline.current[scope] = next
+      if (next.language) {
+        window.dispatchEvent(new CustomEvent('pikpak:language', { detail: next.language }))
+      }
       setSaved(scope === 'global' ? '已保存（并发数在服务重启后生效）' : '已保存')
     } catch (e) {
       setError((e as Error).message)

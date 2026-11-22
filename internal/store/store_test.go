@@ -505,3 +505,36 @@ func TestDeleteUserJobs(t *testing.T) {
 		t.Fatalf("another user's job was deleted: %+v", jobs)
 	}
 }
+
+func TestSetUserStatusCreatesRowForCredentialOnlyUser(t *testing.T) {
+	st, _ := newStore(t)
+	ctx := context.Background()
+	// A session can exist from a credential alone (an older database, or a
+	// bind that crash-landed between the two writes). Marking such a user
+	// for reauthorization must still be recorded, or the shell never learns.
+	if err := st.SetUserStatus(ctx, 1000, "reauth_required"); err != nil {
+		t.Fatalf("SetUserStatus: %v", err)
+	}
+	u, err := st.GetUser(ctx, 1000)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if u.Status != "reauth_required" {
+		t.Fatalf("status = %q", u.Status)
+	}
+
+	// An existing profile keeps its fields; only the status changes.
+	if err := st.PutUser(ctx, User{UID: 1000, DisplayName: "小明", Status: "active"}); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	if err := st.SetUserStatus(ctx, 1000, "reauth_required"); err != nil {
+		t.Fatalf("SetUserStatus again: %v", err)
+	}
+	u, err = st.GetUser(ctx, 1000)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if u.Status != "reauth_required" || u.DisplayName != "小明" {
+		t.Fatalf("user = %+v", u)
+	}
+}

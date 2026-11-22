@@ -279,6 +279,16 @@ func TestSessionInvalidGrantRequiresReauth(t *testing.T) {
 	if n := atomic.LoadInt32(&refreshCalls); n != 1 {
 		t.Fatalf("refresh calls = %d, want 1 (no retry after reauth)", n)
 	}
+
+	// The shell decides whether to show the reauthorization banner from the
+	// stored status, so a failed refresh has to write it.
+	u, err := st.GetUser(ctx, 1000)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if u.Status != "reauth_required" {
+		t.Fatalf("stored status = %q, want reauth_required", u.Status)
+	}
 }
 
 func TestSessionStoreNotBound(t *testing.T) {

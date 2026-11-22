@@ -168,6 +168,12 @@ func boundClient(w http.ResponseWriter, r *http.Request, deps Deps) (*pikpak.Cli
 }
 
 func writeUpstreamError(w http.ResponseWriter, err error) {
+	// An expired grant is not an upstream fault: the user has to rebind, and
+	// the client tells them so instead of showing a generic 502.
+	if errors.Is(err, pikpak.ErrReauthRequired) {
+		writeError(w, http.StatusUnauthorized, "pikpak_reauth_required", "PikPak 授权已失效，请重新绑定账号")
+		return
+	}
 	// Code 11 is PikPak's daily offline-task quota: an expected refusal, not a
 	// broken upstream, so the client gets 429 and can explain it.
 	var apiErr *pikpak.APIError

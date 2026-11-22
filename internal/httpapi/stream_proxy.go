@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"fnos-pikpak/internal/probe"
 )
 
 // linkTTL is how long a signed download URL is reused. PikPak signs are valid
@@ -91,12 +89,12 @@ func (deps Deps) linkFor(ctx context.Context, uid int, fileID string, refresh bo
 func (deps Deps) proxyStream(w http.ResponseWriter, r *http.Request, uid int, fileID string) {
 	url, err := deps.linkFor(r.Context(), uid, fileID, false)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
+		writeUpstreamError(w, err)
 		return
 	}
 	resp, err := fetchMedia(r, url)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
+		writeUpstreamError(w, err)
 		return
 	}
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusGone {
@@ -106,12 +104,12 @@ func (deps Deps) proxyStream(w http.ResponseWriter, r *http.Request, uid int, fi
 		deps.Links.drop(deps.Links.key(uid, fileID))
 		url, err = deps.linkFor(r.Context(), uid, fileID, true)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
+			writeUpstreamError(w, err)
 			return
 		}
 		resp, err = fetchMedia(r, url)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
+			writeUpstreamError(w, err)
 			return
 		}
 	}
