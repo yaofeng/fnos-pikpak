@@ -3,6 +3,7 @@ import { apiGet, apiPatch, apiPost } from '../api'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
+import { askPath, hostAvailable, pickDirectory, pickFiles } from '../fnosSdk'
 import {
   filterFiles,
   isFolder,
@@ -176,6 +177,67 @@ export default function Files() {
     }
   }
 
+  async function downloadTo(ids: string[]) {
+    const fileIDs = ids.filter((id) => {
+      const f = items.find((item) => item.id === id)
+      return f && !isFolder(f)
+    })
+    if (!fileIDs.length) {
+      setError('文件夹暂不支持下载，请逐个选择其中的文件。')
+      return
+    }
+    let dir = ''
+    if (hostAvailable()) {
+      const picked = await pickDirectory('选择下载目录')
+      if (!picked.length) return
+      dir = picked[0]
+    } else {
+      const asked = askPath('下载目录（绝对路径）')
+      if (!asked) return
+      dir = asked
+    }
+    setBusy(true)
+    try {
+      // Registering the folder with fnOS first makes the ACL check explicit:
+      // the download only starts for a directory this user may write to.
+      await apiPost('fs/authorize', { path: dir, need: 'write' })
+      const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', {
+        file_ids: fileIDs,
+        dest_dir: dir,
+      })
+      const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
+      setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
+      setSelected(new Set())
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function uploadFiles() {
+    let paths: string[] = []
+    if (hostAvailable()) {
+      paths = await pickFiles('选择要上传的文件')
+    } else {
+      const asked = askPath('要上传的文件（绝对路径）')
+      if (asked) paths = [asked]
+    }
+    if (!paths.length) return
+    setBusy(true)
+    try {
+      const res = await apiPost<{ created: unknown[] }>('uploads', {
+        local_paths: paths,
+        parent_id: folderId,
+      })
+      setNotice(`已加入上传队列：${res.created.length} 个。可在「传输」中查看进度。`)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function handleDrop(destId: string | null) {
     const f = dragged.current
     dragged.current = null
@@ -243,6 +305,9 @@ export default function Files() {
           <button type="button" onClick={createFolder} disabled={busy}>
             新建文件夹
           </button>
+          <button type="button" onClick={() => void uploadFiles()} disabled={busy}>
+            上传
+          </button>
           <button type="button" onClick={() => void fetchPage('', true)} disabled={loading}>
             刷新
           </button>
@@ -264,6 +329,9 @@ export default function Files() {
           </button>
           <button type="button" onClick={() => setMove({ mode: 'copy', ids: selectedIds })} disabled={busy}>
             复制到…
+          </button>
+          <button type="button" onClick={() => void downloadTo(selectedIds)} disabled={busy}>
+            下载到…
           </button>
           <button type="button" onClick={() => void trash(selectedIds)} disabled={busy}>
             移入回收站
@@ -329,6 +397,11 @@ export default function Files() {
           <button type="button" onClick={() => setMove({ mode: 'copy', ids: [menu.file.id] })}>
             复制到…
           </button>
+          {!isFolder(menu.file) && (
+            <button type="button" onClick={() => void downloadTo([menu.file.id])}>
+              下载到…
+            </button>
+          )}
           <button type="button" className="danger" onClick={() => void trash([menu.file.id])}>
             移入回收站
           </button>
