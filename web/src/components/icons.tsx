@@ -36,6 +36,15 @@ export function ChevronRight({ size = 16 }: IconProps) {
   )
 }
 
+export function HomeIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="M4 10.5 12 4l8 6.5" />
+      <path d="M6 9.5V20h12V9.5" />
+    </svg>
+  )
+}
+
 export function RefreshIcon({ size = 16 }: IconProps) {
   return (
     <svg {...stroke(size)}>

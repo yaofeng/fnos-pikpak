@@ -1352,10 +1352,6 @@ button.primary {
   gap: 12px;
 }
 
-.share-open-actions {
-  align-items: center;
-}
-
 .fav-table tbody tr {
   height: 40px;
 }

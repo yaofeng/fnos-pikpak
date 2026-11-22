@@ -9,6 +9,7 @@ import {
   BookmarkIcon,
   DownloadIcon,
   GridIcon,
+  HomeIcon,
   ListIcon,
   PlayIcon,
   RefreshIcon,
@@ -52,6 +53,7 @@ export default function ShareBrowser({
   initialPassCode,
   onState,
   onTitle,
+  onHome,
 }: {
   url?: string
   favoriteId?: number
@@ -61,6 +63,9 @@ export default function ShareBrowser({
   initialPassCode?: string
   onState?: (state: ShareState) => void
   onTitle?: (title: string) => void
+  // onHome adds a home button that leaves the share for its host page, the
+  // favourites home. Search tabs have no such home, so they omit it.
+  onHome?: () => void
 }) {
   const [shareId, setShareId] = useState('')
   const [title, setTitle] = useState(initialTitle ?? '分享')
@@ -297,6 +302,17 @@ export default function ShareBrowser({
           {openError && <p className="error">{openError}</p>}
 
           <div className="fm-nav">
+            {onHome && (
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={onHome}
+                title="收藏夹主页"
+                aria-label="收藏夹主页"
+              >
+                <HomeIcon />
+              </button>
+            )}
             <button
               className="icon-btn"
               type="button"

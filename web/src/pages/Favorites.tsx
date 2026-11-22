@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiDelete, apiGet } from '../api'
 import ShareBrowser from '../components/ShareBrowser'
-import { BookmarkIcon, RefreshIcon, TrashIcon } from '../components/icons'
+import { BookmarkIcon, RefreshIcon } from '../components/icons'
 
 // A saved share, as the list route returns it. The pass code never comes back
 // from the server; opening a favourite makes the server read the sealed one.
@@ -18,9 +18,7 @@ export default function Favorites() {
   const [items, setItems] = useState<ShareFavorite[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [openID, setOpenID] = useState<number | null>(null)
-  const [openTitle, setOpenTitle] = useState('')
-  const [tabTitle, setTabTitle] = useState('')
+  const [openFav, setOpenFav] = useState<ShareFavorite | null>(null)
   const [busy, setBusy] = useState(0)
 
   const load = useCallback(async () => {
@@ -47,32 +45,20 @@ export default function Favorites() {
     try {
       await apiDelete(`share-favorites/${fav.id}`)
       setItems((prev) => (prev ?? []).filter((f) => f.id !== fav.id))
-      if (openID === fav.id) setOpenID(null)
+      if (openFav?.id === fav.id) setOpenFav(null)
     } finally {
       setBusy(0)
     }
   }
 
-  if (openID !== null) {
-    const opened = items?.find((f) => f.id === openID)
+  if (openFav !== null) {
     return (
       <section className="page-stack">
-        <div className="actions share-open-actions">
-          <button type="button" onClick={() => setOpenID(null)}>
-            ‹ 返回收藏夹
-          </button>
-          <span className="muted small">{tabTitle || openTitle}</span>
-          {opened && (
-            <button type="button" className="danger" onClick={() => void remove(opened)}>
-              <TrashIcon size={14} /> 移除收藏
-            </button>
-          )}
-        </div>
         <ShareBrowser
-          key={openID}
-          favoriteId={openID}
-          initialTitle={openTitle}
-          onTitle={setTabTitle}
+          key={openFav.id}
+          favoriteId={openFav.id}
+          initialTitle={openFav.title}
+          onHome={() => setOpenFav(null)}
         />
       </section>
     )
@@ -113,17 +99,14 @@ export default function Favorites() {
           </thead>
           <tbody>
             {items.map((fav) => (
-              <tr key={fav.id} onDoubleClick={() => { setOpenTitle(fav.title); setOpenID(fav.id) }}>
+              <tr key={fav.id} onDoubleClick={() => setOpenFav(fav)}>
                 <td>
                   <span className="shine-name">
                     <BookmarkIcon size={16} />
                     <button
                       type="button"
                       className="link"
-                      onClick={() => {
-                        setOpenTitle(fav.title)
-                        setOpenID(fav.id)
-                      }}
+                      onClick={() => setOpenFav(fav)}
                     >
                       {fav.title || fav.share_id}
                     </button>
@@ -137,10 +120,7 @@ export default function Favorites() {
                 <td className="fav-actions">
                   <button
                     type="button"
-                    onClick={() => {
-                      setOpenTitle(fav.title)
-                      setOpenID(fav.id)
-                    }}
+                    onClick={() => setOpenFav(fav)}
                   >
                     打开
                   </button>
