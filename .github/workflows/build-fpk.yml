@@ -118,7 +118,7 @@ jobs:
             PikPak for fnOS ${{ steps.version.outputs.version }} (x86 / linux-amd64).
 
             安装：应用中心 → 手动安装 → 选择 `pikpak-${{ steps.version.outputs.version }}-x86.fpk`。
-            详见 [`docs/install-m0.md`](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/install-m0.md)。
+            详见 [`docs/install.md`](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/install.md)。
 
             包内版本号：manifest `version` 与二进制 `--version` 均为 `${{ steps.version.outputs.version }}`。
             ${{ secrets.FN_DEVELOPER_KEY == '' && '⚠️ 本包未签名（仓库未配置 FN_DEVELOPER_KEY / FN_DEVELOPER_CERT），仅适合本地调试。' || '✅ 本包已用开发者证书签名。' }}

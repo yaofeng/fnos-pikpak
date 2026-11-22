@@ -1,18 +1,41 @@
 # PikPak for fnOS（飞牛）
 
-飞牛 NAS 的原生 PikPak 应用：用飞牛账号打开网页，即可浏览/管理自己的 PikPak 文件、离线下载、上传下载与在线播放。每个飞牛用户绑定自己的 PikPak 账号，互相看不到对方的文件。
+飞牛 NAS 的原生 PikPak 应用：用飞牛账号打开网页，即可浏览/管理自己的 PikPak 文件、离线下载、上传下载与在线播放。每个飞牛用户绑定自己的 PikPak 账号，互相看不到对方的文件、任务与设置。
 
-当前状态：**M0 验证版**。M0 不提供完整文件管理，而是一个可安装的诊断应用，用来在真机上确认设计里六个未决前提（网关行为、Range 流式、文件授权、搜索、排序、REST 上传）。
+当前版本：**1.0.0**。
 
-## 快速开始
+## 功能
+
+- **文件**：浏览、搜索、类型筛选、新建文件夹、重命名、移动（拖拽）、复制、删除。
+- **离线任务**：磁力/URL 新建任务，按状态筛选、重试、删除（可选同时删除文件）。
+- **传输**：PikPak → 飞牛下载（只能写授权目录）、飞牛 → PikPak 上传；进度、速度、暂停/继续/取消、重名策略。
+- **回收站**：还原、永久删除、清空。
+- **播放**：内置播放器，Range 代理让拖动进度条直接由 CDN 响应；签名下载地址不出后端。不转码，编码不支持时提示下载后本地播放。
+- **设置与诊断**：重名策略、播放模式、界面语言（中文/English）、全局并发、授权目录、版本与最近错误摘要。
+
+## 安装
+
+1. 从 [Releases](../../releases) 下载 `pikpak-<版本>-x86.fpk`，或本地 `make release`。
+2. 飞牛 → 应用中心 → 手动安装。
+3. 从桌面打开 **PikPak**，按提示绑定 PikPak 账号。
+
+完整步骤、排障与**真机验证清单**见 [`docs/install.md`](docs/install.md)。
+
+## 本地开发
 
 ```bash
-make m0          # 构建 dist/pikpak-<version>-x86.fpk
+make dev         # 构建前端 + 本机二进制，监听 http://127.0.0.1:8787
 make test        # Go 测试
+cd web && npm test   # 前端测试
 make web         # 只构建前端（产物被 go:embed 进二进制）
 ```
 
-然后把 `.fpk` 装到飞牛（x86）上，按 [`docs/install-m0.md`](docs/install-m0.md) 操作，按 [`docs/m0-report.md`](docs/m0-report.md) 填结论。
+`make dev` 用 `--dev-uid 1000` 模拟一个飞牛用户，绑定走真实的 OAuth 设备码流程。数据存在 `./.data/`（已 gitignore）。本机没有飞牛网关，所以：
+
+- `fnos.*` 相关接口返回 503（飞牛文件服务未配置），文件列表/任务/播放/设置照常可用；
+- 下载到本机时不再限制在授权目录（仅开发模式如此），但必须是绝对路径。
+
+不带 `--listen` 时只监听 `${TRIM_APPDEST}/app.sock`，与生产一致。
 
 ## 发布
 
@@ -23,18 +46,21 @@ make web         # 只构建前端（产物被 go:embed 进二进制）
 3. 把版本写进 manifest 的 `version`、二进制 `--version`，包名为 `pikpak-<version>-x86.fpk`；
 4. 校验包内版本后上传 Artifact，并创建 GitHub Release。
 
+打包前请先在真实设备上走一遍 [`docs/install.md`](docs/install.md) 的真机验证清单。
+
 CI 使用固定版本的 fnpack 并校验 SHA256。包默认未签名；在仓库 Secrets 配置 `FN_DEVELOPER_KEY` 与 `FN_DEVELOPER_CERT`（飞牛开发者证书 PEM）后即为签名包。本地构建同样可以指定版本：
 
 ```bash
-make m0 VERSION=1.2.3                # 未签名
+make fpk VERSION=1.2.3                # 未签名
 make fpk VERSION=1.2.3 FN_KEY=dev.key FN_CERT=dev.crt   # 签名
 ```
 
 ## 设计文档
 
 - 设计：[`docs/superpowers/specs/2026-11-21-fnos-pikpak-design.md`](docs/superpowers/specs/2026-11-21-fnos-pikpak-design.md)
-- M0 实现计划：[`docs/superpowers/plans/2026-11-21-fnos-pikpak-m0.md`](docs/superpowers/plans/2026-11-21-fnos-pikpak-m0.md)
+- v1 实现计划：[`docs/superpowers/plans/2026-11-22-fnos-pikpak-v1.md`](docs/superpowers/plans/2026-11-22-fnos-pikpak-v1.md)
 - PikPak 接口记录：[`docs/pikpak-api.md`](docs/pikpak-api.md)
+- 早期 M0 验证：[`docs/m0-report.md`](docs/m0-report.md)
 
 ## 结构
 
@@ -42,11 +68,11 @@ make fpk VERSION=1.2.3 FN_KEY=dev.key FN_CERT=dev.crt   # 签名
 cmd/main              fnOS 生命周期脚本（start/stop/status）
 cmd/pikpak            Go 入口（Unix socket + 内嵌前端）
 internal/fnos         身份头、Open API 客户端、路径授权
-internal/pikpak       PikPak 客户端（OAuth、只读接口、GCID、上传）
-internal/store        SQLite + AES-256-GCM 凭据存储
-internal/probe        探针与报告
-internal/httpapi      HTTP 路由
-internal/stream       Range 流式探针
+internal/pikpak       PikPak 客户端（OAuth、文件、离线任务、上传、下载）
+internal/store        SQLite + AES-256-GCM 凭据存储、任务与设置
+internal/transfer     每用户 FIFO 传输队列
+internal/playtoken    播放用 HMAC 令牌
+internal/httpapi      HTTP 路由（文件、任务、传输、播放代理、设置、诊断）
 web                   React + Vite 前端
 ```
 
@@ -55,37 +81,6 @@ web                   React + Vite 前端
 - 生产环境只监听 `${TRIM_APPDEST}/app.sock`（0600），不监听 TCP。
 - 身份只来自飞牛统一网关注入的 `X-Trim-Userid`；缺失 401，重复 400，绝不从请求参数取 uid。
 - 不以 root 运行（`run-as: package`）。
-- 令牌、设备码、签名下载地址不进日志、前端或报告；数据库与密钥为 0600。
-- 用户名下的下载只允许写入该用户在飞牛有权限的目录。
-
-## 开发调试
-
-不需要打包安装到 NAS，本机直接跑：
-
-```bash
-make dev        # 构建前端 + 本机二进制，监听 http://127.0.0.1:8787
-```
-
-打开这个地址，就能走完整的绑定流程（设备码）和 PikPak 探针（列表、配额、会员、排序、搜索、分页、并发限流、离线下载）。绑定的账号存在 `./.data/`（已 gitignore），重启后仍然有效；`POST /api/auth/logout` 可解绑。
-
-离线下载探针会在你的网盘根目录创建一个约 1 KB 的任务（`https://example.com/index.html`，被拒时回退到 `https://speed.hetzner.de/1MB.bin`），轮询到完成后再删除任务和文件，报告里会显示清理是否成功。
-
-上传探针默认上传一份内容固定的 20 MiB 文件，多数情况下会被秒传；请求体加 `"fresh": true` 会生成随机内容强制走真实上传，结束后自动永久删除该文件：
-
-```bash
-curl -s -X POST -H 'Content-Type: application/json' \
-  -d "{\"local_path\":\"$(curl -s http://127.0.0.1:8787/api/upload/probe/config | python3 -c 'import json,sys;print(json.load(sys.stdin)["generated_path"])')\",\"fresh\":true}" \
-  http://127.0.0.1:8787/api/upload/probe
-```
-
-本机没有飞牛网关，所以：
-
-- `fnos.*` 探针显示 `skip`（Open API 客户端未配置）；
-- 文件授权卡片返回 503（飞牛文件服务未配置）；
-- 其余健康检查、探针、导出报告、前端全部可用。
-
-不加 `--listen` 时只监听 `${TRIM_APPDEST}/app.sock`，与生产一致。`--dev-uid` 只在本地调试使用，生产不会设置。
-
-```bash
-curl -s http://127.0.0.1:8787/api/health
-```
+- 令牌、设备码、签名下载地址不进日志、前端或错误提示详情；数据库与密钥为 0600。
+- 默认代理播放：签名地址只留在后端；切换为"跳转"模式时浏览器会直连 PikPak CDN。
+- 下载只允许写入该飞牛用户有权限的目录；上传只允许读取这些目录。

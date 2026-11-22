@@ -1,5 +1,5 @@
 GO ?= go
-VERSION ?= 0.1.4
+VERSION ?= 1.0.0
 LDFLAGS := -s -w -X fnos-pikpak/internal/version.Version=$(VERSION)
 
 # Signing: fnpack needs a developer key/cert to produce an installable signed
@@ -13,7 +13,7 @@ else
 SIGN_ARGS := --key $(FN_KEY) --cert $(FN_CERT)
 endif
 
-.PHONY: build build-linux test genicon web dev set-version fpk m0
+.PHONY: build build-linux test genicon web dev set-version fpk release
 
 build:
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/pikpak ./cmd/pikpak
@@ -51,8 +51,7 @@ fpk: web build-linux genicon set-version
 	cp "$$f" "dist/pikpak-$(VERSION)-x86.fpk"; \
 	echo "dist/pikpak-$(VERSION)-x86.fpk"
 
-# M0 deliverable: the installable package plus the two docs the user fills in.
-m0: fpk
+# Installable package plus a pointer at the device checklist to run before a tag.
+release: fpk
 	@echo "安装包: dist/pikpak-$(VERSION)-x86.fpk"
-	@echo "安装说明: docs/install-m0.md"
-	@echo "报告模板: docs/m0-report.md"
+	@echo "安装与真机验证清单: docs/install.md"
