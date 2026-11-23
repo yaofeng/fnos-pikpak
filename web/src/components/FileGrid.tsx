@@ -13,16 +13,21 @@ type Props = {
   // thumbSrc maps a file to a thumbnail URL. A tile falls back to its icon
   // when the request fails (no thumbnail, expired link, offline).
   thumbSrc?: (f: FileItem) => string
+  // badge draws a local status in a tile corner: 视频收藏夹 puts ✅ bottom-left,
+  // the share browser puts ✅ (已转存) or 🌟 (已收藏视频) bottom-right.
+  badge?: (f: FileItem) => { side: 'left' | 'right'; icon: string; title: string } | null
 }
 
 // FileGrid is the icon view of the Finder: no card around each item, the name
 // highlighted when selected, and a single click selecting instead of a
 // checkbox.
-export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, thumbSrc }: Props) {
+export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, thumbSrc, badge }: Props) {
   const [failed, setFailed] = useState<Set<string>>(() => new Set())
   return (
     <div className="file-grid" role="listbox" aria-multiselectable="true">
-      {items.map((f, index) => (
+      {items.map((f, index) => {
+        const mark = badge?.(f)
+        return (
         <div
           key={f.id}
           data-file-id={f.id}
@@ -63,6 +68,11 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
               <FileIcon file={f} size={56} />
             )}
           </div>
+          {mark && (
+            <span className={`tile-badge ${mark.side}`} title={mark.title} aria-label={mark.title}>
+              {mark.icon}
+            </span>
+          )}
           <div className="tile-label">
             <span className="tile-name" title={f.name}>
               {f.name}
@@ -70,7 +80,8 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
             <span className="tile-meta">{isFolder(f) ? '文件夹' : formatSize(f.size)}</span>
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

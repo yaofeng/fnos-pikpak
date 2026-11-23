@@ -355,7 +355,6 @@ export default function Files() {
             placeholder="在当前目录中筛选"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            title="PikPak 不支持服务端搜索，这里只筛选已加载的条目"
           />
         </label>
       </div>
@@ -442,12 +441,7 @@ export default function Files() {
         </div>
       </div>
 
-      <p className="muted small">
-        排序与筛选只作用于已加载的条目（PikPak 列表接口不支持服务端排序/搜索）。
-      </p>
-
       {error && <p className="error">{error}</p>}
-      {notice && <p className="ok small">{notice}</p>}
 
       {!loading && shown.length === 0 && !error && (
         <p className="muted">{items.length === 0 ? '这个文件夹是空的。' : '没有匹配的条目。'}</p>
@@ -499,9 +493,12 @@ export default function Files() {
       </div>
 
       <div className="status-bar">
-        {selectedIds.length > 0
-          ? `选中 ${selectedIds.length} 项（共 ${shown.length} 项）`
-          : `共 ${shown.length} 项`}
+        <span>
+          {selectedIds.length > 0
+            ? `选中 ${selectedIds.length} 项（共 ${shown.length} 项）`
+            : `共 ${shown.length} 项`}
+        </span>
+        {notice && <span className="ok status-note">{notice}</span>}
       </div>
 
       {menu && (

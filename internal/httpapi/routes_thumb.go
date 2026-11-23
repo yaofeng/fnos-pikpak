@@ -133,6 +133,12 @@ func thumbShareToken(w http.ResponseWriter, r *http.Request, deps Deps, client *
 			}
 		}
 	}
+	// A public share needs no code at all: opening it with an empty one still
+	// seeds the session, which is what 视频收藏夹 needs for its thumbnails.
+	if info, err := client.GetShare(r.Context(), shareID, ""); err == nil {
+		deps.ShareSessions.put(uid, shareID, info.PassCodeToken, now)
+		return info.PassCodeToken, true
+	}
 	writeError(w, http.StatusBadRequest, "share_session_missing", "分享会话已过期，请重新打开分享")
 	return "", false
 }

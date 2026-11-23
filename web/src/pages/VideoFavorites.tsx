@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
+import { apiDelete, apiGet, apiPatch, apiPost, basePath, ApiError } from '../api'
 import Player from '../components/Player'
 import FileGrid from '../components/FileGrid'
 import { FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
@@ -16,7 +16,14 @@ type PlayTarget = { file_id: string; name: string; stream_url: string }
 // 我的视频/临时 first, so it survives the share going away.
 // toFileItem lets the saved video reuse the file manager's row and tile.
 function toFileItem(f: VideoFavorite): FileItem {
-  return { id: f.file_id, parent_id: '', name: f.display_name || f.name, kind: 'drive#file', size: f.size }
+  return {
+    id: f.file_id,
+    parent_id: '',
+    name: f.display_name || f.name,
+    kind: 'drive#file',
+    size: f.size,
+    restored: f.restored,
+  }
 }
 
 export default function VideoFavorites() {
@@ -97,7 +104,7 @@ export default function VideoFavorites() {
   async function fullPlay(f: VideoFavorite) {
     setBusy('prepare')
     setError('')
-    setNotice('正在把视频转存到「我的视频/临时」…')
+    setNotice(f.restored ? '正在打开 Pack From Shared 中已转存的视频…' : '正在把视频转存到「Pack From Shared」…')
     try {
       const started = await apiPost<{ job_id: string }>('videos/prepare', { video_favorite_id: f.id })
       const job = await waitForVideoJob(started.job_id, {
@@ -106,6 +113,7 @@ export default function VideoFavorites() {
       if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
       if (job.direct_url) {
         handToIINA(job.direct_url)
+        void load()
         return
       }
       playInline({
@@ -113,8 +121,43 @@ export default function VideoFavorites() {
         name: job.name || f.display_name || f.name,
         stream_url: job.stream_url,
       })
+      // The prepare recorded the restored copy, so the tile now earns its ✅.
+      void load()
     } catch (err) {
       setError((err as Error).message)
+      setNotice('')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  // 下载 restores the video into Pack From Shared first (reusing an existing
+  // copy), then queues that copy for download.
+  async function download(list: VideoFavorite[]) {
+    if (list.length === 0) return
+    setBusy('download')
+    setError('')
+    setNotice(`正在转存 ${list.length} 个视频以便下载…`)
+    try {
+      const fileIDs: string[] = []
+      for (const f of list) {
+        const started = await apiPost<{ job_id: string }>('videos/prepare', { video_favorite_id: f.id })
+        const job = await waitForVideoJob(started.job_id, {
+          get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
+        })
+        if (job.file_id) fileIDs.push(job.file_id)
+      }
+      const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', { file_ids: fileIDs })
+      const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
+      setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
+      clear()
+      void load()
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.code === 'download_dir_unset'
+          ? '还没有设置默认下载目录，请到「设置 → 传输」指定一个目录。'
+          : (err as Error).message,
+      )
       setNotice('')
     } finally {
       setBusy('')
@@ -210,6 +253,14 @@ export default function VideoFavorites() {
         >
           {busy === 'prepare' ? '准备中…' : '完整播放'}
         </button>
+        <button
+          type="button"
+          disabled={picked.length === 0 || busy !== ''}
+          onClick={() => void download(picked)}
+          title="先转存到「Pack From Shared」，再加入下载队列"
+        >
+          {busy === 'download' ? '准备下载…' : '下载'}
+        </button>
         <button type="button" disabled={!one || busy !== ''} onClick={() => one && void rename(one)}>
           重命名
         </button>
@@ -287,10 +338,10 @@ export default function VideoFavorites() {
               }}
               onSelect={(index, e) => select(order.indexOf(String(group.items[index].id)), e)}
               onOpen={(f) => {
-                // Opening plays the share's own stream: restoring a copy and
-                // running the cleanup is 完整播放's explicit, labelled action.
+                // A double click is 完整播放: the copy in Pack From Shared,
+                // restored only if it is not there yet.
                 const fav = group.items.find((g) => g.file_id === f.id)
-                if (fav) void preview(fav)
+                if (fav) void fullPlay(fav)
               }}
               onMenu={() => undefined}
               onDragStart={(f) => {
@@ -298,6 +349,9 @@ export default function VideoFavorites() {
                 if (fav) setDragging(fav)
               }}
               onDropOn={() => undefined}
+              badge={(f) =>
+                f.restored ? { side: 'left', icon: '✅', title: '已转存到 Pack From Shared' } : null
+              }
             />
           </section>
         ))
@@ -343,7 +397,7 @@ export default function VideoFavorites() {
                     key={f.id}
                     className={selected.has(String(f.id)) ? 'selected' : ''}
                     onClick={(e) => select(order.indexOf(String(f.id)), e)}
-                    onDoubleClick={() => void preview(f)}
+                    onDoubleClick={() => void fullPlay(f)}
                   >
                     <td className="col-open" />
                     <td>

@@ -12,6 +12,8 @@ function fav(id: number, extra: Partial<VideoFavorite> = {}): VideoFavorite {
     share_title: '',
     display_name: '',
     group_label: '',
+    restored: false,
+    restored_file_id: '',
     created_at: '2026-11-20T10:00:00Z',
     ...extra,
   }

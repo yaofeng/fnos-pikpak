@@ -118,6 +118,16 @@ export default function App() {
     return () => window.removeEventListener('pikpak:account-changed', load)
   }, [])
 
+  // The quota pill follows the account: a restore, download or upload on the
+  // NAS changes it, so it is re-read every 10 seconds while bound.
+  useEffect(() => {
+    if (!me?.bound) return
+    const timer = window.setInterval(() => {
+      apiGet<Account>('account').then(setAccount).catch(() => undefined)
+    }, 10_000)
+    return () => window.clearInterval(timer)
+  }, [me?.bound])
+
   // The stored language and tile size belong to the fnOS user; the browser
   // only supplies the starting guess for the language.
   useEffect(() => {

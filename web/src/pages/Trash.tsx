@@ -156,7 +156,6 @@ export default function Trash() {
       </div>
 
       {error && <p className="error">{error}</p>}
-      {notice && <p className="ok small">{notice}</p>}
 
       {!loading && items.length === 0 && !error && <p className="muted">回收站是空的。</p>}
 
@@ -172,7 +171,10 @@ export default function Trash() {
         </div>
       )}
 
-      <div className="status-bar">{ids.length > 0 ? `选中 ${ids.length} 项（共 ${items.length} 项）` : `共 ${items.length} 项`}</div>
+      <div className="status-bar">
+        <span>{ids.length > 0 ? `选中 ${ids.length} 项（共 ${items.length} 项）` : `共 ${items.length} 项`}</span>
+        {notice && <span className="ok status-note">{notice}</span>}
+      </div>
 
       <div ref={sentinel} className="sentinel" />
       {loading && <p className="muted">加载中…</p>}

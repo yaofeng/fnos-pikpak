@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"fnos-pikpak/internal/pikpak"
@@ -57,8 +58,9 @@ type videoSource struct {
 	favorite *store.VideoFavorite
 }
 
-// prepareVideo restores one share video into 我的视频/临时, making room first,
-// and returns a signed URL for the restored copy.
+// prepareVideo restores one share video into Pack From Shared, making room
+// first, and returns a signed URL for that copy. A copy an earlier 完整播放
+// left there is reused: the video is never restored twice.
 func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (videoPrepareResult, error) {
 	client, err := deps.Sessions.ClientFor(ctx, uid)
 	if errors.Is(err, pikpak.ErrNotBound) {
@@ -76,6 +78,15 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 	if err != nil {
 		return videoPrepareResult{}, videoUpstreamMessage(err)
 	}
+	// 转存后的文件名 uses the local rename when there is one.
+	targetName := link.Name
+	var restoredID string
+	if source.favorite != nil {
+		if name := strings.TrimSpace(source.favorite.DisplayName); name != "" {
+			targetName = name
+		}
+		restoredID = source.favorite.RestoredFileID
+	}
 	if source.favorite != nil {
 		// Refresh the saved metadata so the favourites list shows the real
 		// name, size and owner; the display name and pass code stay as saved.
@@ -86,42 +97,30 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 		})
 	}
 
-	tempID, err := tempFolderID(ctx, client)
+	// PikPak drops a restored share into the root folder "Pack From Shared",
+	// creating it on the first restore; older accounts see the file in the
+	// root itself. Both are listed up front, so an existing copy short-circuits
+	// the whole restore.
+	beforeRoot, err := client.ListAllFiles(ctx, "")
 	if err != nil {
 		return videoPrepareResult{}, videoUpstreamMessage(err)
 	}
-	// A previous 完整播放 of the same video leaves it in 临时; playing that
-	// copy again costs nothing and restores nothing.
-	if tempID != "" {
-		items, err := client.ListAllFiles(ctx, tempID)
-		if err != nil {
+	var beforePack []pikpak.File
+	if pack, ok := findFolder(beforeRoot, packFromSharedName); ok {
+		if beforePack, err = client.ListAllFiles(ctx, pack.ID); err != nil {
 			return videoPrepareResult{}, videoUpstreamMessage(err)
 		}
-		if existing, ok := findSameVideo(items, link.Name, link.Size); ok {
-			return finishedVideoResult(ctx, deps, client, uid, existing)
-		}
+	}
+	if existing, ok := findRestoredCopy(beforePack, beforeRoot, restoredID, targetName, link.Name, link.Size); ok {
+		return reuseRestoredCopy(ctx, deps, client, uid, source, existing, targetName)
 	}
 
 	if err := makeRoom(ctx, client, link.Size); err != nil {
 		return videoPrepareResult{}, err
 	}
 
-	// PikPak drops a restored share into the root folder "Pack From Shared",
-	// creating it on the first restore; older accounts see the file in the
-	// root itself, so both containers are snapshotted and the pack wins.
-	beforeRoot, err := client.ListAllFiles(ctx, "")
-	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
-	}
 	knownRoot := fileIDs(beforeRoot)
-	var knownPack map[string]bool
-	if pack, ok := findFolder(beforeRoot, packFromSharedName); ok {
-		items, err := client.ListAllFiles(ctx, pack.ID)
-		if err != nil {
-			return videoPrepareResult{}, videoUpstreamMessage(err)
-		}
-		knownPack = fileIDs(items)
-	}
+	knownPack := fileIDs(beforePack)
 	restoreTask, err := client.RestoreShare(ctx, source.shareID, source.token, []string{source.fileID})
 	if err != nil {
 		return videoPrepareResult{}, videoUpstreamMessage(err)
@@ -147,23 +146,66 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 	if !ok {
 		return videoPrepareResult{}, errors.New("转存已完成，但没有找到该视频")
 	}
-
-	videoFolder, err := ensureFolder(ctx, client, "", videoFolderName)
-	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
+	if restored.Name != targetName {
+		if err := client.Rename(ctx, restored.ID, targetName); err != nil {
+			return videoPrepareResult{}, videoUpstreamMessage(err)
+		}
+		restored.Name = targetName
 	}
-	tempFolder, err := ensureFolder(ctx, client, videoFolder, tempFolderName)
-	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
-	}
-	moveTask, err := client.BatchMove(ctx, []string{restored.ID}, tempFolder)
-	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
-	}
-	if err := waitTask(ctx, client, moveTask); err != nil {
-		return videoPrepareResult{}, err
-	}
+	recordRestoredCopy(ctx, deps, uid, source, restored.ID)
 	return finishedVideoResult(ctx, deps, client, uid, restored)
+}
+
+// reuseRestoredCopy plays a copy an earlier 完整播放 left in Pack From Shared,
+// renaming it to the local name when that changed since.
+func reuseRestoredCopy(ctx context.Context, deps Deps, client *pikpak.Client, uid int, source videoSource, file pikpak.File, targetName string) (videoPrepareResult, error) {
+	if file.Name != targetName {
+		if err := client.Rename(ctx, file.ID, targetName); err != nil {
+			return videoPrepareResult{}, videoUpstreamMessage(err)
+		}
+		file.Name = targetName
+	}
+	recordRestoredCopy(ctx, deps, uid, source, file.ID)
+	return finishedVideoResult(ctx, deps, client, uid, file)
+}
+
+// recordRestoredCopy remembers which drive file backs the favourite; the list
+// then marks it ✅ and the next play skips the restore.
+func recordRestoredCopy(ctx context.Context, deps Deps, uid int, source videoSource, fileID string) {
+	if source.favorite == nil {
+		return
+	}
+	_ = deps.Store.SetVideoFavoriteRestoredID(ctx, uid, source.favorite.ID, fileID)
+}
+
+// findRestoredCopy looks for a copy a previous restore left behind: first by
+// the id the favourite remembers, then by name and size inside Pack From
+// Shared, the only folder a restore writes to. The root is searched by id
+// only: a file that merely shares a name there is someone else's.
+func findRestoredCopy(pack, root []pikpak.File, rememberedID, targetName, originalName string, size int64) (pikpak.File, bool) {
+	if rememberedID != "" {
+		if f, ok := findFileByID(pack, rememberedID); ok {
+			return f, true
+		}
+		if f, ok := findFileByID(root, rememberedID); ok {
+			return f, true
+		}
+	}
+	for _, name := range []string{targetName, originalName} {
+		if f, ok := findSameVideo(pack, name, size); ok {
+			return f, true
+		}
+	}
+	return pikpak.File{}, false
+}
+
+func findFileByID(files []pikpak.File, id string) (pikpak.File, bool) {
+	for _, f := range files {
+		if f.ID == id {
+			return f, true
+		}
+	}
+	return pikpak.File{}, false
 }
 
 // finishedVideoResult signs the proxy URL and, when 设置 says IINA, adds the

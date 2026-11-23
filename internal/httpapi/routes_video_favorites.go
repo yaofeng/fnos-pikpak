@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -21,6 +22,7 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusInternalServerError, "internal", "读取视频收藏失败")
 			return
 		}
+		markRestoredCopies(r.Context(), deps, id.UID, items)
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	})
 
@@ -181,4 +183,51 @@ func writeVideoFavoriteError(w http.ResponseWriter, err error, fallback string) 
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "internal", fallback)
+}
+
+// markRestoredCopies sets Restored on the favourites whose copy from an earlier
+// 完整播放 still exists — in Pack From Shared, or the root for older accounts.
+// One listing answers for the whole page; when the drive cannot be read the
+// stored id stands in, so a network hiccup never hides a saved badge.
+func markRestoredCopies(ctx context.Context, deps Deps, uid int, items []store.VideoFavorite) {
+	wanted := false
+	for _, fav := range items {
+		if fav.RestoredFileID != "" {
+			wanted = true
+			break
+		}
+	}
+	if !wanted {
+		return
+	}
+	client, err := deps.Sessions.ClientFor(ctx, uid)
+	if err != nil {
+		for i := range items {
+			items[i].Restored = items[i].RestoredFileID != ""
+		}
+		return
+	}
+	root, err := client.ListAllFiles(ctx, "")
+	if err != nil {
+		for i := range items {
+			items[i].Restored = items[i].RestoredFileID != ""
+		}
+		return
+	}
+	present := fileIDs(root)
+	if pack, ok := findFolder(root, packFromSharedName); ok {
+		files, err := client.ListAllFiles(ctx, pack.ID)
+		if err != nil {
+			for i := range items {
+				items[i].Restored = items[i].RestoredFileID != ""
+			}
+			return
+		}
+		for id := range fileIDs(files) {
+			present[id] = true
+		}
+	}
+	for i := range items {
+		items[i].Restored = items[i].RestoredFileID != "" && present[items[i].RestoredFileID]
+	}
 }

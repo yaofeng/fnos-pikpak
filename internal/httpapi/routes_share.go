@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -63,7 +64,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			"title":           title,
 			"owner":           info.Owner,
 			"protected":       passCode != "",
-			"items":           nonNilFiles(info.Files),
+			"items":           annotateShareFiles(r.Context(), deps, client, id.UID, shareID, info.Files),
 			"next_page_token": info.NextPageToken,
 		})
 	})
@@ -87,7 +88,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"items":           nonNilFiles(page.Items),
+			"items":           annotateShareFiles(r.Context(), deps, client, id.UID, shareID, page.Items),
 			"next_page_token": page.NextPageToken,
 		})
 	})
@@ -348,4 +349,45 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+}
+
+// annotateShareFiles adds the two local badges the share browser shows on a
+// video: restored when Pack From Shared already holds a copy with its name and
+// size (the copy 完整播放 would reuse), favorited when it is in 视频收藏夹. The
+// restore wins on the tile. A drive that cannot be read simply carries no
+// badges — the listing itself still shows.
+func annotateShareFiles(ctx context.Context, deps Deps, client *pikpak.Client, uid int, shareID string, files []pikpak.File) []map[string]any {
+	favorited := map[string]bool{}
+	if deps.Store != nil {
+		if ids, err := deps.Store.VideoFavoriteFileIDs(ctx, uid, shareID); err == nil {
+			favorited = ids
+		}
+	}
+	restored := map[string]bool{}
+	if root, err := client.ListAllFiles(ctx, ""); err == nil {
+		var pack []pikpak.File
+		if folder, ok := findFolder(root, packFromSharedName); ok {
+			if items, err := client.ListAllFiles(ctx, folder.ID); err == nil {
+				pack = items
+			}
+		}
+		for _, f := range files {
+			if f.Kind != "drive#file" {
+				continue
+			}
+			if _, ok := findSameVideo(pack, f.Name, f.Size); ok {
+				restored[f.ID] = true
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(files))
+	for _, f := range files {
+		raw, _ := json.Marshal(f)
+		var item map[string]any
+		_ = json.Unmarshal(raw, &item)
+		item["restored"] = restored[f.ID]
+		item["favorited"] = favorited[f.ID]
+		out = append(out, item)
+	}
+	return out
 }

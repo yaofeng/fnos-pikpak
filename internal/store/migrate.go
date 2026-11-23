@@ -135,4 +135,7 @@ ALTER TABLE share_favorites ADD COLUMN display_title TEXT NOT NULL DEFAULT '';
 	`
 ALTER TABLE video_favorites ADD COLUMN group_label TEXT NOT NULL DEFAULT '';
 `,
+	`
+ALTER TABLE video_favorites ADD COLUMN restored_file_id TEXT NOT NULL DEFAULT '';
+`,
 }

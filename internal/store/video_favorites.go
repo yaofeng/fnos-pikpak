@@ -26,6 +26,11 @@ type VideoFavorite struct {
 	GroupLabel string    `json:"group_label"`
 	CreatedAt  time.Time `json:"created_at"`
 
+	// RestoredFileID is the copy left in Pack From Shared by an earlier
+	// 完整播放; Restored says whether that copy still exists upstream.
+	RestoredFileID string `json:"restored_file_id"`
+	Restored       bool   `json:"restored"`
+
 	PassCode string `json:"-"`
 	encPass  []byte
 }
@@ -66,7 +71,7 @@ ON CONFLICT(uid, share_id, file_id) DO UPDATE SET
 
 func (s *Store) videoFavoriteByKey(ctx context.Context, uid int, shareID, fileID string) (VideoFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, restored_file_id, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND share_id = ? AND file_id = ?`, uid, shareID, fileID)
 	return scanVideoFavorite(row)
 }
@@ -95,7 +100,7 @@ WHERE uid = ? AND share_id = ? AND length(pass_code_enc) > 0 LIMIT 1`, uid, shar
 // ListVideoFavorites returns the user's saved videos, newest first.
 func (s *Store) ListVideoFavorites(ctx context.Context, uid int) ([]VideoFavorite, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, restored_file_id, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 	if err != nil {
 		return nil, err
@@ -116,7 +121,7 @@ FROM video_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 // GetVideoFavorite returns one saved video with its pass code decrypted.
 func (s *Store) GetVideoFavorite(ctx context.Context, uid int, id int64) (VideoFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, restored_file_id, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanVideoFavorite(row)
 	if err != nil {
@@ -148,7 +153,7 @@ func (s *Store) RenameVideoFavorite(ctx context.Context, uid int, id int64, name
 		return VideoFavorite{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, restored_file_id, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanVideoFavorite(row)
 	if err != nil {
@@ -177,7 +182,7 @@ func scanVideoFavorite(row rowScanner) (VideoFavorite, error) {
 	var fav VideoFavorite
 	var created string
 	if err := row.Scan(&fav.ID, &fav.UID, &fav.ShareID, &fav.FileID, &fav.Name, &fav.Size,
-		&fav.Owner, &fav.ShareTitle, &fav.DisplayName, &fav.GroupLabel, &fav.encPass, &created); err != nil {
+		&fav.Owner, &fav.ShareTitle, &fav.DisplayName, &fav.GroupLabel, &fav.RestoredFileID, &fav.encPass, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return VideoFavorite{}, ErrNotFound
 		}
@@ -225,7 +230,7 @@ func (s *Store) MoveVideoFavoriteGroup(ctx context.Context, uid int, id int64, l
 		return VideoFavorite{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, pass_code_enc, created_at
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, restored_file_id, pass_code_enc, created_at
 FROM video_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanVideoFavorite(row)
 	if err != nil {
@@ -255,4 +260,43 @@ func (s *Store) RenameVideoGroup(ctx context.Context, uid int, fromKey, label st
 		}
 	}
 	return len(ids), nil
+}
+
+// SetVideoFavoriteRestoredID remembers the copy 完整播放 left in Pack From
+// Shared, so the next play reuses it instead of restoring again. An empty id
+// forgets the copy (it no longer exists upstream).
+func (s *Store) SetVideoFavoriteRestoredID(ctx context.Context, uid int, id int64, fileID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE video_favorites SET restored_file_id = ? WHERE uid = ? AND id = ?`, fileID, uid, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// VideoFavoriteFileIDs is the set of share file ids this user saved from one
+// share; the share browser flags those videos with 🌟.
+func (s *Store) VideoFavoriteFileIDs(ctx context.Context, uid int, shareID string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT file_id FROM video_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }

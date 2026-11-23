@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
+import { apiDelete, apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
 import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
@@ -8,7 +8,6 @@ import FileGrid from './FileGrid'
 import FileTable from './FileTable'
 import Player from './Player'
 import {
-  BookmarkIcon,
   DownloadIcon,
   GridIcon,
   HomeIcon,
@@ -91,7 +90,9 @@ export default function ShareBrowser({
   const [playing, setPlaying] = useState<FileItem | null>(null)
   // directPlay carries a prepared copy's signed URL straight into the player.
   const [directPlay, setDirectPlay] = useState<{ file_id: string; name: string; stream_url: string } | null>(null)
-  const [favorited, setFavorited] = useState(false)
+  // The star in the address bar toggles this share's 分享收藏, like the star
+  // in a browser: filled when saved, click again to remove.
+  const [favoriteID, setFavoriteID] = useState(favoriteId ?? 0)
 
   // The toolbars follow 我的文件: a local filter, a sort key, and the view.
   const [q, setQ] = useState('')
@@ -190,9 +191,12 @@ export default function ShareBrowser({
     void loadFolder(next.length ? next[next.length - 1].id : '')
   }
 
+  // A double click on a video is 完整播放: restore a copy into Pack From
+  // Shared (reusing one already there) and play that. 预览 stays the explicit
+  // toolbar button.
   function openFile(f: FileItem) {
     if (isFolder(f)) enter(f)
-    else void preview(f)
+    else void fullPlay(f)
   }
 
   // handToIINA opens the external player with the original link the server
@@ -258,7 +262,7 @@ export default function ShareBrowser({
     if (isFolder(f)) return
     setBusy('prepare')
     setError('')
-    setNotice('正在把视频转存到「我的视频/临时」…')
+    setNotice('正在把视频转存到「Pack From Shared」…')
     try {
       const started = await apiPost<{ job_id: string }>('videos/prepare', {
         share_id: shareId,
@@ -286,20 +290,65 @@ export default function ShareBrowser({
     }
   }
 
-  async function addFavorite() {
+  async function toggleFavorite() {
+    if (busy === 'favorite') return
     setBusy('favorite')
     setError('')
     try {
-      await apiPost('share-favorites', {
-        url: favoriteId ? undefined : url,
-        share_id: favoriteId ? shareId : undefined,
-        title,
-        pass_code: passCode,
-      })
-      setFavorited(true)
-      setNotice('已收藏这个分享')
+      if (favoriteID) {
+        await apiDelete(`share-favorites/${favoriteID}`)
+        setFavoriteID(0)
+        setNotice('已取消收藏')
+      } else {
+        const created = await apiPost<{ id: number }>('share-favorites', {
+          url: favoriteId ? undefined : url,
+          share_id: favoriteId ? shareId : undefined,
+          title,
+          pass_code: passCode,
+        })
+        setFavoriteID(created.id ?? 0)
+        setNotice('已收藏这个分享')
+      }
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  // 下载 first restores a copy into Pack From Shared (reusing one already
+  // there), then hands the copy to the download queue.
+  async function download(list: FileItem[]) {
+    const videos = list.filter((f) => !isFolder(f) && isVideo(f))
+    if (videos.length === 0) return
+    setBusy('download')
+    setError('')
+    setNotice(`正在转存 ${videos.length} 个视频以便下载…`)
+    try {
+      const fileIDs: string[] = []
+      for (const f of videos) {
+        const started = await apiPost<{ job_id: string }>('videos/prepare', {
+          share_id: shareId,
+          file_id: f.id,
+        })
+        const job = await waitForVideoJob(started.job_id, {
+          get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
+        })
+        if (job.file_id) fileIDs.push(job.file_id)
+      }
+      const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', {
+        file_ids: fileIDs,
+      })
+      const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
+      setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
+      clearSelection()
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.code === 'download_dir_unset'
+          ? '还没有设置默认下载目录，请到「设置 → 传输」指定一个目录。'
+          : (err as Error).message,
+      )
+      setNotice('')
     } finally {
       setBusy('')
     }
@@ -334,13 +383,13 @@ export default function ShareBrowser({
   }
 
   const single = picked.length === 1 ? picked[0] : null
+  const pickedVideos = pickedFiles.filter((f) => isVideo(f))
   // 预览 and 完整播放 act on one video at a time; a folder or a multi-select
   // leaves them disabled rather than guessing.
   const singleVideo = single && !isFolder(single) && isVideo(single) ? single : null
-  const inFavorites = favoriteId !== undefined
 
   return (
-    <section className="share-browser">
+    <section className="file-page share-browser">
       {needPass ? (
         <form
           className="share-pass"
@@ -415,6 +464,16 @@ export default function ShareBrowser({
                 {loading && <span className="muted small">加载中…</span>}
               </nav>
             </div>
+            <button
+              className={favoriteID ? 'icon-btn fav-star active' : 'icon-btn fav-star'}
+              type="button"
+              disabled={!shareId || busy === 'favorite'}
+              onClick={() => void toggleFavorite()}
+              title={favoriteID ? '取消收藏这个分享' : '收藏这个分享'}
+              aria-label={favoriteID ? '取消收藏这个分享' : '收藏这个分享'}
+            >
+              <StarIcon filled={favoriteID > 0} />
+            </button>
             <label className="fm-search">
               <SearchIcon />
               <input
@@ -422,7 +481,6 @@ export default function ShareBrowser({
                 placeholder="在当前目录中筛选"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                title="PikPak 分享接口不支持服务端搜索，这里只筛选已加载的条目"
               />
             </label>
           </div>
@@ -456,19 +514,15 @@ export default function ShareBrowser({
               <RestoreIcon />
               转存
             </button>
-            {inFavorites ? (
-              <span className="tag">已在收藏夹</span>
-            ) : (
-              <button
-                className="btn-icon"
-                type="button"
-                disabled={!shareId || busy === 'favorite' || favorited}
-                onClick={() => void addFavorite()}
-              >
-                <BookmarkIcon />
-                {favorited ? '已收藏' : '收藏分享'}
-              </button>
-            )}
+            <button
+              className="btn-icon"
+              type="button"
+              disabled={pickedVideos.length === 0 || busy === 'download'}
+              onClick={() => void download(picked)}
+            >
+              <DownloadIcon />
+              {busy === 'download' ? '准备下载…' : '下载'}
+            </button>
             <button
               className="btn-icon"
               type="button"
@@ -541,6 +595,13 @@ export default function ShareBrowser({
                 onMenu={() => undefined}
                 onDragStart={() => undefined}
                 onDropOn={() => undefined}
+                badge={(f) =>
+                  f.restored
+                    ? { side: 'right', icon: '✅', title: '已转存到 Pack From Shared' }
+                    : f.favorited
+                      ? { side: 'right', icon: '🌟', title: '已在视频收藏夹' }
+                      : null
+                }
               />
             )}
           </div>

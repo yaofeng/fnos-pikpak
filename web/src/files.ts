@@ -8,6 +8,10 @@ export type FileItem = {
   category?: string
   mime_type?: string
   modified_time?: string
+  // Local badges the share browser and 视频收藏夹 draw on a tile: a copy
+  // already sits in Pack From Shared, or the video is in 视频收藏夹.
+  restored?: boolean
+  favorited?: boolean
 }
 
 export type SortKey = 'name' | 'size' | 'modified'

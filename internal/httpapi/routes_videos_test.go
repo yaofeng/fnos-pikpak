@@ -34,6 +34,7 @@ type videoUpstream struct {
 
 	deleted    []string
 	moved      []string
+	renamed    []string
 	restores   int
 	aboutCalls int
 }
@@ -95,6 +96,12 @@ func (u *videoUpstream) snapshot() (deleted, moved []string, restores, aboutCall
 	return append([]string(nil), u.deleted...), append([]string(nil), u.moved...), u.restores, u.aboutCalls
 }
 
+func (u *videoUpstream) renames() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.renamed...)
+}
+
 func (u *videoUpstream) handler() http.Handler {
 	mux := http.NewServeMux()
 
@@ -151,6 +158,25 @@ func (u *videoUpstream) handler() http.Handler {
 	})
 
 	mux.HandleFunc("/drive/v1/files/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			var body struct {
+				Name string `json:"name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			id := strings.TrimPrefix(r.URL.Path, "/drive/v1/files/")
+			u.mu.Lock()
+			u.renamed = append(u.renamed, id+"="+body.Name)
+			for _, items := range u.folders {
+				for _, item := range items {
+					if item["id"] == id {
+						item["name"] = body.Name
+					}
+				}
+			}
+			u.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"file": map[string]any{"id": id, "name": body.Name}})
+			return
+		}
 		// A fresh direct link for one drive file (GetDownloadLink).
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":               strings.TrimPrefix(r.URL.Path, "/drive/v1/files/"),
@@ -328,10 +354,11 @@ func TestPrepareRefusesASecondJobForTheSameUser(t *testing.T) {
 	}
 }
 
-func TestPrepareRestoresAndMovesToTemp(t *testing.T) {
+func TestPrepareRestoresIntoPackFromShared(t *testing.T) {
 	_, h, up := newVideoEnv(t, func(up *videoUpstream) {
 		up.set("", folderEntry("f1", "我的视频"), folderEntry("f2", "Pack From Shared"), fileEntry("old0", "old.bin", 10, "2026-10-01T00:00:00Z"))
 		up.set("f1", folderEntry("f3", "临时"))
+		up.restoreParent = "f2"
 	})
 
 	job := readyVideoJob(t, h, `{"share_id":"VOabc123","file_id":"sf2"}`)
@@ -342,11 +369,11 @@ func TestPrepareRestoresAndMovesToTemp(t *testing.T) {
 		t.Fatalf("stream url = %v", job["stream_url"])
 	}
 	_, moved, restores, _ := up.snapshot()
-	if restores != 1 || len(moved) != 1 || moved[0] != "df1" {
-		t.Fatalf("restores=%d moved=%v", restores, moved)
+	if restores != 1 || len(moved) != 0 {
+		t.Fatalf("restores=%d moved=%v, want the copy left in Pack From Shared", restores, moved)
 	}
-	if temp := up.children("f3"); len(temp) != 1 || temp[0]["id"] != "df1" {
-		t.Fatalf("临时 = %v", temp)
+	if pack := up.children("f2"); len(pack) != 1 || pack[0]["id"] != "df1" {
+		t.Fatalf("Pack From Shared = %v", pack)
 	}
 	if deleted, _, _, _ := up.snapshot(); len(deleted) != 0 {
 		t.Fatalf("deleted %v with enough space", deleted)
@@ -427,8 +454,11 @@ func TestPreparePicksTheNewRootFileNotTheOldOne(t *testing.T) {
 	if job["state"] != "ready" {
 		t.Fatalf("job = %v", job)
 	}
-	if _, moved, _, _ := up.snapshot(); len(moved) != 1 || moved[0] != "df1" {
-		t.Fatalf("moved = %v, want the freshly restored file", moved)
+	if job["file_id"] != "df1" {
+		t.Fatalf("file_id = %v, want the freshly restored file", job["file_id"])
+	}
+	if _, moved, _, _ := up.snapshot(); len(moved) != 0 {
+		t.Fatalf("moved = %v, want the copy left where it landed", moved)
 	}
 }
 
@@ -498,11 +528,11 @@ func TestPrepareFindsTheVideoInsidePackFromShared(t *testing.T) {
 		t.Fatalf("stream url = %v", job["stream_url"])
 	}
 	_, moved, _, _ := up.snapshot()
-	if len(moved) != 1 || moved[0] != "df1" {
-		t.Fatalf("moved = %v", moved)
+	if len(moved) != 0 {
+		t.Fatalf("moved = %v, want the copy left in Pack From Shared", moved)
 	}
-	if temp := up.children("f3"); len(temp) != 1 || temp[0]["id"] != "df1" {
-		t.Fatalf("temp folder = %v", temp)
+	if pack := up.children("pack1"); len(pack) != 1 || pack[0]["id"] != "df1" {
+		t.Fatalf("Pack From Shared = %v", pack)
 	}
 }
 
@@ -539,5 +569,141 @@ func TestPreviewHandsIINATheDirectLink(t *testing.T) {
 	}
 	if body["direct_url"] != "https://cdn.example/new.mp4" {
 		t.Fatalf("direct_url = %v", body["direct_url"])
+	}
+}
+
+// A video 完整播放 already restored is played from Pack From Shared; a second
+// click must not restore a duplicate.
+func TestPrepareReusesTheRestoredCopy(t *testing.T) {
+	deps, h, up := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("f1", "我的视频"), folderEntry("f2", "Pack From Shared"))
+		up.set("f1", folderEntry("f3", "临时"))
+		up.set("f2", fileEntry("df1", "new.mp4", 50, "2026-11-20T10:00:00Z"))
+	})
+	fav, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "new.mp4", Size: 50,
+	})
+	if err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df1"); err != nil {
+		t.Fatalf("restored id: %v", err)
+	}
+
+	job := readyVideoJob(t, h, `{"video_favorite_id":`+jsonInt(fav.ID)+`}`)
+	if job["state"] != "ready" {
+		t.Fatalf("job = %v", job)
+	}
+	if job["file_id"] != "df1" {
+		t.Fatalf("file_id = %v, want the copy already in Pack From Shared", job["file_id"])
+	}
+	if _, _, restores, _ := up.snapshot(); restores != 0 {
+		t.Fatalf("restored %d times, want the existing copy", restores)
+	}
+	if pack := up.children("f2"); len(pack) != 1 {
+		t.Fatalf("Pack From Shared = %v", pack)
+	}
+}
+
+// 转存后的文件名 uses the local rename, so Pack From Shared and the download
+// both carry the name the person sees in 视频收藏夹.
+func TestPrepareRenamesTheRestoredCopyToTheDisplayName(t *testing.T) {
+	deps, h, up := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("f1", "我的视频"), folderEntry("f2", "Pack From Shared"))
+		up.set("f1", folderEntry("f3", "临时"))
+		up.restoreParent = "f2"
+	})
+	fav, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "new.mp4", Size: 50,
+	})
+	if err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+	if _, err := deps.Store.RenameVideoFavorite(t.Context(), 1000, fav.ID, "我的片名.mp4"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	job := readyVideoJob(t, h, `{"video_favorite_id":`+jsonInt(fav.ID)+`}`)
+	if job["state"] != "ready" {
+		t.Fatalf("job = %v", job)
+	}
+	if job["name"] != "我的片名.mp4" {
+		t.Fatalf("name = %v", job["name"])
+	}
+	if got := up.renames(); len(got) != 1 || got[0] != "df1=我的片名.mp4" {
+		t.Fatalf("renames = %v", got)
+	}
+	saved, err := deps.Store.GetVideoFavorite(t.Context(), 1000, fav.ID)
+	if err != nil || saved.RestoredFileID != "df1" {
+		t.Fatalf("saved = %+v err=%v", saved, err)
+	}
+}
+
+// 视频收藏夹 marks the videos whose restored copy still exists, so the page
+// can show ✅ and 完整播放 can skip the restore.
+func TestVideoFavoritesMarkRestoredCopies(t *testing.T) {
+	deps, h, up := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("f2", "Pack From Shared"))
+		up.set("f2", fileEntry("df1", "new.mp4", 50, "2026-11-20T10:00:00Z"))
+	})
+	fav, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "new.mp4", Size: 50,
+	})
+	if err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df1"); err != nil {
+		t.Fatalf("restored id: %v", err)
+	}
+
+	_, list := getJSON(t, h, "/api/video-favorites", "1000")
+	items, _ := list["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["restored"] != true {
+		t.Fatalf("items = %v", list["items"])
+	}
+	if items[0].(map[string]any)["restored_file_id"] != "df1" {
+		t.Fatalf("restored_file_id = %v", items[0])
+	}
+
+	up.take("df1")
+	_, list = getJSON(t, h, "/api/video-favorites", "1000")
+	items, _ = list["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["restored"] != false {
+		t.Fatalf("after the copy went away: %v", list["items"])
+	}
+}
+
+// 分享收藏夹 badges a video whose copy already sits in Pack From Shared (✅)
+// or that is in 视频收藏夹 (🌟); the listing carries both flags and the tile
+// shows the restore one first.
+func TestShareListingMarksRestoredAndFavoritedVideos(t *testing.T) {
+	deps, h, up := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("f2", "Pack From Shared"))
+		up.set("f2", fileEntry("df9", "new.mp4", 50, "2026-11-20T10:00:00Z"))
+	})
+	if _, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "new.mp4", Size: 50,
+	}); err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+
+	rec, body := getJSON(t, h, "/api/share?url=VOabc123", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open share = %d %v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", body["items"])
+	}
+	item := items[0].(map[string]any)
+	if item["restored"] != true || item["favorited"] != true {
+		t.Fatalf("flags = %v", item)
+	}
+
+	up.set("f2")
+	_, body = getJSON(t, h, "/api/share?url=VOabc123", "1000")
+	item = body["items"].([]any)[0].(map[string]any)
+	if item["restored"] != false || item["favorited"] != true {
+		t.Fatalf("after the copy went away: %v", item)
 	}
 }

@@ -87,15 +87,18 @@ export default function Favorites() {
   }
 
   if (openFav !== null) {
+    // The share opens as the page itself, laid out exactly like 我的文件; the
+    // list reloads when it closes, since the star can add or remove favourites.
     return (
-      <section className="page-stack">
-        <ShareBrowser
-          key={openFav.id}
-          favoriteId={openFav.id}
-          initialTitle={openFav.title}
-          onHome={() => setOpenFav(null)}
-        />
-      </section>
+      <ShareBrowser
+        key={openFav.id}
+        favoriteId={openFav.id}
+        initialTitle={openFav.title}
+        onHome={() => {
+          setOpenFav(null)
+          void load()
+        }}
+      />
     )
   }
 
@@ -180,12 +183,6 @@ export default function Favorites() {
                   {fav.created_at ? new Date(fav.created_at).toLocaleString() : '—'}
                 </td>
                 <td className="fav-actions">
-                  <button
-                    type="button"
-                    onClick={() => setOpenFav(fav)}
-                  >
-                    打开
-                  </button>
                   <button type="button" onClick={() => void rename(fav)}>
                     重命名
                   </button>
@@ -198,6 +195,11 @@ export default function Favorites() {
           </tbody>
         </table>
       )}
+
+      <div className="status-bar">
+        <span>{items ? `共 ${items.length} 项` : '加载中…'}</span>
+        {error && <span className="error status-note">{error}</span>}
+      </div>
     </section>
   )
 }

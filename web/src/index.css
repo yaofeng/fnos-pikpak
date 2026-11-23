@@ -594,6 +594,7 @@ button.primary {
 }
 
 .tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -628,6 +629,24 @@ button.primary {
 .tile-icon svg {
   width: calc(56px * var(--tile-scale, 1));
   height: calc(56px * var(--tile-scale, 1));
+}
+
+/* A tile-corner status: ✅ for a copy already in Pack From Shared, 🌟 for a
+   video in 视频收藏夹. */
+.tile-badge {
+  position: absolute;
+  bottom: 6px;
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.tile-badge.left {
+  left: 8px;
+}
+
+.tile-badge.right {
+  right: 8px;
 }
 
 .tile-thumb {
@@ -1237,6 +1256,8 @@ button.primary {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Leave room for the fixed status bar. */
+  padding-bottom: 44px;
 }
 
 .file-page .file-body,
@@ -1345,13 +1366,14 @@ button.primary {
 
 /* A share opens as a native browser inside the tab, laid out like 我的文件:
    a heading, breadcrumbs, and a file table with per-row actions. */
+/* The share browser is the 我的文件 page pointed at a share: same padding
+   (from .page), same toolbars, same scrolling file body. */
 .share-browser {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 16px 20px 0;
   background: var(--bg);
 }
 
@@ -1425,6 +1447,12 @@ button.primary {
   gap: 8px;
 }
 
+/* 分享收藏夹's star sits where a browser puts bookmark: the right end of the
+   address bar, filled once the share is saved. */
+.fav-star.active {
+  color: #f5b301;
+}
+
 .fav-add input {
   flex: 1 1 320px;
   min-width: 0;
@@ -1477,7 +1505,7 @@ button.primary {
 }
 
 .fav-actions {
-  width: 132px;
+  white-space: nowrap;
 }
 
 .fav-actions button + button {
