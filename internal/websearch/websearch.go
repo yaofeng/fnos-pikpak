@@ -31,6 +31,11 @@ var shareSites = []string{Site, "mypikpak.net", "pikpak.me", "mypikpak.me"}
 // returns organic results as JSON.
 const defaultEndpoint = "https://google.serper.dev/search"
 
+// defaultResolveEndpoint turns Google's opaque /goto links back into the
+// address they lead to. It is free (credits: 0), and without it a wrapped
+// share cannot be told apart from any other page.
+const defaultResolveEndpoint = "https://google.serper.dev/resolve"
+
 // MaxPage is the last page a provider will serve; each page is one paid query.
 const MaxPage = 10
 
@@ -76,12 +81,19 @@ type Result struct {
 // it at a local server.
 type Client struct {
 	Endpoint string
-	HTTP     *http.Client
+	// ResolveEndpoint answers google.com/goto wrappers. Empty means the
+	// production endpoint.
+	ResolveEndpoint string
+	HTTP            *http.Client
 }
 
 // New returns the production client.
 func New() *Client {
-	return &Client{Endpoint: defaultEndpoint, HTTP: &http.Client{Timeout: 20 * time.Second}}
+	return &Client{
+		Endpoint:        defaultEndpoint,
+		ResolveEndpoint: defaultResolveEndpoint,
+		HTTP:            &http.Client{Timeout: 20 * time.Second},
+	}
 }
 
 type serperResult struct {
@@ -129,6 +141,9 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 	// rawSeen counts every link the provider returned once, even when a
 	// second host answers with the same list.
 	rawSeen := make(map[string]bool, pageSize)
+	// resolved remembers what a wrapped link led to, so the same token sent
+	// by more than one host costs one resolution.
+	resolved := make(map[string]string)
 	raw := 0
 	var unreachable error
 	for _, site := range shareSites {
@@ -145,8 +160,9 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 			unreachable = err
 			continue
 		}
-		for _, r := range hits {
-			link := unwrapLink(r.Link)
+		links := c.resolveWrapped(ctx, apiKey, hits, resolved)
+		for i, r := range hits {
+			link := links[i]
 			if _, ok := webAddress(link); !ok {
 				continue
 			}
@@ -284,6 +300,116 @@ func webAddress(raw string) (string, bool) {
 		return "", false
 	}
 	return raw, true
+}
+
+// resolveWrapped turns each hit's address into the one the provider meant.
+// A google.com/url?q= wrapper is decoded locally; a google.com/goto token is
+// encrypted, so the provider's free /resolve endpoint swaps it back. When a
+// resolution fails the wrapper stays, and the caller treats it as a page that
+// is not a share.
+func (c *Client) resolveWrapped(ctx context.Context, apiKey string, hits []serperResult, cache map[string]string) []string {
+	links := make([]string, len(hits))
+	pending := make(map[string]bool)
+	var ask []string
+	for i, hit := range hits {
+		link := unwrapLink(hit.Link)
+		if dest, ok := cache[link]; ok {
+			links[i] = dest
+			continue
+		}
+		if isGotoLink(link) && !pending[link] {
+			pending[link] = true
+			ask = append(ask, link)
+		}
+		links[i] = link
+	}
+	if len(ask) == 0 {
+		return links
+	}
+	got, err := c.resolveLinks(ctx, apiKey, ask)
+	if err != nil {
+		// A link that cannot be resolved is still listed under the wide
+		// scope; it just cannot be opened as a share.
+		return links
+	}
+	for i, asked := range ask {
+		cache[asked] = got[i]
+	}
+	for i := range links {
+		if dest, ok := cache[links[i]]; ok {
+			links[i] = dest
+		}
+	}
+	return links
+}
+
+type resolveResponse struct {
+	Organic []struct {
+		Link string `json:"link"`
+	} `json:"organic"`
+}
+
+// resolveLinks asks the provider to swap its opaque wrappers for the real
+// addresses. The call costs no credits and the order is preserved.
+func (c *Client) resolveLinks(ctx context.Context, apiKey string, links []string) ([]string, error) {
+	body := struct {
+		Organic []map[string]string `json:"organic"`
+	}{Organic: make([]map[string]string, 0, len(links))}
+	for _, link := range links {
+		body.Organic = append(body.Organic, map[string]string{"link": link})
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := c.ResolveEndpoint
+	if endpoint == "" {
+		endpoint = defaultResolveEndpoint
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("websearch: resolve: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, &UpstreamError{Status: resp.StatusCode}
+	}
+	var parsed resolveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("websearch: decode resolve: %w", err)
+	}
+	if len(parsed.Organic) < len(links) {
+		return nil, errors.New("websearch: resolve answered with fewer links")
+	}
+	out := make([]string, len(links))
+	for i := range links {
+		dest := unwrapLink(parsed.Organic[i].Link)
+		if dest == "" {
+			dest = links[i]
+		}
+		out[i] = dest
+	}
+	return out, nil
+}
+
+// isGotoLink reports whether raw is one of Google's opaque click wrappers.
+func isGotoLink(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return isGoogleHost(strings.ToLower(u.Hostname())) && strings.TrimSuffix(u.Path, "/") == "/goto"
 }
 
 // searchSite runs one site-scoped query and hands back every organic hit the

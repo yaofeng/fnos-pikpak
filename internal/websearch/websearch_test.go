@@ -215,6 +215,93 @@ func TestSearchUnwrapsAProviderRedirect(t *testing.T) {
 	}
 }
 
+// Google's newer /goto token is encrypted, so it cannot be decoded locally:
+// the provider's free /resolve endpoint is what turns it back into the share.
+func TestSearchResolvesAGotoWrapperBeforeJudgingIt(t *testing.T) {
+	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
+	dest := "https://mypikpak.com/s/VN9"
+	srv, asked := providerServer(t, []map[string]any{
+		{"title": "分享", "link": wrapped, "snippet": "相关"},
+	}, map[string]string{wrapped: dest})
+	c := &Client{Endpoint: srv.URL + "/search", ResolveEndpoint: srv.URL + "/resolve", HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 1 || ans.Results[0].URL != dest || !ans.Results[0].Share {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+	// The same token from the other hosts costs one resolution, not four.
+	if len(*asked) != 1 || (*asked)[0] != wrapped {
+		t.Fatalf("resolved links = %v", *asked)
+	}
+}
+
+// A resolution that fails must not fail the search: the wrapper is listed
+// under the wide scope and simply is not a share.
+func TestSearchKeepsTheWrapperWhenResolutionFails(t *testing.T) {
+	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/resolve") {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"organic": []map[string]any{
+			{"title": "分享", "link": wrapped, "snippet": "相关"},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{Endpoint: srv.URL + "/search", ResolveEndpoint: srv.URL + "/resolve", HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 0 {
+		t.Fatalf("an unresolved wrapper was listed as a share: %+v", ans.Results)
+	}
+
+	ans, err = c.Search(context.Background(), "key-123", "大模型", 1, ScopeSite)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 1 || ans.Results[0].URL != wrapped || ans.Results[0].Share {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+}
+
+// providerServer answers searches with organic results and resolves wrapped
+// links through a second path on the same server, recording what it resolved.
+func providerServer(t *testing.T, organic []map[string]any, dests map[string]string) (*httptest.Server, *[]string) {
+	t.Helper()
+	asked := &[]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/resolve") {
+			var body struct {
+				Organic []struct {
+					Link string `json:"link"`
+				} `json:"organic"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			out := make([]map[string]any, 0, len(body.Organic))
+			for _, item := range body.Organic {
+				*asked = append(*asked, item.Link)
+				dest := dests[item.Link]
+				if dest == "" {
+					dest = item.Link
+				}
+				out = append(out, map[string]any{"link": dest})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"organic": out, "credits": 0})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"organic": organic})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, asked
+}
+
 func TestUnwrapLink(t *testing.T) {
 	dest := "https://mypikpak.com/s/VN9"
 	payload := append([]byte{0x08, 0x01, 0x12, byte(len(dest))}, []byte(dest)...)

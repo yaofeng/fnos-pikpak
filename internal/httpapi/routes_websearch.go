@@ -14,7 +14,9 @@ import (
 )
 
 const (
-	webSearchTimeout  = 20 * time.Second
+	// The search itself is a handful of requests, but unwrapping Google's
+	// opaque result links can add a resolve call per host.
+	webSearchTimeout  = 30 * time.Second
 	maxWebSearchQuery = 100
 )
 

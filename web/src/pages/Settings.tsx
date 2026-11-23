@@ -365,7 +365,8 @@ export default function Settings() {
         </label>
         <p className="muted small">
           「全网搜索」通过 Serper（Google 结果）搜索 mypikpak.com 站内分享页。Key 只存在本机数据库，读取设置时不会返回，
-          也不会写进日志。可以在 serper.dev 免费申请。
+          也不会写进日志。可以在 serper.dev 免费申请。搜索结果里的 google.com/goto 跳转链接会用同一个 Key 调用
+          /resolve 接口换回真实地址，不消耗额度。
         </p>
 
         <label className="field">
