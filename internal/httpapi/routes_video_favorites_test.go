@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"fnos-pikpak/internal/store"
 )
 
 func patchJSON(t *testing.T, h http.Handler, path, uid, body string) (*httptest.ResponseRecorder, map[string]any) {
@@ -138,5 +140,63 @@ func TestVideoFavoriteGroupsRenameAndMove(t *testing.T) {
 	items, _ := list["items"].([]any)
 	if len(items) != 1 || items[0].(map[string]any)["group_label"] != "朋友分享" {
 		t.Fatalf("items = %v", list["items"])
+	}
+}
+
+// The check badge means "a copy still exists". A copy the user deleted sits in
+// the trash, which PikPak's plain listing still returns, so the listing must
+// leave it out or the badge outlives the copy.
+func TestARestoredCopyInTheTrashLosesItsBadge(t *testing.T) {
+	deps, h, _ := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("pack-1", packFromSharedName))
+		up.set("pack-1", map[string]any{
+			"id": "copy-1", "name": "a.mp4", "kind": "drive#file", "size": "9", "trashed": true,
+		})
+	})
+	rec, body := postJSON(t, h, "/api/video-favorites", "1000",
+		`{"share_id":"VOabc123","file_id":"sf2","name":"a.mp4","size":9}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add status = %d body=%v", rec.Code, body)
+	}
+	id := int64(body["id"].(float64))
+	if err := deps.Store.SetVideoFavoriteRestoredID(context.Background(), 1000, id, "copy-1"); err != nil {
+		t.Fatalf("remember the copy: %v", err)
+	}
+
+	_, list := getJSON(t, h, "/api/video-favorites", "1000")
+	items, _ := list["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", list["items"])
+	}
+	first, _ := items[0].(map[string]any)
+	if first["restored"] != false {
+		t.Fatalf("restored = %v, want false for a trashed copy", first["restored"])
+	}
+}
+
+// The stored id only says where a copy used to be. When the drive cannot be
+// read the badge stays off, so a copy the user deleted never keeps a badge.
+func TestTheRestoredBadgeIsNotAssumedWhenTheDriveCannotBeRead(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	h := NewMux(deps)
+	ctx := context.Background()
+	fav, err := deps.Store.AddVideoFavorite(ctx, 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "a.mp4", Size: 9,
+	})
+	if err != nil {
+		t.Fatalf("AddVideoFavorite: %v", err)
+	}
+	if err := deps.Store.SetVideoFavoriteRestoredID(ctx, 1000, fav.ID, "copy-1"); err != nil {
+		t.Fatalf("remember the copy: %v", err)
+	}
+
+	_, list := getJSON(t, h, "/api/video-favorites", "1000")
+	items, _ := list["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", list["items"])
+	}
+	first, _ := items[0].(map[string]any)
+	if first["restored"] != false {
+		t.Fatalf("restored = %v, want false when the drive cannot be read", first["restored"])
 	}
 }

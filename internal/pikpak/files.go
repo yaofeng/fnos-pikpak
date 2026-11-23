@@ -124,6 +124,9 @@ type File struct {
 	Category     string `json:"category"`
 	MimeType     string `json:"mime_type"`
 	ModifiedTime string `json:"modified_time"`
+	// Trashed marks a file sitting in the trash. PikPak's plain listing still
+	// returns those, so existence checks must filter them out.
+	Trashed bool `json:"trashed"`
 	// ThumbnailLink is a short-lived CDN URL. It stays server-side: the
 	// browser asks /api/thumb instead.
 	ThumbnailLink string `json:"-"`
@@ -142,6 +145,7 @@ func (f *File) UnmarshalJSON(b []byte) error {
 		Category      string          `json:"file_category"`
 		MimeType      string          `json:"mime_type"`
 		ModifiedTime  string          `json:"modified_time"`
+		Trashed       bool            `json:"trashed"`
 		ThumbnailLink string          `json:"thumbnail_link"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
@@ -157,6 +161,7 @@ func (f *File) UnmarshalJSON(b []byte) error {
 		Category:      raw.Category,
 		MimeType:      raw.MimeType,
 		ModifiedTime:  raw.ModifiedTime,
+		Trashed:       raw.Trashed,
 		ThumbnailLink: raw.ThumbnailLink,
 	}
 	return nil
@@ -242,16 +247,28 @@ func (c *Client) ListFiles(ctx context.Context, parentID string, o ListOptions) 
 // walks folders to find the oldest videos and to notice a freshly restored
 // file, and both need the whole folder, not its first page. The page cap
 // keeps a misbehaving upstream from looping forever.
+//
+// Every caller asks whether a file still exists, so trashed entries never
+// count: the filter asks PikPak for live files only, and anything the server
+// still returns trashed — a file the user deleted — is dropped here too.
 func (c *Client) ListAllFiles(ctx context.Context, parentID string) ([]File, error) {
 	const maxPages = 50
 	out := []File{}
 	pageToken := ""
 	for i := 0; i < maxPages; i++ {
-		page, err := c.ListFiles(ctx, parentID, ListOptions{PageToken: pageToken, Limit: 100})
+		page, err := c.ListFiles(ctx, parentID, ListOptions{
+			PageToken: pageToken,
+			Limit:     100,
+			Filters:   liveFilesFilter,
+		})
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, page.Items...)
+		for _, f := range page.Items {
+			if !f.Trashed {
+				out = append(out, f)
+			}
+		}
 		if page.NextPageToken == "" {
 			return out, nil
 		}
@@ -259,6 +276,9 @@ func (c *Client) ListAllFiles(ctx context.Context, parentID string) ([]File, err
 	}
 	return out, nil
 }
+
+// liveFilesFilter excludes trashed files from a listing.
+const liveFilesFilter = `{"trashed":{"eq":false}}`
 
 func (c *Client) About(ctx context.Context) (About, error) {
 	var raw struct {
