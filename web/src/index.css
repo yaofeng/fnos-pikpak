@@ -1606,7 +1606,10 @@ a.btn-icon {
 }
 
 /* 全网搜索 reads like a search engine: one field, then plain results. */
+/* width: 100% is what makes the box as wide as the column: a plain flex
+   child with margin auto shrinks to its content instead. */
 .search-engine {
+  width: 100%;
   max-width: 640px;
   margin: 0 auto;
   padding: 8vh 16px 48px;
