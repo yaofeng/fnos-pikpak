@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { apiGet, apiPost, ApiError } from '../api'
 import { copyText } from '../clipboard'
 import ShareBrowser, { type ShareState } from '../components/ShareBrowser'
 import { GlobeIcon, SearchIcon } from '../components/icons'
-import { crumbFromURL, type WebResult, type WebSearchPage } from '../search'
+import { appendResults, crumbFromURL, hasMorePages, type WebResult, type WebSearchPage } from '../search'
 import { afterClose, openTab, type WebTab } from '../webTabs'
 
 // The provider serves ten pages, each one a paid query.
@@ -13,13 +13,17 @@ const maxPage = 10
 // Search is 全网搜索: a search-engine query limited to the PikPak site. The
 // person types only the keyword — the server adds the site: filter. A result
 // opens in an in-app tab (its page is rendered on mypikpak.com), and a
-// right-click on a tab can copy its address.
+// right-click on a tab can copy its address. Results append as the list is
+// scrolled: there is no pager, and a short page keeps loading until the
+// window is filled or the keyword runs out.
 export default function Search() {
   const [q, setQ] = useState('')
   const [items, setItems] = useState<WebResult[] | null>(null)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [needKey, setNeedKey] = useState(false)
 
@@ -55,20 +59,23 @@ export default function Search() {
     return () => window.clearTimeout(timer)
   }, [tabNote])
 
-  async function run(e?: FormEvent, wanted = 1) {
+  async function run(e?: FormEvent) {
     e?.preventDefault()
     const keyword = q.trim()
     if (!keyword) return
     setLoading(true)
     setError('')
     setNeedKey(false)
+    setHasMore(false)
     try {
       const body = await apiGet<WebSearchPage>(
-        `web-search?q=${encodeURIComponent(keyword)}&page=${wanted}`,
+        `web-search?q=${encodeURIComponent(keyword)}&page=1`,
       )
-      setItems(body.items ?? [])
+      const got = body.items ?? []
+      setItems(got)
       setQuery(body.query ?? keyword)
-      setPage(body.page ?? wanted)
+      setPage(1)
+      setHasMore(hasMorePages(1, got.length, maxPage))
     } catch (err) {
       // A missing or rejected provider key is a setup step, not a failed
       // search: point at 参数设置 instead of shouting in red.
@@ -83,6 +90,51 @@ export default function Search() {
       setLoading(false)
     }
   }
+
+  // The next page appends to the list already on screen. It is one more paid
+  // query, so nothing asks for it until the list is scrolled near its end (or
+  // the window still has room after a short page).
+  const loadMore = useCallback(async () => {
+    if (loading || loadingMore || !hasMore || items === null) return
+    setLoadingMore(true)
+    const next = page + 1
+    try {
+      const body = await apiGet<WebSearchPage>(
+        `web-search?q=${encodeURIComponent(query)}&page=${next}`,
+      )
+      const got = body.items ?? []
+      setItems((prev) => appendResults(prev ?? [], got))
+      setPage(next)
+      setHasMore(hasMorePages(next, got.length, maxPage))
+    } catch (err) {
+      // Keep what is on screen; the person can search again.
+      setError((err as Error).message)
+      setHasMore(false)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [hasMore, items, loading, loadingMore, page, query])
+
+  // The sentinel sits after the last result. Re-observing whenever the list
+  // grows means a page too short to fill the window loads the next one at
+  // once, instead of waiting for a scroll that cannot happen.
+  const sentinel = useRef<HTMLDivElement | null>(null)
+  const loadMoreRef = useRef(loadMore)
+  useEffect(() => {
+    loadMoreRef.current = loadMore
+  }, [loadMore])
+  useEffect(() => {
+    const node = sentinel.current
+    if (!node || !hasMore || loading || loadingMore) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMoreRef.current()
+      },
+      { rootMargin: '300px 0px' },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMore, loading, loadingMore, items?.length])
 
   function openResult(hit: WebResult) {
     const got = openTab(tabs, { id: nextTabId.current++, title: hit.title, url: hit.url })
@@ -204,10 +256,6 @@ export default function Search() {
                 {loading ? '搜索中…' : '搜索'}
               </button>
             </div>
-            <p className="se-hint">
-              通过搜索引擎查找 mypikpak.com 上的公开分享页，站内限定由服务端自动拼接，不用自己写 site: 语法。
-              结果只在应用内打开，右键标签页可以复制地址。
-            </p>
           </form>
 
           {needKey && (
@@ -218,17 +266,7 @@ export default function Search() {
           {error && <p className="error se-error">{error}</p>}
 
           {searched && items.length > 0 && (
-            <p className="se-count">
-              找到 {items.length} 条结果 · 第 {page} 页
-            </p>
-          )}
-          {searched && items.length === 0 && page > 1 && (
-            <p className="se-count">
-              第 {page} 页没有更多结果。
-              <button type="button" className="link" onClick={() => void run(undefined, 1)}>
-                回到第 1 页
-              </button>
-            </p>
+            <p className="se-count">已加载 {items.length} 条结果</p>
           )}
           {searched && items.length === 0 && page === 1 && (
             <p className="se-count">
@@ -261,15 +299,9 @@ export default function Search() {
             </ol>
           )}
 
-          {searched && (
-            <div className="se-pager">
-              <button type="button" disabled={page <= 1 || loading} onClick={() => void run(undefined, page - 1)}>
-                上一页
-              </button>
-              <span className="muted small">第 {page} 页</span>
-              <button type="button" disabled={page >= maxPage || loading} onClick={() => void run(undefined, page + 1)}>
-                下一页
-              </button>
+          {searched && items.length > 0 && (
+            <div className="se-more" ref={sentinel} aria-live="polite">
+              {loadingMore ? '正在加载更多…' : hasMore ? '' : '没有更多结果了'}
             </div>
           )}
         </div>

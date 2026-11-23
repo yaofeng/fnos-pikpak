@@ -708,13 +708,23 @@ a.btn-icon {
   color: var(--fg);
 }
 
-.tile-meta {
-  font-size: 12px;
+/* A file's size rides in the icon's bottom-right corner, on the same kind of
+   white disc as the status badge opposite it. A folder shows nothing there:
+   the label under the icon is just the name. */
+.tile-size {
+  position: absolute;
+  right: 2px;
+  bottom: 4px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: var(--card);
   color: var(--muted);
-}
-
-.tile.selected .tile-meta {
-  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  pointer-events: none;
 }
 
 .folder-list {
@@ -1585,19 +1595,14 @@ a.btn-icon {
   max-width: 420px;
 }
 
-.se-pager {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+/* Results append as the list is scrolled; this line is also the sentinel the
+   page watches, so it must stay in the flow even when it has nothing to say. */
+.se-more {
+  min-height: 28px;
   padding: 18px 0 0;
-}
-
-.se-pager button {
-  padding: 6px 14px;
-}
-
-.se-pager button:disabled {
-  opacity: 0.45;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 /* 全网搜索 reads like a search engine: one field, then plain results. */
@@ -1676,13 +1681,6 @@ a.btn-icon {
 
 .se-field button:disabled {
   opacity: 0.45;
-}
-
-.se-hint {
-  margin: -4px 8px 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .se-count {
