@@ -203,6 +203,19 @@ export default function App() {
     }
   }, [me?.bound])
 
+  // Pages draw their own menus, so the browser's default context menu (reload,
+  // save image, back…) is never right-clicked into view. Form fields keep it,
+  // where paste and spell-check still matter.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      e.preventDefault()
+    }
+    window.addEventListener('contextmenu', onContextMenu)
+    return () => window.removeEventListener('contextmenu', onContextMenu)
+  }, [])
+
   // The stored language and tile size belong to the fnOS user; the browser
   // only supplies the starting guess for the language.
   useEffect(() => {

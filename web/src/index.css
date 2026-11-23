@@ -351,6 +351,12 @@ button.primary {
   margin-bottom: 8px;
 }
 
+/* 去全网搜索 is a router Link drawn as one of the toolbar buttons. */
+a.btn-icon {
+  text-decoration: none;
+  color: var(--fg);
+}
+
 .btn-icon {
   display: inline-flex;
   align-items: center;
@@ -801,6 +807,17 @@ button.primary {
   grid-template-columns: 220px 1fr;
   height: 100vh;
   overflow: hidden;
+  /* The chrome is not copy text: a drag over a page selects files, not
+     labels. Fields keep a caret and their native menu. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app input,
+.app textarea,
+.app select {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .sidebar {
