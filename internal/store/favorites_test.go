@@ -38,6 +38,59 @@ func TestShareFavoritesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMoveShareFavoriteShareKeepsTheRowWhenTheWriteFails(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	fav, err := s.AddShareFavorite(ctx, 1000, "VOabc123", "旧链接", "")
+	if err != nil {
+		t.Fatalf("AddShareFavorite: %v", err)
+	}
+	// A database that cannot take the update is not a duplicate share id:
+	// the stale-link tidy-up must report the error and leave the row alone.
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TRIGGER refuse_update BEFORE UPDATE ON share_favorites
+BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	if _, err := s.MoveShareFavoriteShare(ctx, 1000, fav.ID, "GQnXxT2o5qDNIWou9I", "新链接", ""); err == nil {
+		t.Fatal("a failed update looked like a successful move")
+	}
+	list, err := s.ListShareFavorites(ctx, 1000)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != fav.ID {
+		t.Fatalf("the favorite was dropped by a failed update: %+v", list)
+	}
+}
+
+func TestShareFavoritesCanMoveALinkToItsShareID(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	fav, err := s.AddShareFavorite(ctx, 1000, "https://mypikpak.com/s/VOabc123", "旧链接", "7f3a")
+	if err != nil {
+		t.Fatalf("AddShareFavorite: %v", err)
+	}
+
+	// The pass code is sealed against the share id, so the caller re-supplies
+	// it and the row is re-sealed under the new key.
+	got, err := s.MoveShareFavoriteShare(ctx, 1000, fav.ID, "VOabc123", "旧链接", "7f3a")
+	if err != nil {
+		t.Fatalf("MoveShareFavoriteShare: %v", err)
+	}
+	if got.ShareID != "VOabc123" {
+		t.Fatalf("moved favorite = %+v", got)
+	}
+	full, err := s.GetShareFavorite(ctx, 1000, fav.ID)
+	if err != nil {
+		t.Fatalf("GetShareFavorite: %v", err)
+	}
+	if full.PassCode != "7f3a" {
+		t.Fatalf("the code was not re-sealed under the new key: %q", full.PassCode)
+	}
+}
+
 func TestShareFavoritesUpsertKeepsTheStoredPassCode(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()

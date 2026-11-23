@@ -18,8 +18,8 @@ const (
 	videoJobFailed  = "failed"
 )
 
-// videoPrepareResult is what a finished prepare hands the browser: the drive
-// file in 临时 and a signed URL that plays it.
+// videoPrepareResult is what a finished prepare hands the browser: the copy in
+// Pack From Shared and a signed URL that plays it.
 type videoPrepareResult struct {
 	FileID    string `json:"file_id"`
 	Name      string `json:"name"`

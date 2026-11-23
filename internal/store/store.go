@@ -105,8 +105,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// LoadOrCreateKey returns the 32-byte encryption key, creating it with 0600 on
-// first run. Losing this file means every user must re-bind.
 // SecretKey returns a copy of the master key. Callers derive purpose-specific
 // keys from it (the play-token secret, for example) instead of sharing the
 // credential-encryption key itself.
@@ -116,6 +114,8 @@ func (s *Store) SecretKey() []byte {
 	return out
 }
 
+// LoadOrCreateKey returns the 32-byte encryption key, creating it with 0600 on
+// first run. Losing this file means every user must re-bind.
 func LoadOrCreateKey(path string) ([]byte, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err

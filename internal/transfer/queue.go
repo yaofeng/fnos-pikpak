@@ -149,7 +149,6 @@ func (q *Queue) loop(ctx context.Context) {
 type pendingJob struct {
 	uid      int
 	id       string
-	created  time.Time
 	download *store.DownloadJob
 	upload   *store.UploadJob
 }
@@ -175,12 +174,12 @@ func (q *Queue) schedule(ctx context.Context) {
 		if takeDownload {
 			d := downloads[i]
 			i++
-			merged = append(merged, pendingJob{uid: d.UID, id: d.ID, created: d.CreatedAt, download: &d})
+			merged = append(merged, pendingJob{uid: d.UID, id: d.ID, download: &d})
 			continue
 		}
 		u := uploads[j]
 		j++
-		merged = append(merged, pendingJob{uid: u.UID, id: u.ID, created: u.CreatedAt, upload: &u})
+		merged = append(merged, pendingJob{uid: u.UID, id: u.ID, upload: &u})
 	}
 
 	// One FIFO per user. Users take turns: the one served longest ago starts

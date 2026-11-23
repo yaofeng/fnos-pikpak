@@ -25,6 +25,13 @@ func testJob(t *testing.T, size int64) store.DownloadJob {
 	}
 }
 
+// LinkSourceFunc adapts a function to LinkSource for tests.
+type LinkSourceFunc func(ctx context.Context, fileID string) (Link, error)
+
+func (f LinkSourceFunc) DownloadLink(ctx context.Context, fileID string) (Link, error) {
+	return f(ctx, fileID)
+}
+
 func staticLink(url string, size int64) LinkSourceFunc {
 	return func(context.Context, string) (Link, error) { return Link{URL: url, Size: size}, nil }
 }

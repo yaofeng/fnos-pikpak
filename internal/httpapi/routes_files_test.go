@@ -191,6 +191,28 @@ func TestFilesRejectsBadLimit(t *testing.T) {
 	}
 }
 
+func TestUpstreamRateLimitIs429(t *testing.T) {
+	// PikPak rate-limits requests without setting its offline-quota code; the
+	// refusal is expected and the client must be told to wait, not that the
+	// upstream is broken.
+	rec := httptest.NewRecorder()
+	writeUpstreamError(rec, &pikpak.APIError{Status: http.StatusTooManyRequests})
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Error.Code != "too_many_requests" {
+		t.Fatalf("code = %q, want too_many_requests", body.Error.Code)
+	}
+}
+
 func TestUpstreamReauthIsUnauthorized(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeUpstreamError(rec, pikpak.ErrReauthRequired)

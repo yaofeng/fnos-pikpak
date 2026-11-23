@@ -131,16 +131,6 @@ func (c *Client) RetryTask(ctx context.Context, id string) error {
 	}, nil)
 }
 
-// ClearTasks removes every finished task from the list. The body is what the
-// official web client sends; an empty body clears nothing.
-func (c *Client) ClearTasks(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/tasks:clear", map[string]any{
-		"type":      "offline",
-		"phases":    []string{"PHASE_TYPE_COMPLETE", "PHASE_TYPE_ERROR"},
-		"client_id": "",
-	}, nil)
-}
-
 const (
 	// The first page is re-read after every delete round instead of following
 	// page tokens: deleting shifts the list, and a token would skip entries.
@@ -209,15 +199,6 @@ func (c *Client) DeleteTasks(ctx context.Context, ids []string, deleteFiles bool
 	q.Set("task_ids", strings.Join(ids, ","))
 	q.Set("delete_files", strconv.FormatBool(deleteFiles))
 	return c.do(ctx, http.MethodDelete, c.BaseDrive+"/drive/v1/tasks?"+q.Encode(), nil, nil)
-}
-
-// DeletePermanently purges files, skipping the trash. v1 needs it for empty
-// trash and for cleaning up after upload probes.
-func (c *Client) DeletePermanently(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	return c.do(ctx, http.MethodPost, c.BaseDrive+"/drive/v1/files:batchDelete", map[string]any{"ids": ids}, nil)
 }
 
 // WaitTask polls until the task reaches a terminal phase, the timeout expires,

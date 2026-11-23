@@ -78,8 +78,8 @@ func TestGetShareReturnsTheFilesAndPassToken(t *testing.T) {
 	if info.Files[0].Name != "资料" || info.Files[0].Kind != "drive#folder" {
 		t.Fatalf("files[0] = %+v", info.Files[0])
 	}
-	if info.FileNum != 2 || info.CreatedAt != "2025-11-22T16:05:25.004+08:00" || info.ExpireAt != -1 {
-		t.Fatalf("meta = file_num=%d created=%q expire=%d", info.FileNum, info.CreatedAt, info.ExpireAt)
+	if info.CreatedAt != "2025-11-22T16:05:25.004+08:00" || info.ExpireAt != -1 {
+		t.Fatalf("meta = created=%q expire=%d", info.CreatedAt, info.ExpireAt)
 	}
 	if info.Owner != "海砂" || info.Avatar != "https://avatar.example/sea.jpg" {
 		t.Fatalf("owner = %q avatar = %q", info.Owner, info.Avatar)

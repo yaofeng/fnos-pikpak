@@ -421,6 +421,27 @@ func providerServer(t *testing.T, organic []map[string]any, dests map[string]str
 	return srv, asked
 }
 
+// A provider result is untrusted text, so only Google's own domains may be
+// treated as its click redirects; a look-alike host would otherwise make the
+// backend fetch an address the result chose.
+func TestIsGoogleHostRejectsLookAlikes(t *testing.T) {
+	cases := map[string]bool{
+		"google.com":          true,
+		"www.google.com":      true,
+		"google.com.hk":       true,
+		"www.google.co.uk":    true,
+		"google.de":           true,
+		"google.evil.com":     false,
+		"google.com.evil.com": false,
+		"notgoogle.com":       false,
+	}
+	for host, want := range cases {
+		if got := isGoogleHost(host); got != want {
+			t.Fatalf("isGoogleHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
 func TestUnwrapLink(t *testing.T) {
 	dest := "https://mypikpak.com/s/VN9"
 	payload := append([]byte{0x08, 0x01, 0x12, byte(len(dest))}, []byte(dest)...)

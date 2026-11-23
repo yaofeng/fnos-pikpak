@@ -45,12 +45,6 @@ type LinkSource interface {
 	DownloadLink(ctx context.Context, fileID string) (Link, error)
 }
 
-type LinkSourceFunc func(ctx context.Context, fileID string) (Link, error)
-
-func (f LinkSourceFunc) DownloadLink(ctx context.Context, fileID string) (Link, error) {
-	return f(ctx, fileID)
-}
-
 // Downloader streams one file to disk with Range resume. It is stateless: the
 // queue owns jobs and persistence.
 type Downloader struct {

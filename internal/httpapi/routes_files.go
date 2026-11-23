@@ -174,12 +174,17 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, "pikpak_reauth_required", "PikPak 授权已失效，请重新绑定账号")
 		return
 	}
-	// Code 11 is PikPak's daily offline-task quota: an expected refusal, not a
-	// broken upstream, so the client gets 429 and can explain it.
+	// Code 11 is PikPak's daily offline-task quota and a plain upstream 429 is
+	// rate limiting: both are expected refusals, not a broken upstream, so the
+	// client gets 429 and can explain what to wait for.
 	var apiErr *pikpak.APIError
-	if errors.As(err, &apiErr) && (apiErr.Code == 11 || apiErr.Status == http.StatusTooManyRequests) {
+	if errors.As(err, &apiErr) {
 		if apiErr.Code == 11 {
 			writeError(w, http.StatusTooManyRequests, "daily_limit_reached", "离线任务每日额度已用完，请明天再试")
+			return
+		}
+		if apiErr.Status == http.StatusTooManyRequests {
+			writeError(w, http.StatusTooManyRequests, "too_many_requests", "PikPak 请求过于频繁，请稍后重试")
 			return
 		}
 	}

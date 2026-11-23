@@ -184,32 +184,6 @@ func TestWalkPagesStopsWhenExhausted(t *testing.T) {
 	}
 }
 
-func TestDeletePermanentlyPostsIDs(t *testing.T) {
-	var gotPath string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s", r.Method)
-		}
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_, _ = io.WriteString(w, `{"task_id":"d1"}`)
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
-	if err := c.DeletePermanently(context.Background(), []string{"f1", "f2"}); err != nil {
-		t.Fatalf("DeletePermanently: %v", err)
-	}
-	if gotPath != "/drive/v1/files:batchDelete" {
-		t.Fatalf("path = %s", gotPath)
-	}
-	ids, _ := gotBody["ids"].([]any)
-	if len(ids) != 2 || ids[0] != "f1" {
-		t.Fatalf("body = %v", gotBody)
-	}
-}
-
 func TestBurstRunsConcurrentRequests(t *testing.T) {
 	var inFlight, peak int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,34 +262,6 @@ func TestRetryTaskCreatesARetryTask(t *testing.T) {
 	}
 	if gotBody["type"] != "offline" || gotBody["create_type"] != "RETRY" || gotBody["id"] != "t1" {
 		t.Fatalf("body = %v", gotBody)
-	}
-}
-
-func TestClearTasksPostsPhasesToClearEndpoint(t *testing.T) {
-	var gotPath, gotMethod string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotMethod = r.URL.Path, r.Method
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_, _ = io.WriteString(w, `{}`)
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv.URL, &fakeTokens{token: "tok"})
-	if err := c.ClearTasks(context.Background()); err != nil {
-		t.Fatalf("ClearTasks: %v", err)
-	}
-	if gotMethod != http.MethodPost || gotPath != "/drive/v1/tasks:clear" {
-		t.Fatalf("%s %s", gotMethod, gotPath)
-	}
-	// An empty body clears nothing: the official web sends the task type and
-	// the phases it wants dropped.
-	if gotBody["type"] != "offline" {
-		t.Fatalf("body type = %v", gotBody["type"])
-	}
-	phases, _ := gotBody["phases"].([]any)
-	if len(phases) != 2 || phases[0] != "PHASE_TYPE_COMPLETE" || phases[1] != "PHASE_TYPE_ERROR" {
-		t.Fatalf("phases = %v", gotBody["phases"])
 	}
 }
 

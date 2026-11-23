@@ -13,9 +13,9 @@ import (
 	"fnos-pikpak/internal/store"
 )
 
-// The folders 完整播放 works with. 临时 holds the videos restored for
-// playback; Pack From Shared holds the batch a share was saved into, and is
-// only touched when 临时 ran out.
+// The folders 完整播放 works with. A restore lands in Pack From Shared, which
+// is reused on every later play; 临时 is an older folder that is purged first
+// when room has to be made, never restored into.
 const (
 	videoFolderName    = "我的视频"
 	tempFolderName     = "临时"
@@ -363,23 +363,6 @@ func findSameVideo(files []pikpak.File, name string, size int64) (pikpak.File, b
 		}
 	}
 	return pikpak.File{}, false
-}
-
-// ensureFolder returns the id of name under parentID, creating it when it is
-// missing.
-func ensureFolder(ctx context.Context, client *pikpak.Client, parentID, name string) (string, error) {
-	items, err := client.ListAllFiles(ctx, parentID)
-	if err != nil {
-		return "", err
-	}
-	if f, ok := findFolder(items, name); ok {
-		return f.ID, nil
-	}
-	f, err := client.CreateFolder(ctx, parentID, name)
-	if err != nil {
-		return "", err
-	}
-	return f.ID, nil
 }
 
 // makeRoom frees enough quota for need bytes. It purges the oldest files in

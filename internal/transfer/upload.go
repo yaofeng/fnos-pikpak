@@ -179,8 +179,6 @@ func (u *Uploader) lookup(ctx context.Context, job *store.UploadJob) (*pikpak.Fi
 	return nil, nil
 }
 
-// existingNames was folded into scan.
-
 // uniqueName appends " (n)" before the extension until the name is free.
 func uniqueName(name string, taken map[string]bool) string {
 	if !taken[name] {

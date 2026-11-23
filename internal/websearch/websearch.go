@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -282,11 +281,32 @@ func unwrapLink(raw string) string {
 	return raw
 }
 
+// isGoogleHost reports whether host is one of Google's own domains. A result
+// is untrusted text, so "google." may only introduce a country domain (de,
+// com.hk, co.uk), never a domain someone else owns: google.evil.com is not
+// Google, and neither is google.com.evil.com.
 func isGoogleHost(host string) bool {
-	return host == "google.com" ||
-		strings.HasSuffix(host, ".google.com") ||
-		strings.HasPrefix(host, "google.") ||
-		strings.HasPrefix(host, "www.google.")
+	rest := strings.TrimPrefix(host, "www.")
+	if rest == "google.com" || strings.HasSuffix(rest, ".google.com") {
+		return true
+	}
+	tail, ok := strings.CutPrefix(rest, "google.")
+	if !ok {
+		return false
+	}
+	labels := strings.Split(tail, ".")
+	if len(labels) > 2 {
+		return false
+	}
+	if len(labels) == 2 && labels[0] != "co" && labels[0] != "com" {
+		return false
+	}
+	for _, label := range labels {
+		if label == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // decodeGoto reads the destination out of a /goto payload: base64 over a
@@ -402,19 +422,16 @@ func (c *Client) ResolveLink(ctx context.Context, apiKey, raw string) (string, e
 // resolveFromProvider asks the search provider's free /resolve for one
 // wrapper's destination.
 func (c *Client) resolveFromProvider(ctx context.Context, apiKey, raw string) string {
-	got, err := c.resolveLinks(ctx, apiKey, []string{raw})
+	dest, err := c.resolveLink(ctx, apiKey, raw)
 	if err != nil {
 		return ""
 	}
-	return readableAddress(got[0])
+	return readableAddress(dest)
 }
 
 // resolveFromRedirect reads Google's Location header for one wrapper.
 func (c *Client) resolveFromRedirect(ctx context.Context, raw string) string {
-	for _, dest := range c.resolveByRedirect(ctx, []string{raw}) {
-		return readableAddress(dest)
-	}
-	return ""
+	return readableAddress(c.redirectOf(ctx, raw))
 }
 
 // readableAddress returns dest when the app can open it and it is not still
@@ -426,10 +443,10 @@ func readableAddress(dest string) string {
 	return dest
 }
 
-// resolveByRedirect asks Google for a wrapper's destination and reads only
-// the Location header: the redirect is never followed, so the backend does
-// not fetch the page itself.
-func (c *Client) resolveByRedirect(ctx context.Context, links []string) map[string]string {
+// redirectOf asks Google for a wrapper's destination and reads only the
+// Location header: the redirect is never followed, so the backend does not
+// fetch the page itself.
+func (c *Client) redirectOf(ctx context.Context, link string) string {
 	base := c.HTTP
 	if base == nil {
 		base = http.DefaultClient
@@ -438,38 +455,21 @@ func (c *Client) resolveByRedirect(ctx context.Context, links []string) map[stri
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-
-	out := make(map[string]string, len(links))
-	var mu sync.Mutex
-	sem := make(chan struct{}, 6)
-	var wg sync.WaitGroup
-	for _, link := range links {
-		wg.Add(1)
-		go func(link string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
-			if err != nil {
-				return
-			}
-			resp, err := client.Do(req)
-			if err != nil {
-				return
-			}
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			dest := resp.Header.Get("Location")
-			if _, ok := webAddress(dest); !ok {
-				return
-			}
-			mu.Lock()
-			out[link] = dest
-			mu.Unlock()
-		}(link)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return ""
 	}
-	wg.Wait()
-	return out
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	dest := resp.Header.Get("Location")
+	if _, ok := webAddress(dest); !ok {
+		return ""
+	}
+	return dest
 }
 
 type resolveResponse struct {
@@ -478,18 +478,14 @@ type resolveResponse struct {
 	} `json:"organic"`
 }
 
-// resolveLinks asks the provider to swap its opaque wrappers for the real
-// addresses. The call costs no credits and the order is preserved.
-func (c *Client) resolveLinks(ctx context.Context, apiKey string, links []string) ([]string, error) {
-	body := struct {
+// resolveLink asks the provider to swap one opaque wrapper for the address it
+// leads to. The call costs no credits.
+func (c *Client) resolveLink(ctx context.Context, apiKey, link string) (string, error) {
+	payload, err := json.Marshal(struct {
 		Organic []map[string]string `json:"organic"`
-	}{Organic: make([]map[string]string, 0, len(links))}
-	for _, link := range links {
-		body.Organic = append(body.Organic, map[string]string{"link": link})
-	}
-	payload, err := json.Marshal(body)
+	}{Organic: []map[string]string{{"link": link}}})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	endpoint := c.ResolveEndpoint
 	if endpoint == "" {
@@ -497,7 +493,7 @@ func (c *Client) resolveLinks(ctx context.Context, apiKey string, links []string
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-KEY", apiKey)
@@ -508,28 +504,24 @@ func (c *Client) resolveLinks(ctx context.Context, apiKey string, links []string
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("websearch: resolve: %w", err)
+		return "", fmt.Errorf("websearch: resolve: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, &UpstreamError{Status: resp.StatusCode}
+		return "", &UpstreamError{Status: resp.StatusCode}
 	}
 	var parsed resolveResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("websearch: decode resolve: %w", err)
+		return "", fmt.Errorf("websearch: decode resolve: %w", err)
 	}
-	if len(parsed.Organic) < len(links) {
-		return nil, errors.New("websearch: resolve answered with fewer links")
+	if len(parsed.Organic) == 0 {
+		return "", errors.New("websearch: resolve answered without a link")
 	}
-	out := make([]string, len(links))
-	for i := range links {
-		dest := unwrapLink(parsed.Organic[i].Link)
-		if dest == "" {
-			dest = links[i]
-		}
-		out[i] = dest
+	dest := unwrapLink(parsed.Organic[0].Link)
+	if dest == "" {
+		return link, nil
 	}
-	return out, nil
+	return dest, nil
 }
 
 // isGotoLink reports whether raw is one of Google's opaque click wrappers.

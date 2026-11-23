@@ -52,7 +52,6 @@ type deviceCodeResponse struct {
 	VerificationURIComplete string `json:"verification_uri_complete"`
 	Error                   string `json:"error"`
 	ErrorCode               int    `json:"error_code"`
-	ErrorDescription        string `json:"error_description"`
 }
 
 type tokenResponse struct {
@@ -62,7 +61,6 @@ type tokenResponse struct {
 	Sub              string `json:"sub"`
 	Error            string `json:"error"`
 	ErrorCode        int    `json:"error_code"`
-	ErrorDescription string `json:"error_description"`
 }
 
 func (c *Client) setHeaders(req *http.Request) {
@@ -254,12 +252,6 @@ func (s *Session) Token(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-}
-
-func (s *Session) ReauthRequired() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.reauth
 }
 
 // ForceRefresh discards the cached access token and renews it. The client

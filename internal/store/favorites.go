@@ -215,17 +215,31 @@ func (s *Store) MoveShareFavoriteShare(ctx context.Context, uid int, id int64, s
 			return ShareFavorite{}, err
 		}
 	}
+	// A different row already holding this share id makes this one the stale
+	// duplicate, and the pair is the reason the tidy-up exists. Checking first
+	// is what keeps a transient write failure from deleting the favorite: only
+	// a real duplicate is dropped, every other error comes back with the row
+	// untouched.
+	var taken int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM share_favorites WHERE uid = ? AND share_id = ? AND id <> ?`,
+		uid, shareID, id).Scan(&taken)
+	switch {
+	case err == nil:
+		if _, delErr := s.db.ExecContext(ctx,
+			`DELETE FROM share_favorites WHERE uid = ? AND id = ?`, uid, id); delErr != nil {
+			return ShareFavorite{}, delErr
+		}
+		return ShareFavorite{}, ErrNotFound
+	case !errors.Is(err, sql.ErrNoRows):
+		return ShareFavorite{}, err
+	}
 	res, err := s.db.ExecContext(ctx, `
 UPDATE share_favorites SET share_id = ?, title = ?,
   pass_code_enc = CASE WHEN length(?) > 0 THEN ? ELSE pass_code_enc END
 WHERE uid = ? AND id = ?`, shareID, title, enc, enc, uid, id)
 	if err != nil {
-		// The share id is already favorited: the old row is redundant.
-		if _, delErr := s.db.ExecContext(ctx,
-			`DELETE FROM share_favorites WHERE uid = ? AND id = ?`, uid, id); delErr != nil {
-			return ShareFavorite{}, err
-		}
-		return ShareFavorite{}, ErrNotFound
+		return ShareFavorite{}, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

@@ -32,9 +32,6 @@ type ShareInfo struct {
 	PassCodeToken string
 	Files         []File
 	NextPageToken string
-	// FileNum counts the entries at the share root, as PikPak reports it; it
-	// is not the recursive file count.
-	FileNum int
 	// CreatedAt is the share's creation time, as PikPak formats it.
 	CreatedAt string
 	// ExpireAt is unix seconds; -1 means the share never expires, 0 unknown.
@@ -97,7 +94,6 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 
 	var raw struct {
 		ShareStatus   string `json:"share_status"`
-		ShareID       string `json:"share_id"`
 		Title         string `json:"title"`
 		PassCodeToken string `json:"pass_code_token"`
 		Files         []File `json:"files"`
@@ -114,7 +110,6 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 			Avatar      string `json:"avatar"`
 			PortraitURL string `json:"portrait_url"`
 		} `json:"user_info"`
-		FileNum      json.RawMessage `json:"file_num"`
 		CreatedTime  string          `json:"created_time"`
 		ExpirationAt json.RawMessage `json:"expiration_at"`
 	}
@@ -138,7 +133,6 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 		PassCodeToken: raw.PassCodeToken,
 		Files:         raw.Files,
 		NextPageToken: raw.NextPageToken,
-		FileNum:       int(parseSize(raw.FileNum)),
 		CreatedAt:     raw.CreatedTime,
 		ExpireAt:      parseSize(raw.ExpirationAt),
 	}, nil
@@ -180,7 +174,6 @@ func (c *Client) ListShareFiles(ctx context.Context, shareID, parentID, passToke
 
 // shareFileInfo is the part of a share file entry links are read from.
 type shareFileInfo struct {
-	ID             string          `json:"id"`
 	Name           string          `json:"name"`
 	Size           json.RawMessage `json:"size"`
 	MimeType       string          `json:"mime_type"`
@@ -212,7 +205,6 @@ func (f shareFileInfo) downloadLink() DownloadLink {
 // ShareFileLink is a share file's signed URL plus the facts a player needs.
 type ShareFileLink struct {
 	DownloadLink
-	ID            string
 	Name          string
 	Mime          string
 	ThumbnailLink string
@@ -245,7 +237,6 @@ func (c *Client) GetShareFileLink(ctx context.Context, shareID, fileID, passToke
 	}
 	return ShareFileLink{
 		DownloadLink:  link,
-		ID:            fileID,
 		Name:          info.Name,
 		Mime:          info.MimeType,
 		ThumbnailLink: info.ThumbnailLink,

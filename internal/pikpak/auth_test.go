@@ -270,9 +270,6 @@ func TestSessionInvalidGrantRequiresReauth(t *testing.T) {
 	if _, err := sess.Token(ctx); !errors.Is(err, ErrReauthRequired) {
 		t.Fatalf("Token err = %v, want ErrReauthRequired", err)
 	}
-	if !sess.ReauthRequired() {
-		t.Fatal("ReauthRequired() = false")
-	}
 	if _, err := sess.Token(ctx); !errors.Is(err, ErrReauthRequired) {
 		t.Fatalf("second Token err = %v, want ErrReauthRequired", err)
 	}

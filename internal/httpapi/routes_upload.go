@@ -265,7 +265,7 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 			resp["fresh"] = true
 			resp["deleted"] = false
 			if file != nil && file.ID != "" {
-				if err := client.DeletePermanently(ctx, []string{file.ID}); err != nil {
+				if _, err := client.BatchDelete(ctx, []string{file.ID}); err != nil {
 					resp["delete_error"] = probe.Redact(err.Error())
 				} else {
 					resp["deleted"] = true
