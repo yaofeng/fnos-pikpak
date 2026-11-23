@@ -870,20 +870,42 @@ button.primary {
   font-size: 13px;
 }
 
-.account-chip {
-  padding: 6px 10px;
+/* Running transfers sit above the quota: one bar and two speeds for all of
+   them, not one row per job. */
+.sidebar-transfer {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  font-size: 12px;
+}
+
+.sidebar-transfer-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.sidebar-transfer-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(10, 124, 255, 0.55);
+  transition: width 0.3s ease;
+}
+
+.sidebar-transfer-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   white-space: nowrap;
 }
 
-.account-chip em {
-  margin-left: 6px;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--muted);
+.sidebar-quota {
+  display: flex;
 }
 
 .content {
@@ -892,16 +914,6 @@ button.primary {
   min-width: 0;
   height: 100vh;
   overflow: hidden;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
 }
 
 .small {
@@ -996,10 +1008,6 @@ button.primary {
     padding: 8px 6px;
     font-size: 12px;
     white-space: nowrap;
-  }
-
-  .topbar {
-    padding: 10px 16px;
   }
 
   .page {
@@ -1433,12 +1441,6 @@ button.primary {
   margin: 0 0 10px;
 }
 
-.fav-actions button,
-.fav-table button.link {
-  padding: 3px 8px;
-  font-size: 12px;
-}
-
 /* 分享收藏夹 lists saved shares; the browser opens in place above the list. */
 .page-stack {
   display: flex;
@@ -1507,16 +1509,31 @@ button.primary {
   background: var(--bg);
 }
 
+/* 分享收藏夹 rows reuse the file table; the create column carries a small
+   proxied avatar, so it holds the share's name instead of a width. */
 .fav-table th:nth-child(2) {
-  width: 180px;
+  width: auto;
 }
 
-.fav-actions {
-  white-space: nowrap;
+.fav-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.fav-actions button + button {
-  margin-left: 6px;
+.fav-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: var(--bg);
+}
+
+.fav-avatar.blank {
+  display: inline-block;
+  border: 1px solid var(--border);
 }
 
 .badge-lock {

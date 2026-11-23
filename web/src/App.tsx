@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import Toaster from './components/Toaster'
 import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, StarIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
+import { isActive, transferred, type TransferJob } from './transfers'
 import Bind from './pages/Bind'
 import Debug from './pages/Debug'
 import Favorites from './pages/Favorites'
@@ -65,18 +66,26 @@ const navIcons: Record<string, ReactNode> = {
   '/debug': <WrenchIcon size={17} />,
 }
 
-const titles: Record<string, string> = {
-  '/files': 'nav.files',
-  '/recent': 'nav.recent',
-  '/tasks': 'nav.tasks',
-  '/transfers': 'nav.transfers',
-  '/trash': 'nav.trash',
-  '/settings': 'nav.settings',
-  '/favorites': 'nav.favorites',
-  '/video-favorites': 'nav.videoFavorites',
-  '/search': 'nav.search',
-  '/bind': 'nav.bind',
-  '/debug': 'nav.debug',
+// transferSummary is what the sidebar reports while transfers run: the bytes
+// of every active job together, how many jobs there are, and the total speed
+// of each direction.
+type transferSummary = { active: number; bytes: number; size: number; down: number; up: number; rates: boolean }
+
+function summarise(items: TransferJob[]): { active: number; bytes: number; size: number } {
+  let active = 0
+  let bytes = 0
+  let size = 0
+  for (const job of items) {
+    if (!isActive(job)) continue
+    active++
+    bytes += transferred(job)
+    size += job.size || 0
+  }
+  return { active, bytes, size }
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  return `${formatBytes(Math.round(bytesPerSec))}/s`
 }
 
 function formatBytes(n: number): string {
@@ -99,6 +108,9 @@ export default function App() {
   const navigate = useNavigate()
   const [me, setMe] = useState<Me | null>(null)
   const [account, setAccount] = useState<Account | null>(null)
+  const [transfer, setTransfer] = useState<transferSummary | null>(null)
+  // The previous poll's active bytes, turned into a rate by the next one.
+  const transferSample = useRef<{ at: number; down: number; up: number } | null>(null)
 
   useEffect(() => {
     const load = () => {
@@ -128,6 +140,65 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [me?.bound])
 
+  // 传输 reports every running upload and download, so the sidebar can show
+  // one combined progress and both speeds from any page. It polls only while
+  // a user is bound, and disappears once nothing is active.
+  useEffect(() => {
+    if (!me?.bound) {
+      setTransfer(null)
+      transferSample.current = null
+      return
+    }
+    let stopped = false
+    let timer: number | undefined
+    const tick = async () => {
+      try {
+        const [downPage, upPage] = await Promise.all([
+          apiGet<{ items: TransferJob[] }>('downloads'),
+          apiGet<{ items: TransferJob[] }>('uploads'),
+        ])
+        if (stopped) return
+        const down = summarise(downPage.items ?? [])
+        const up = summarise(upPage.items ?? [])
+        const now = Date.now()
+        const prev = transferSample.current
+        const downBytes = down.bytes
+        const upBytes = up.bytes
+        let downSpeed = 0
+        let upSpeed = 0
+        // The first poll only establishes a baseline; a rate needs two.
+        if (prev && now > prev.at) {
+          const dt = (now - prev.at) / 1000
+          downSpeed = Math.max(0, downBytes - prev.down) / dt
+          upSpeed = Math.max(0, upBytes - prev.up) / dt
+        }
+        transferSample.current = { at: now, down: downBytes, up: upBytes }
+        const active = down.active + up.active
+        setTransfer(
+          active > 0
+            ? {
+                active,
+                bytes: downBytes + upBytes,
+                size: down.size + up.size,
+                down: downSpeed,
+                up: upSpeed,
+                rates: Boolean(prev),
+              }
+            : null,
+        )
+      } catch {
+        // A quota or session error already shows elsewhere; the summary just
+        // keeps its last value.
+      }
+      if (!stopped) timer = window.setTimeout(tick, 2000)
+    }
+    void tick()
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [me?.bound])
+
   // The stored language and tile size belong to the fnOS user; the browser
   // only supplies the starting guess for the language.
   useEffect(() => {
@@ -150,8 +221,6 @@ export default function App() {
     }
   }, [])
 
-  const titleKey = Object.keys(titles).find((p) => location.pathname.startsWith(p))
-  const title = titleKey ? t(titles[titleKey]) : 'PikPak'
   const pct = account && account.quota_limit > 0
     ? Math.min(100, (account.quota_usage / account.quota_limit) * 100)
     : 0
@@ -169,12 +238,42 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          {me?.bound ? (
-            <span className="account-chip" title={`UID ${me.uid}`}>
-              {me.display_name || '已绑定'}
-              {me.vip_type && me.vip_type !== 'novip' ? <em>{me.vip_type}</em> : null}
+          {transfer && (
+            <div className="sidebar-transfer" title={`共 ${transfer.active} 个传输任务`}>
+              <div className="sidebar-transfer-bar">
+                <span
+                  style={{
+                    width: transfer.size > 0 ? `${Math.min(100, (transfer.bytes / transfer.size) * 100)}%` : '0',
+                  }}
+                />
+              </div>
+              <div className="sidebar-transfer-line">
+                <span>
+                  {transfer.active} 个任务 ·{' '}
+                  {transfer.size > 0
+                    ? `${Math.min(100, Math.floor((transfer.bytes / transfer.size) * 100))}%`
+                    : '—'}
+                </span>
+              </div>
+              <div className="sidebar-transfer-line muted">
+                <span>↓ {transfer.rates ? formatSpeed(transfer.down) : '—'}</span>
+                <span>↑ {transfer.rates ? formatSpeed(transfer.up) : '—'}</span>
+              </div>
+            </div>
+          )}
+          {account && (
+            <span className="quota-pill sidebar-quota" title={`${pct.toFixed(1)}%`}>
+              <span
+                className="quota-fill"
+                aria-hidden="true"
+                style={{ width: pct > 0 ? `max(${pct}%, 4px)` : '0' }}
+              />
+              <span className="quota-text">
+                {formatBytes(account.quota_usage)} / {formatBytes(account.quota_limit)}
+              </span>
             </span>
-          ) : (
+          )}
+          {!me?.bound && (
             <NavLink to="/bind" className="nav-item">
               {t('action.bind')}
             </NavLink>
@@ -193,21 +292,6 @@ export default function App() {
       </aside>
 
       <div className="content">
-        <header className="topbar">
-          <strong>{title}</strong>
-          {account && (
-            <span className="quota-pill" title={`${pct.toFixed(1)}%`}>
-              <span
-                className="quota-fill"
-                aria-hidden="true"
-                style={{ width: pct > 0 ? `max(${pct}%, 4px)` : '0' }}
-              />
-              <span className="quota-text">
-                {formatBytes(account.quota_usage)} / {formatBytes(account.quota_limit)}
-              </span>
-            </span>
-          )}
-        </header>
 
         {me && !me.bound && location.pathname !== '/bind' && (
           <div className="notice">

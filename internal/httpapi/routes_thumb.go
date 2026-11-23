@@ -107,7 +107,7 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 
-		data, mime, err := fetchThumb(r, link)
+		data, mime, err := fetchImage(r, link)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "thumb_failed", "缩略图加载失败")
 			return
@@ -143,7 +143,7 @@ func thumbShareToken(w http.ResponseWriter, r *http.Request, deps Deps, client *
 	return "", false
 }
 
-func fetchThumb(r *http.Request, link string) ([]byte, string, error) {
+func fetchImage(r *http.Request, link string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, link, nil)
 	if err != nil {
 		return nil, "", err

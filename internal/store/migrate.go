@@ -138,4 +138,25 @@ ALTER TABLE video_favorites ADD COLUMN group_label TEXT NOT NULL DEFAULT '';
 	`
 ALTER TABLE video_favorites ADD COLUMN restored_file_id TEXT NOT NULL DEFAULT '';
 `,
+	`
+ALTER TABLE share_favorites ADD COLUMN owner_name TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE share_favorites ADD COLUMN owner_avatar TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE share_favorites ADD COLUMN share_created_at TEXT NOT NULL DEFAULT '';
+`,
+	`
+ALTER TABLE share_favorites ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0;
+`,
+	`
+ALTER TABLE share_favorites ADD COLUMN file_count INTEGER NOT NULL DEFAULT -1;
+`,
+	`
+ALTER TABLE share_favorites ADD COLUMN total_size INTEGER NOT NULL DEFAULT 0;
+`,
+	`
+ALTER TABLE share_favorites ADD COLUMN stats_at TEXT NOT NULL DEFAULT '';
+`,
 }

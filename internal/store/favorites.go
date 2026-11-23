@@ -20,6 +20,19 @@ type ShareFavorite struct {
 	Protected    bool      `json:"protected"`
 	CreatedAt    time.Time `json:"created_at"`
 
+	// Metadata PikPak reports when the share is opened: who shared it, when,
+	// whether it expires, and the totals a recursive walk counted.
+	OwnerName      string `json:"owner_name"`
+	OwnerAvatar    string `json:"owner_avatar"`
+	ShareCreatedAt string `json:"share_created_at"`
+	// ExpireAt is unix seconds; -1 permanent, 0 unknown.
+	ExpireAt int64 `json:"expire_at"`
+	// FileCount is -1 until the totals have been counted; TotalSize follows.
+	FileCount  int64  `json:"file_count"`
+	TotalSize  int64  `json:"total_size"`
+	StatsAt    string `json:"-"`
+	StatsReady bool   `json:"stats_checked"`
+
 	PassCode string `json:"-"`
 	encPass  []byte
 }
@@ -57,7 +70,7 @@ ON CONFLICT(uid, share_id) DO UPDATE SET
 
 func (s *Store) shareFavoriteByShareID(ctx context.Context, uid int, shareID string) (ShareFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, owner_name, owner_avatar, share_created_at, expire_at, file_count, total_size, stats_at, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
 	return scanShareFavorite(row)
 }
@@ -65,7 +78,7 @@ FROM share_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
 // ListShareFavorites returns the user's favourites, newest first.
 func (s *Store) ListShareFavorites(ctx context.Context, uid int) ([]ShareFavorite, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, owner_name, owner_avatar, share_created_at, expire_at, file_count, total_size, stats_at, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 	if err != nil {
 		return nil, err
@@ -87,7 +100,7 @@ FROM share_favorites WHERE uid = ? ORDER BY created_at DESC`, uid)
 // GetShareFavorite returns one favourite with its pass code decrypted.
 func (s *Store) GetShareFavorite(ctx context.Context, uid int, id int64) (ShareFavorite, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, owner_name, owner_avatar, share_created_at, expire_at, file_count, total_size, stats_at, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanShareFavorite(row)
 	if err != nil {
@@ -137,7 +150,7 @@ func (s *Store) RenameShareFavorite(ctx context.Context, uid int, id int64, titl
 		return ShareFavorite{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, uid, share_id, title, display_title, pass_code_enc, created_at
+SELECT id, uid, share_id, title, display_title, owner_name, owner_avatar, share_created_at, expire_at, file_count, total_size, stats_at, pass_code_enc, created_at
 FROM share_favorites WHERE uid = ? AND id = ?`, uid, id)
 	fav, err := scanShareFavorite(row)
 	if err != nil {
@@ -169,13 +182,16 @@ type rowScanner interface {
 func scanShareFavorite(row rowScanner) (ShareFavorite, error) {
 	var fav ShareFavorite
 	var created string
-	if err := row.Scan(&fav.ID, &fav.UID, &fav.ShareID, &fav.Title, &fav.DisplayTitle, &fav.encPass, &created); err != nil {
+	if err := row.Scan(&fav.ID, &fav.UID, &fav.ShareID, &fav.Title, &fav.DisplayTitle,
+		&fav.OwnerName, &fav.OwnerAvatar, &fav.ShareCreatedAt, &fav.ExpireAt,
+		&fav.FileCount, &fav.TotalSize, &fav.StatsAt, &fav.encPass, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ShareFavorite{}, ErrNotFound
 		}
 		return ShareFavorite{}, err
 	}
 	fav.Protected = len(fav.encPass) > 0
+	fav.StatsReady = fav.StatsAt != ""
 	fav.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	return fav, nil
 }
@@ -213,4 +229,52 @@ WHERE uid = ? AND id = ?`, shareID, title, enc, enc, uid, id)
 		return ShareFavorite{}, ErrNotFound
 	}
 	return s.shareFavoriteByShareID(ctx, uid, shareID)
+}
+
+// ShareFavoriteMeta is what opening a share taught us: who shared it, when,
+// whether it expires, and the totals a recursive count produced.
+type ShareFavoriteMeta struct {
+	OwnerName      string
+	OwnerAvatar    string
+	ShareCreatedAt string
+	ExpireAt       int64
+	// FileCount and TotalSize are -1 when unknown; StatsAt is set once a
+	// count was attempted, successful or not.
+	FileCount int64
+	TotalSize int64
+	StatsAt   string
+}
+
+// UpdateShareFavoriteMeta fills in what PikPak reported, keeping whatever was
+// stored for fields this response omits.
+func (s *Store) UpdateShareFavoriteMeta(ctx context.Context, uid int, id int64, m ShareFavoriteMeta) error {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE share_favorites SET
+  owner_name = CASE WHEN ? <> '' THEN ? ELSE owner_name END,
+  owner_avatar = CASE WHEN ? <> '' THEN ? ELSE owner_avatar END,
+  share_created_at = CASE WHEN ? <> '' THEN ? ELSE share_created_at END,
+  expire_at = CASE WHEN ? <> 0 THEN ? ELSE expire_at END,
+  file_count = CASE WHEN ? >= 0 THEN ? ELSE file_count END,
+  total_size = CASE WHEN ? >= 0 THEN ? ELSE total_size END,
+  stats_at = CASE WHEN ? <> '' THEN ? ELSE stats_at END
+WHERE uid = ? AND id = ?`,
+		m.OwnerName, m.OwnerName,
+		m.OwnerAvatar, m.OwnerAvatar,
+		m.ShareCreatedAt, m.ShareCreatedAt,
+		m.ExpireAt, m.ExpireAt,
+		m.FileCount, m.FileCount,
+		m.TotalSize, m.TotalSize,
+		m.StatsAt, m.StatsAt,
+		uid, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

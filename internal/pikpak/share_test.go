@@ -53,6 +53,13 @@ func TestGetShareReturnsTheFilesAndPassToken(t *testing.T) {
 				{"id": "sf2", "parent_id": "", "name": "notes.pdf", "kind": "drive#file", "size": "12"},
 			},
 			"next_page_token": "",
+			"file_num":        "2",
+			"created_time":    "2025-11-22T16:05:25.004+08:00",
+			"expiration_at":   "-1",
+			"user_info": map[string]any{
+				"nickname":     "海砂",
+				"portrait_url": "https://avatar.example/sea.jpg",
+			},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -70,6 +77,12 @@ func TestGetShareReturnsTheFilesAndPassToken(t *testing.T) {
 	}
 	if info.Files[0].Name != "资料" || info.Files[0].Kind != "drive#folder" {
 		t.Fatalf("files[0] = %+v", info.Files[0])
+	}
+	if info.FileNum != 2 || info.CreatedAt != "2025-11-22T16:05:25.004+08:00" || info.ExpireAt != -1 {
+		t.Fatalf("meta = file_num=%d created=%q expire=%d", info.FileNum, info.CreatedAt, info.ExpireAt)
+	}
+	if info.Owner != "海砂" || info.Avatar != "https://avatar.example/sea.jpg" {
+		t.Fatalf("owner = %q avatar = %q", info.Owner, info.Avatar)
 	}
 }
 
@@ -183,6 +196,7 @@ func TestShareReportsItsCreator(t *testing.T) {
 		{"share_creator name", map[string]any{"share_creator": map[string]any{"name": "张三"}}, "张三"},
 		{"creator name", map[string]any{"creator": map[string]any{"name": "李四"}}, "李四"},
 		{"share_creator user_name", map[string]any{"share_creator": map[string]any{"user_name": "wangwu"}}, "wangwu"},
+		{"user_info nickname", map[string]any{"user_info": map[string]any{"nickname": "海砂"}}, "海砂"},
 		{"missing", map[string]any{}, ""},
 	}
 	for _, tc := range cases {

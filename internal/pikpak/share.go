@@ -28,9 +28,17 @@ type ShareInfo struct {
 	ShareID       string
 	Title         string
 	Owner         string
+	Avatar        string
 	PassCodeToken string
 	Files         []File
 	NextPageToken string
+	// FileNum counts the entries at the share root, as PikPak reports it; it
+	// is not the recursive file count.
+	FileNum int
+	// CreatedAt is the share's creation time, as PikPak formats it.
+	CreatedAt string
+	// ExpireAt is unix seconds; -1 means the share never expires, 0 unknown.
+	ExpireAt int64
 }
 
 var shareIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{6,64}$`)
@@ -101,6 +109,14 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 		Creator struct {
 			Name string `json:"name"`
 		} `json:"creator"`
+		UserInfo struct {
+			Nickname    string `json:"nickname"`
+			Avatar      string `json:"avatar"`
+			PortraitURL string `json:"portrait_url"`
+		} `json:"user_info"`
+		FileNum      json.RawMessage `json:"file_num"`
+		CreatedTime  string          `json:"created_time"`
+		ExpirationAt json.RawMessage `json:"expiration_at"`
 	}
 	if err := c.do(ctx, http.MethodGet, u, nil, &raw); err != nil {
 		return ShareInfo{}, err
@@ -117,10 +133,14 @@ func (c *Client) GetShare(ctx context.Context, shareID, passCode string) (ShareI
 	return ShareInfo{
 		ShareID:       shareID,
 		Title:         raw.Title,
-		Owner:         firstNonEmpty(raw.ShareCreator.Name, raw.Creator.Name, raw.ShareCreator.UserName),
+		Owner:         firstNonEmpty(raw.ShareCreator.Name, raw.Creator.Name, raw.UserInfo.Nickname, raw.ShareCreator.UserName),
+		Avatar:        firstNonEmpty(raw.UserInfo.PortraitURL, raw.UserInfo.Avatar),
 		PassCodeToken: raw.PassCodeToken,
 		Files:         raw.Files,
 		NextPageToken: raw.NextPageToken,
+		FileNum:       int(parseSize(raw.FileNum)),
+		CreatedAt:     raw.CreatedTime,
+		ExpireAt:      parseSize(raw.ExpirationAt),
 	}, nil
 }
 

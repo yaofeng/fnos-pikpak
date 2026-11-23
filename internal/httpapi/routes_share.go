@@ -257,14 +257,16 @@ func migrateShareFavorites(ctx context.Context, deps Deps, uid int, items []stor
 func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/share-favorites", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		items, err := deps.Store.ListShareFavorites(r.Context(), id.UID)
+		items, pending, err := listShareFavoritesWithStats(r.Context(), deps, id.UID,
+			r.URL.Query().Get("refresh") == "1")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "读取收藏失败")
 			return
 		}
-		items = migrateShareFavorites(r.Context(), deps, id.UID, items)
-		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		writeJSON(w, http.StatusOK, map[string]any{"items": items, "stats_pending": pending})
 	})
+
+	registerShareFavoriteAvatar(mux, deps)
 
 	mux.HandleFunc("POST /api/share-favorites", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -298,6 +300,13 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "保存收藏失败")
 			return
+		}
+		// Best effort: remember what PikPak reported while the share is at
+		// hand. The totals are counted when the list asks for them.
+		if client, err := deps.Sessions.ClientFor(r.Context(), id.UID); err == nil {
+			metaCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			fav = refreshShareFavoriteStats(metaCtx, deps, id.UID, fav, client, false)
+			cancel()
 		}
 		writeJSON(w, http.StatusCreated, fav)
 	})
