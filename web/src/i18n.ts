@@ -12,9 +12,7 @@ const messages: Record<string, Entry> = {
   'nav.search': { 'zh-CN': '全网搜索', en: 'Web search' },
   'nav.favorites': { 'zh-CN': '分享收藏夹', en: 'Share favorites' },
   'nav.videoFavorites': { 'zh-CN': '视频收藏夹', en: 'Video favorites' },
-  'nav.bind': { 'zh-CN': '账号', en: 'Account' },
   'nav.debug': { 'zh-CN': '调试', en: 'Debug' },
-  'state.loading': { 'zh-CN': '加载中…', en: 'Loading…' },
   'state.unbound': { 'zh-CN': '尚未绑定 PikPak 账号', en: 'PikPak account not linked' },
   'state.reauth': {
     'zh-CN': 'PikPak 授权已失效，请重新绑定账号后继续。',
@@ -22,9 +20,6 @@ const messages: Record<string, Entry> = {
   },
   'action.bind': { 'zh-CN': '绑定账号', en: 'Link account' },
   'action.rebind': { 'zh-CN': '重新登录', en: 'Sign in again' },
-  'action.upload': { 'zh-CN': '上传', en: 'Upload' },
-  'action.newFolder': { 'zh-CN': '新建文件夹', en: 'New folder' },
-  'quota.used': { 'zh-CN': '已用', en: 'Used' },
   'error.details': { 'zh-CN': '详情', en: 'Details' },
   'error.dismiss': { 'zh-CN': '关闭', en: 'Dismiss' },
 }
@@ -83,7 +78,7 @@ export function errorText(code: string, lang: Lang = current): string | undefine
   return errorMessages[code]?.[lang]
 }
 
-export type T = (key: keyof typeof messages | string) => string
+type T = (key: keyof typeof messages | string) => string
 
 export function makeT(lang: Lang): T {
   return (key: string) => messages[key]?.[lang] ?? key

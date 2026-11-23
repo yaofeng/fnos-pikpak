@@ -1,4 +1,4 @@
-export type TransferStatus =
+type TransferStatus =
   | 'queued'
   | 'running'
   | 'paused'

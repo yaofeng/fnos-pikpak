@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import StatusBar from '../components/StatusBar'
 import { apiGet, apiPost } from '../api'
 import FileTable from '../components/FileTable'
 import { RefreshIcon, RestoreIcon, TrashIcon } from '../components/icons'
@@ -171,10 +172,7 @@ export default function Trash() {
         </div>
       )}
 
-      <div className="status-bar">
-        <span>{ids.length > 0 ? `选中 ${ids.length} 项（共 ${items.length} 项）` : `共 ${items.length} 项`}</span>
-        {notice && <span className="ok status-note">{notice}</span>}
-      </div>
+      <StatusBar selected={ids.length} total={items.length} notice={notice} />
 
       <div ref={sentinel} className="sentinel" />
       {loading && <p className="muted">加载中…</p>}

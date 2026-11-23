@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
+import { downloadErrorMessage, queueDownloads } from '../downloads'
 import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
@@ -8,6 +9,7 @@ import { useFileSelection } from '../useFileSelection'
 import FileGrid from './FileGrid'
 import FileTable from './FileTable'
 import Player from './Player'
+import StatusBar from './StatusBar'
 import {
   CheckIcon,
   DownloadIcon,
@@ -281,7 +283,7 @@ export default function ShareBrowser({
     }
   }
 
-  // 完整播放 restores the video into 我的视频/临时 (making room by purging the
+  // 完整播放 restores the video into Pack From Shared (making room by purging the
   // oldest files) and plays that copy, so playback does not depend on the
   // share staying available.
   async function fullPlay(f: FileItem) {
@@ -365,18 +367,10 @@ export default function ShareBrowser({
         })
         if (job.file_id) fileIDs.push(job.file_id)
       }
-      const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', {
-        file_ids: fileIDs,
-      })
-      const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
-      setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
+      setNotice(await queueDownloads(fileIDs))
       clearSelection()
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.code === 'download_dir_unset'
-          ? '还没有设置默认下载目录，请到「设置 → 传输」指定一个目录。'
-          : (err as Error).message,
-      )
+      setError(downloadErrorMessage(err))
       setNotice('')
     } finally {
       setBusy('')
@@ -538,7 +532,7 @@ export default function ShareBrowser({
               type="button"
               disabled={!singleVideo || busy === 'prepare'}
               onClick={() => singleVideo && void fullPlay(singleVideo)}
-              title="转存到「我的视频/临时」后播放，空间不足时自动清理最早的视频"
+              title="转存到「Pack From Shared」后播放，空间不足时自动清理最早的视频"
             >
               <DownloadIcon />
               {busy === 'prepare' ? '准备中…' : '完整播放'}
@@ -644,10 +638,7 @@ export default function ShareBrowser({
             )}
           </div>
 
-          <div className="status-bar">
-            <span>{ids.length > 0 ? `选中 ${ids.length} 项（共 ${shown.length} 项）` : `共 ${shown.length} 项`}</span>
-            {notice && <span className="ok status-note">{notice}</span>}
-          </div>
+          <StatusBar selected={ids.length} total={shown.length} notice={notice} />
         </>
       )}
 

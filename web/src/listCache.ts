@@ -12,10 +12,6 @@ export function writeCache<T>(key: string, value: T) {
   entries.set(key, value)
 }
 
-export function dropCache(key: string) {
-  entries.delete(key)
-}
-
 export function dropCachePrefix(prefix: string) {
   for (const key of [...entries.keys()]) {
     if (key.startsWith(prefix)) entries.delete(key)

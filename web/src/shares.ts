@@ -11,7 +11,7 @@ export function onlyFolderEntry(items: FileItem[], nextPageToken: string): FileI
   return isFolder(items[0]) ? items[0] : null
 }
 
-export type ShareBadgeKind = 'star' | 'restored'
+type ShareBadgeKind = 'star' | 'restored'
 
 // shareBadgeKind picks the one badge a share listing shows on a video. 已收藏
 // wins over 已转存: the star is the user's own decision about the video, while

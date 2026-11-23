@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
-import { apiGet, apiPatch, apiPost, basePath, type ApiError } from '../api'
+import StatusBar from '../components/StatusBar'
+import { apiGet, apiPatch, apiPost, basePath } from '../api'
+import { downloadErrorMessage, queueDownloads } from '../downloads'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
@@ -251,18 +253,10 @@ export default function Files() {
     try {
       // No directory in the request: downloads go to the folder configured in
       // settings, which the server validates against the user's grants.
-      const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', {
-        file_ids: fileIDs,
-      })
-      const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
-      setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
+      setNotice(await queueDownloads(fileIDs))
       clearSelection()
     } catch (e) {
-      setError(
-        (e as ApiError).code === 'download_dir_unset'
-          ? '还没有设置默认下载目录，请到「设置 → 传输」指定一个目录。'
-          : (e as Error).message,
-      )
+      setError(downloadErrorMessage(e))
     } finally {
       setBusy(false)
     }
@@ -496,14 +490,7 @@ export default function Files() {
         {loading && <p className="muted">加载中…</p>}
       </div>
 
-      <div className="status-bar">
-        <span>
-          {selectedIds.length > 0
-            ? `选中 ${selectedIds.length} 项（共 ${shown.length} 项）`
-            : `共 ${shown.length} 项`}
-        </span>
-        {notice && <span className="ok status-note">{notice}</span>}
-      </div>
+      <StatusBar selected={selectedIds.length} total={shown.length} notice={notice} />
 
       {menu && (
         <div className="context-menu" style={{ left: menu.x, top: menu.y }}>

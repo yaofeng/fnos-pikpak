@@ -1,5 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { apiDelete, apiGet, apiPatch, apiPost, basePath, ApiError } from '../api'
+import StatusBar from '../components/StatusBar'
+import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
+import { dateText } from '../dates'
+import { downloadErrorMessage, queueDownloads } from '../downloads'
 import Player from '../components/Player'
 import FileGrid from '../components/FileGrid'
 import { CheckIcon, FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
@@ -13,7 +16,7 @@ type PlayTarget = { file_id: string; name: string; stream_url: string }
 
 // 视频收藏夹 keeps the videos saved from shares, grouped by the person who
 // shared them. 预览 plays the share's own stream; 完整播放 restores a copy into
-// 我的视频/临时 first, so it survives the share going away.
+// Pack From Shared first, so it survives the share going away.
 // toFileItem lets the saved video reuse the file manager's row and tile.
 function toFileItem(f: VideoFavorite): FileItem {
   return {
@@ -147,17 +150,11 @@ export default function VideoFavorites() {
         })
         if (job.file_id) fileIDs.push(job.file_id)
       }
-      const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', { file_ids: fileIDs })
-      const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
-      setNotice(`已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`)
+      setNotice(await queueDownloads(fileIDs))
       clear()
       void load()
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.code === 'download_dir_unset'
-          ? '还没有设置默认下载目录，请到「设置 → 传输」指定一个目录。'
-          : (err as Error).message,
-      )
+      setError(downloadErrorMessage(err))
       setNotice('')
     } finally {
       setBusy('')
@@ -249,7 +246,7 @@ export default function VideoFavorites() {
           type="button"
           disabled={!one || busy !== ''}
           onClick={() => one && void fullPlay(one)}
-          title="转存到「我的视频/临时」后播放，空间不足时自动清理最早的视频"
+          title="转存到「Pack From Shared」后播放，空间不足时自动清理最早的视频"
         >
           {busy === 'prepare' ? '准备中…' : '完整播放'}
         </button>
@@ -421,7 +418,7 @@ export default function VideoFavorites() {
                     </td>
                     <td className="col-size muted small">{formatSize(f.size)}</td>
                     <td className="col-time muted small">
-                      {f.created_at ? new Date(f.created_at).toLocaleString() : '—'}
+                      {dateText(f.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -432,14 +429,11 @@ export default function VideoFavorites() {
       )}
       </div>
 
-      <div className="status-bar">
-        <span>
-          {picked.length > 0
-            ? `选中 ${picked.length} 项（共 ${(items ?? []).length} 项）`
-            : `共 ${(items ?? []).length} 项`}
-        </span>
-        {notice && <span className="ok status-note">{notice}</span>}
-      </div>
+      <StatusBar
+        selected={picked.length}
+        total={(items ?? []).length}
+        notice={notice}
+      />
 
       {playing && (
         <Player

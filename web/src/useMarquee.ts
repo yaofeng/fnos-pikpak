@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 
-export type MarqueeRect = { left: number; top: number; width: number; height: number }
+type MarqueeRect = { left: number; top: number; width: number; height: number }
 
 type Options = {
   // Called with every item the band touches, and whether the add key was held

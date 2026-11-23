@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import StatusBar from '../components/StatusBar'
 import { Link } from 'react-router-dom'
+import { dateText } from '../dates'
 import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
 import ShareBrowser from '../components/ShareBrowser'
 import {
@@ -44,12 +46,6 @@ type ShareFavorite = {
 
 function nameOf(fav: ShareFavorite): string {
   return fav.display_title || fav.title || fav.share_id
-}
-
-function dateText(value: string): string {
-  if (!value) return '—'
-  const at = new Date(value)
-  return Number.isNaN(at.getTime()) ? value : at.toLocaleString()
 }
 
 function expireText(expireAt: number): string {
@@ -406,15 +402,12 @@ export default function Favorites() {
         )}
       </div>
 
-      <div className="status-bar">
-        <span>
-          {picked.length > 0
-            ? `选中 ${picked.length} 项（共 ${(items ?? []).length} 项）`
-            : `共 ${(items ?? []).length} 项`}
-        </span>
-        {notice && <span className="ok status-note">{notice}</span>}
-        {error && <span className="error status-note">{error}</span>}
-      </div>
+      <StatusBar
+        selected={picked.length}
+        total={(items ?? []).length}
+        notice={notice}
+        error={error}
+      />
     </section>
   )
 }

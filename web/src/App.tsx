@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import Toaster from './components/Toaster'
 import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, StarIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
-import { isActive, transferred, type TransferJob } from './transfers'
+import { resetCache } from './listCache'
+import { formatSize } from './files'
+import { isActive, speedOf, transferred, type TransferJob } from './transfers'
 import Bind from './pages/Bind'
-import Debug from './pages/Debug'
 import Favorites from './pages/Favorites'
 import Files from './pages/Files'
 import Search from './pages/Search'
@@ -16,6 +17,10 @@ import Tasks from './pages/Tasks'
 import Transfers from './pages/Transfers'
 import Trash from './pages/Trash'
 import VideoFavorites from './pages/VideoFavorites'
+
+// The debug page builds the Trim SDK and every probe at module scope, so it
+// is loaded only when someone opens it.
+const Debug = lazy(() => import('./pages/Debug'))
 
 type Me = {
   uid: number
@@ -84,20 +89,14 @@ function summarise(items: TransferJob[]): { active: number; bytes: number; size:
   return { active, bytes, size }
 }
 
-function formatSpeed(bytesPerSec: number): string {
-  return `${formatBytes(Math.round(bytesPerSec))}/s`
+// formatBytes is the same scale the file lists use; a real zero reads as 0 B
+// here, where the lists show a dash for a missing size.
+function formatBytes(n: number): string {
+  return n ? formatSize(n) : '0 B'
 }
 
-function formatBytes(n: number): string {
-  if (!n) return '0 B'
-  const units = ['B', 'K', 'M', 'G', 'T']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`
+function formatSpeed(bytesPerSec: number): string {
+  return `${formatBytes(Math.round(bytesPerSec))}/s`
 }
 
 export default function App() {
@@ -126,8 +125,15 @@ export default function App() {
         .catch(() => setMe(null))
     }
     load()
-    window.addEventListener('pikpak:account-changed', load)
-    return () => window.removeEventListener('pikpak:account-changed', load)
+    // Binding, rebinding or unbinding changes whose files everything is. The
+    // page caches are module-global, so they would otherwise keep showing the
+    // previous PikPak account's listing until something forced a refresh.
+    const onAccount = () => {
+      resetCache()
+      load()
+    }
+    window.addEventListener('pikpak:account-changed', onAccount)
+    return () => window.removeEventListener('pikpak:account-changed', onAccount)
   }, [])
 
   // The quota pill follows the account: a restore, download or upload on the
@@ -167,10 +173,9 @@ export default function App() {
         let downSpeed = 0
         let upSpeed = 0
         // The first poll only establishes a baseline; a rate needs two.
-        if (prev && now > prev.at) {
-          const dt = (now - prev.at) / 1000
-          downSpeed = Math.max(0, downBytes - prev.down) / dt
-          upSpeed = Math.max(0, upBytes - prev.up) / dt
+        if (prev) {
+          downSpeed = speedOf({ bytes: prev.down, at: prev.at }, { bytes: downBytes, at: now })
+          upSpeed = speedOf({ bytes: prev.up, at: prev.at }, { bytes: upBytes, at: now })
         }
         transferSample.current = { at: now, down: downBytes, up: upBytes }
         const active = down.active + up.active
@@ -348,7 +353,16 @@ export default function App() {
             <Route path="/search" element={<Search />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bind" element={<Bind />} />
-            {me?.debug && <Route path="/debug" element={<Debug />} />}
+            {me?.debug && (
+              <Route
+                path="/debug"
+                element={
+                  <Suspense fallback={<p className="muted">加载中…</p>}>
+                    <Debug />
+                  </Suspense>
+                }
+              />
+            )}
             <Route path="*" element={<Navigate to="/files" replace />} />
           </Routes>
         </main>

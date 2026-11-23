@@ -7,7 +7,7 @@ export type Selection = { ids: string[]; anchor: number | null }
 
 export const emptySelection: Selection = { ids: [], anchor: null }
 
-export type ClickMods = { toggle?: boolean; range?: boolean }
+type ClickMods = { toggle?: boolean; range?: boolean }
 
 function ordered(order: string[], chosen: Set<string>): string[] {
   return order.filter((id) => chosen.has(id))

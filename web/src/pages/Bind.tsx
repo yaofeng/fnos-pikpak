@@ -1,4 +1,4 @@
-import { BindCard } from './Debug'
+import { BindCard } from '../components/BindCard'
 
 export default function Bind() {
   return (

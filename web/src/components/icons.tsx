@@ -271,7 +271,7 @@ export function WrenchIcon({ size = 16 }: IconProps) {
 }
 
 // FolderGlyph is the blue two-tone folder the fnOS list and grid both use.
-export function FolderGlyph({ size = 22 }: IconProps) {
+function FolderGlyph({ size = 22 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path
@@ -294,7 +294,7 @@ const tints: Record<Exclude<FileKind, 'folder'>, string> = {
 
 // FileGlyph is a paper sheet tinted by kind, with a mark that tells video,
 // audio, image and archive apart at a glance.
-export function FileGlyph({ kind, size = 22 }: { kind: FileKind; size?: number }) {
+function FileGlyph({ kind, size = 22 }: { kind: FileKind; size?: number }) {
   if (kind === 'folder') return <FolderGlyph size={size} />
   const tint = tints[kind]
   return (

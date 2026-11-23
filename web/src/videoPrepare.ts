@@ -1,7 +1,7 @@
 // Preparing a video for 完整播放 can restore, purge and move files, so the
 // server answers 202 with a job id and the browser polls it.
 
-export type VideoJobState = 'running' | 'ready' | 'failed'
+type VideoJobState = 'running' | 'ready' | 'failed'
 
 export type VideoJob = {
   id: string
@@ -16,7 +16,7 @@ export type VideoJob = {
   direct_url?: string
 }
 
-export type WaitOptions = {
+type WaitOptions = {
   get: (id: string) => Promise<VideoJob>
   sleep?: (ms: number) => Promise<void>
   now?: () => number

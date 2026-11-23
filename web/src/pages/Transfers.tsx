@@ -137,7 +137,7 @@ export default function Transfers() {
 
       <p className="muted small">
         {tab === 'downloads'
-          ? '在「我的文件」里选中文件后点「下载到…」创建任务。'
+          ? '在「我的文件」里选中文件后点「下载」创建任务。'
           : '在「我的文件」里点「上传」把飞牛上的文件传到 PikPak。'}
       </p>
 

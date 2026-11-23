@@ -37,12 +37,6 @@ body {
   color: var(--fg);
 }
 
-.page {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px 48px;
-}
-
 .page-header {
   display: flex;
   align-items: baseline;
@@ -617,10 +611,6 @@ a.btn-icon {
   background: rgba(0, 0, 0, 0.045);
 }
 
-:root[data-theme='dark'] .tile:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .tile.selected {
   background: var(--sel-bg);
 }
@@ -817,11 +807,6 @@ a.btn-icon {
 }
 
 @media (max-width: 768px) {
-  .file-tools .search {
-    min-width: 120px;
-    flex: 1;
-  }
-
   .col-time {
     display: none;
   }
@@ -1059,11 +1044,6 @@ a.btn-icon {
 
   .notice {
     margin: 10px 16px 0;
-  }
-
-  .quota-bar {
-    left: 0;
-    bottom: 52px;
   }
 }
 
@@ -1434,12 +1414,6 @@ a.btn-icon {
   background: var(--bg);
 }
 
-.share-iina {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .share-crumbs {
   display: flex;
   align-items: center;
@@ -1762,14 +1736,6 @@ a.btn-icon {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 13px;
-}
-
-:root[data-theme='dark'] .se-title {
-  color: #8ab4f8;
-}
-
-:root[data-theme='dark'] .se-breadcrumb {
-  color: #8fbf8f;
 }
 
 /* Status bar of the fnOS file manager: counts only, pinned under the content. */

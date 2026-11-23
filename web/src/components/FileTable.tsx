@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
+import { dateText } from '../dates'
 import { formatSize, isFolder, type FileItem } from '../files'
 import { ChevronRight, FileIcon } from './icons'
 
@@ -82,7 +83,7 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
                 </span>
               </td>
               <td className="col-size muted">{isFolder(f) ? '—' : formatSize(f.size)}</td>
-              <td className="col-time muted">{f.modified_time ? new Date(f.modified_time).toLocaleString() : '—'}</td>
+              <td className="col-time muted">{dateText(f.modified_time)}</td>
             </tr>
           )
         })}

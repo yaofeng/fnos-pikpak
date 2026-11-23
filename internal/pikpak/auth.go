@@ -55,12 +55,12 @@ type deviceCodeResponse struct {
 }
 
 type tokenResponse struct {
-	AccessToken      string `json:"access_token"`
-	RefreshToken     string `json:"refresh_token"`
-	ExpiresIn        int    `json:"expires_in"`
-	Sub              string `json:"sub"`
-	Error            string `json:"error"`
-	ErrorCode        int    `json:"error_code"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	Sub          string `json:"sub"`
+	Error        string `json:"error"`
+	ErrorCode    int    `json:"error_code"`
 }
 
 func (c *Client) setHeaders(req *http.Request) {

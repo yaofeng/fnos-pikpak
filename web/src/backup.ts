@@ -1,8 +1,8 @@
 // A backup is plain JSON. These helpers keep the download filename and the
 // restore summary out of the page, so both can be unit tested without a DOM.
 
-export type RestoreCounts = { added: number; skipped: number }
-export type RestoreGroupCounts = { added: number; merged: number }
+type RestoreCounts = { added: number; skipped: number }
+type RestoreGroupCounts = { added: number; merged: number }
 
 export type RestoreResult = {
   settings_overwritten: number
