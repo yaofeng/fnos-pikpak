@@ -155,16 +155,8 @@ func copyMediaHeaders(dst, src http.Header) {
 // playMode returns "redirect" or "proxy" (the default). A per-user setting
 // wins over the global one.
 func playMode(ctx context.Context, deps Deps, uid int) string {
-	if deps.Store != nil {
-		value := ""
-		if v, err := deps.Store.GetUserSetting(ctx, uid, "play_mode"); err == nil {
-			value = v
-		} else if v, err := deps.Store.GetSetting(ctx, "play_mode"); err == nil {
-			value = v
-		}
-		if value == "redirect" {
-			return "redirect"
-		}
+	if deps.Store != nil && deps.Store.EffectiveSetting(ctx, uid, "play_mode") == "redirect" {
+		return "redirect"
 	}
 	return "proxy"
 }

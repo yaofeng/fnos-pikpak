@@ -515,3 +515,17 @@ func (s *Store) GetUserSetting(ctx context.Context, uid int, key string) (string
 	}
 	return v, err
 }
+
+// EffectiveSetting is the value a preference actually takes: the user's row
+// when it holds something, otherwise the global row, otherwise "". A user row
+// that stores an empty value has chosen nothing, so the global one still
+// answers.
+func (s *Store) EffectiveSetting(ctx context.Context, uid int, key string) string {
+	if v, err := s.GetUserSetting(ctx, uid, key); err == nil && v != "" {
+		return v
+	}
+	if v, err := s.GetSetting(ctx, key); err == nil {
+		return v
+	}
+	return ""
+}

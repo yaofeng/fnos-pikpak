@@ -33,7 +33,6 @@ func TestSettingsDefaults(t *testing.T) {
 	}
 	want := map[string]string{
 		"download_concurrency": "2",
-		"upload_concurrency":   "2",
 		"conflict":             "rename",
 		"play_mode":            "proxy",
 		"language":             "zh-CN",

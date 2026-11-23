@@ -53,7 +53,6 @@ func validAPIKey(s string) bool {
 
 var settingSpecs = map[string]settingSpec{
 	"download_concurrency": {def: "2", valid: intInRange(1, 4)},
-	"upload_concurrency":   {def: "2", valid: intInRange(1, 4)},
 	"conflict":             {def: "rename", valid: oneOf("rename", "skip", "overwrite")},
 	"play_mode":            {def: "proxy", valid: oneOf("proxy", "redirect")},
 	// player picks the macOS external player once, instead of asking on every

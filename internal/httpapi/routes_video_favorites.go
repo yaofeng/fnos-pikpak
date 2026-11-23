@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -80,9 +79,8 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("PATCH /api/video-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {
-		favID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || favID <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
+		favID, ok := pathID(w, r, "id")
+		if !ok {
 			return
 		}
 		// A missing field keeps what is stored; an empty string clears it
@@ -96,6 +94,7 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
 		var fav store.VideoFavorite
+		var err error
 		if body.Name != nil {
 			name := strings.TrimSpace(*body.Name)
 			if utf8.RuneCountInString(name) > 100 {
@@ -157,9 +156,8 @@ func registerVideoFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("DELETE /api/video-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {
-		favID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || favID <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
+		favID, ok := pathID(w, r, "id")
+		if !ok {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())

@@ -37,6 +37,35 @@ func sampleCredential(uid int, token string) Credential {
 	}
 }
 
+func TestEffectiveSettingPrefersTheUserRow(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	if got := s.EffectiveSetting(ctx, 1000, "conflict"); got != "" {
+		t.Fatalf("unset key = %q", got)
+	}
+	if err := s.SetSetting(ctx, "conflict", "skip"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	if got := s.EffectiveSetting(ctx, 1000, "conflict"); got != "skip" {
+		t.Fatalf("global value = %q", got)
+	}
+	if err := s.SetUserSetting(ctx, 1000, "conflict", "overwrite"); err != nil {
+		t.Fatalf("SetUserSetting: %v", err)
+	}
+	if got := s.EffectiveSetting(ctx, 1000, "conflict"); got != "overwrite" {
+		t.Fatalf("user value = %q", got)
+	}
+	// A user row that stores nothing has chosen nothing: the global value is
+	// still the answer.
+	if err := s.SetUserSetting(ctx, 1000, "conflict", ""); err != nil {
+		t.Fatalf("SetUserSetting: %v", err)
+	}
+	if got := s.EffectiveSetting(ctx, 1000, "conflict"); got != "skip" {
+		t.Fatalf("empty user value = %q", got)
+	}
+}
+
 func TestCredentialRoundTrip(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()

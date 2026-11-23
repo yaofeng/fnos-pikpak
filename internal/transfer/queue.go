@@ -438,15 +438,18 @@ func (q *Queue) failUpload(job store.UploadJob, code string, err error) {
 }
 
 func (q *Queue) policy(uid int) ConflictPolicy {
-	value := ""
-	if v, err := q.Store.GetUserSetting(context.Background(), uid, "conflict"); err == nil {
-		value = v
-	} else if v, err := q.Store.GetSetting(context.Background(), "conflict"); err == nil {
-		value = v
-	}
-	switch ConflictPolicy(value) {
+	return ResolveConflictPolicy(context.Background(), q.Store, uid)
+}
+
+// ResolveConflictPolicy is the policy a user's transfers run with: the user's
+// setting over the global one, defaulting to rename for anything else. The
+// enqueue handler and the worker both ask this, so the skip/overwrite answer
+// the API reports is the one the queue will follow.
+func ResolveConflictPolicy(ctx context.Context, st *store.Store, uid int) ConflictPolicy {
+	value := ConflictPolicy(st.EffectiveSetting(ctx, uid, "conflict"))
+	switch value {
 	case PolicySkip, PolicyOverwrite:
-		return ConflictPolicy(value)
+		return value
 	default:
 		return PolicyRename
 	}

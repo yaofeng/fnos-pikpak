@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"fnos-pikpak/internal/sharelink"
 )
 
 // Site is the domain a search starts on.
@@ -238,18 +240,7 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 // share pages: the homepage, help and download pages pass the operator too,
 // and none of them can be opened in the share browser.
 func shareIDOf(raw string) (string, bool) {
-	if !onSite(raw) {
-		return "", false
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", false
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) >= 2 && parts[0] == "s" && parts[1] != "" {
-		return parts[1], true
-	}
-	return "", false
+	return sharelink.ID(raw)
 }
 
 // unwrapLink returns the address a search provider hid behind its own click
@@ -593,20 +584,4 @@ func normalizeKeyword(keyword string) string {
 		}
 	}
 	return q
-}
-
-// onSite reports whether raw points at one of PikPak's share hosts or a
-// subdomain of one.
-func onSite(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	for _, site := range shareSites {
-		if host == site || strings.HasSuffix(host, "."+site) {
-			return true
-		}
-	}
-	return false
 }

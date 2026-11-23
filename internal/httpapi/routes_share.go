@@ -321,9 +321,8 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("PATCH /api/share-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		favID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || favID <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
+		favID, ok := pathID(w, r, "id")
+		if !ok {
 			return
 		}
 		var body struct {
@@ -351,9 +350,8 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("DELETE /api/share-favorites/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		favID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || favID <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
+		favID, ok := pathID(w, r, "id")
+		if !ok {
 			return
 		}
 		if err := deps.Store.DeleteShareFavorite(r.Context(), id.UID, favID); err != nil {

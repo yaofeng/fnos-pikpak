@@ -265,13 +265,7 @@ func videoPlayer(ctx context.Context, deps Deps, uid int) string {
 	if deps.Store == nil {
 		return "builtin"
 	}
-	value := ""
-	if v, err := deps.Store.GetUserSetting(ctx, uid, "player"); err == nil {
-		value = v
-	} else if v, err := deps.Store.GetSetting(ctx, "player"); err == nil {
-		value = v
-	}
-	if value == "iina" {
+	if deps.Store.EffectiveSetting(ctx, uid, "player") == "iina" {
 		return "iina"
 	}
 	return "builtin"

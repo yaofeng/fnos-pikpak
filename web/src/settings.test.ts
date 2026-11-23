@@ -3,7 +3,6 @@ import { changedSettings, globalSettingKeys, pickSettings, unbindWarning, userSe
 
 const all = {
   download_concurrency: '3',
-  upload_concurrency: '2',
   conflict: 'skip',
   play_mode: 'redirect',
   player: 'iina',
@@ -16,8 +15,7 @@ describe('pickSettings', () => {
   test('keeps only the keys a form owns', () => {
     expect(pickSettings(all, globalSettingKeys)).toEqual({
       download_concurrency: '3',
-      upload_concurrency: '2',
-    })
+        })
     expect(Object.keys(pickSettings(all, userSettingKeys)).sort()).toEqual([
       'conflict',
       'download_dir',

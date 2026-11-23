@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
+
+	"fnos-pikpak/internal/sharelink"
 )
 
 var (
@@ -38,8 +39,6 @@ type ShareInfo struct {
 	ExpireAt int64
 }
 
-var shareIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{6,64}$`)
-
 // ParseShareLink accepts the forms a person pastes: a full link on any PikPak
 // domain, a link without a scheme, or a bare share id. A pwd/pass_code query
 // parameter becomes the code.
@@ -48,7 +47,7 @@ func ParseShareLink(raw string) (shareID, passCode string, err error) {
 	if text == "" {
 		return "", "", ErrShareLink
 	}
-	if shareIDPattern.MatchString(text) {
+	if sharelink.ValidID(text) {
 		return text, "", nil
 	}
 	if !strings.Contains(text, "://") {
@@ -58,19 +57,11 @@ func ParseShareLink(raw string) (shareID, passCode string, err error) {
 	if err != nil {
 		return "", "", ErrShareLink
 	}
-	host := strings.ToLower(u.Hostname())
-	onShareHost := false
-	for _, site := range []string{"mypikpak.com", "mypikpak.net", "mypikpak.me", "pikpak.me"} {
-		if host == site || strings.HasSuffix(host, "."+site) {
-			onShareHost = true
-			break
-		}
-	}
-	if !onShareHost {
+	if _, ok := sharelink.ID(text); !ok {
 		return "", "", ErrShareLink
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] != "s" || !shareIDPattern.MatchString(parts[1]) {
+	if !sharelink.ValidID(parts[1]) {
 		return "", "", ErrShareLink
 	}
 	passCode = u.Query().Get("pwd")

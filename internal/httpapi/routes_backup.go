@@ -28,7 +28,7 @@ const (
 // The search API key is not exported: it is a secret, and the file is meant to
 // be copied between machines. A restore still accepts one written into the
 // file by hand or by an older build, because isGlobalSettingKey covers it.
-var backupGlobalSettingKeys = []string{"download_concurrency", "upload_concurrency"}
+var backupGlobalSettingKeys = []string{"download_concurrency"}
 
 var backupUserSettingKeys = []string{"conflict", "play_mode", "player", "tile_size", "language", "search_scope", "download_dir"}
 

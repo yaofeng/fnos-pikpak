@@ -4,7 +4,7 @@
 // scope into the other.
 export type SettingValues = Record<string, string>
 
-export const globalSettingKeys = ['download_concurrency', 'upload_concurrency', 'search_api_key'] as const
+export const globalSettingKeys = ['download_concurrency', 'search_api_key'] as const
 export const userSettingKeys = [
   'conflict',
   'play_mode',

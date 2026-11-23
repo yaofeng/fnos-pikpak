@@ -176,9 +176,8 @@ func startShareStats(deps Deps, uid int, fav store.ShareFavorite) {
 func registerShareFavoriteAvatar(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/share-favorites/{id}/avatar", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		favID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || favID <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_ids", "收藏编号不合法")
+		favID, ok := pathID(w, r, "id")
+		if !ok {
 			return
 		}
 		fav, err := deps.Store.GetShareFavorite(r.Context(), id.UID, favID)

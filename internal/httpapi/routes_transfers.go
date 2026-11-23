@@ -152,7 +152,7 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 
 		policy := transfer.ConflictPolicy(strings.TrimSpace(body.Conflict))
 		if policy == "" {
-			policy = conflictPolicy(r.Context(), deps.Store, id.UID)
+			policy = transfer.ResolveConflictPolicy(r.Context(), deps.Store, id.UID)
 		}
 
 		created := []store.DownloadJob{}
@@ -490,28 +490,7 @@ func writeDirError(w http.ResponseWriter, err error) {
 // downloadDir returns the user's configured download folder, falling back to
 // the global one. Empty means nothing has been configured yet.
 func downloadDir(r *http.Request, st *store.Store, uid int) string {
-	if v, err := st.GetUserSetting(r.Context(), uid, "download_dir"); err == nil && v != "" {
-		return v
-	}
-	if v, err := st.GetSetting(r.Context(), "download_dir"); err == nil && v != "" {
-		return v
-	}
-	return ""
-}
-
-func conflictPolicy(ctx context.Context, st *store.Store, uid int) transfer.ConflictPolicy {
-	value := ""
-	if v, err := st.GetUserSetting(ctx, uid, "conflict"); err == nil {
-		value = v
-	} else if v, err := st.GetSetting(ctx, "conflict"); err == nil {
-		value = v
-	}
-	switch transfer.ConflictPolicy(value) {
-	case transfer.PolicySkip, transfer.PolicyOverwrite:
-		return transfer.ConflictPolicy(value)
-	default:
-		return transfer.PolicyRename
-	}
+	return st.EffectiveSetting(r.Context(), uid, "download_dir")
 }
 
 func uniqueDestPath(path string, taken map[string]bool) string {
