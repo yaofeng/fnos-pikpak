@@ -108,6 +108,14 @@ func (c *Client) CompleteUpload(ctx context.Context, ticket UploadTicket, src io
 		return &UnsupportedProviderError{Provider: r.Provider, ParamKeys: sortedKeys(r.Params)}
 	}
 
+	// A transfer canceled while it waited in the queue must not open a request
+	// at all. The OSS SDK has no context of its own: a canceled source only
+	// fails once the request is already on its way, which can reach the bucket
+	// before the first read errors out.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	params := r.Params
 	endpoint, err := normalizeOSSEndpoint(params["endpoint"])
 	if err != nil {
