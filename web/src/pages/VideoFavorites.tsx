@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, basePath, ApiError } from '../api'
 import Player from '../components/Player'
 import FileGrid from '../components/FileGrid'
-import { FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
+import { CheckIcon, FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
 import { formatSize, thumbPath, type FileItem } from '../files'
 import { iinaURL } from '../iina'
 import { useFileSelection } from '../useFileSelection'
@@ -121,7 +121,7 @@ export default function VideoFavorites() {
         name: job.name || f.display_name || f.name,
         stream_url: job.stream_url,
       })
-      // The prepare recorded the restored copy, so the tile now earns its ✅.
+      // The prepare recorded the restored copy, so the tile now earns its check badge.
       void load()
     } catch (err) {
       setError((err as Error).message)
@@ -350,7 +350,13 @@ export default function VideoFavorites() {
               }}
               onDropOn={() => undefined}
               badge={(f) =>
-                f.restored ? { side: 'left', icon: '✅', title: '已转存到 Pack From Shared' } : null
+                f.restored
+                  ? {
+                      icon: <CheckIcon size={13} />,
+                      title: '已转存到 Pack From Shared',
+                      kind: 'restored' as const,
+                    }
+                  : null
               }
             />
           </section>
@@ -403,8 +409,8 @@ export default function VideoFavorites() {
                     <td>
                       <span className="shine-name">
                         {f.restored && (
-                          <span className="list-badge" title="已转存到 Pack From Shared">
-                            ✅
+                          <span className="list-badge restored" title="已转存到 Pack From Shared">
+                            <CheckIcon size={14} />
                           </span>
                         )}
                         <FileIcon file={toFileItem(f)} size={20} />

@@ -91,6 +91,16 @@ export function PlayIcon({ size = 16 }: IconProps) {
   )
 }
 
+// CheckIcon marks a copy that already exists (已转存); the badge around it
+// supplies the disc.
+export function CheckIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </svg>
+  )
+}
+
 export function StarIcon({ size = 16, filled = false }: IconProps & { filled?: boolean }) {
   return (
     <svg {...stroke(size)}>

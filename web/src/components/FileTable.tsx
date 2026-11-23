@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import { formatSize, isFolder, type FileItem } from '../files'
 import { ChevronRight, FileIcon } from './icons'
 
@@ -11,7 +11,7 @@ type Props = {
   onDragStart?: (f: FileItem) => void
   onDropOn?: (folderId: string) => void
   // badge puts the local status before the icon, where a list keeps the eye.
-  badge?: (f: FileItem) => { icon: string; title: string } | null
+  badge?: (f: FileItem) => { icon: ReactNode; title: string; kind: 'restored' | 'star' } | null
 }
 
 // FileTable renders the list view with the Finder's selection: a row is
@@ -71,7 +71,7 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
               <td className="col-name">
                 <span className="name-cell">
                   {mark && (
-                    <span className="list-badge" title={mark.title} aria-label={mark.title}>
+                    <span className={`list-badge ${mark.kind}`} title={mark.title} aria-label={mark.title}>
                       {mark.icon}
                     </span>
                   )}

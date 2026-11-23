@@ -9,6 +9,7 @@ import FileGrid from './FileGrid'
 import FileTable from './FileTable'
 import Player from './Player'
 import {
+  CheckIcon,
   DownloadIcon,
   GridIcon,
   HomeIcon,
@@ -52,6 +53,18 @@ type ShareFileUrls = {
 type Crumb = { id: string; name: string }
 
 export type ShareState = { title: string; passCode: string; protected: boolean; owner: string }
+
+// shareBadge marks the videos the app already knows: a copy in Pack From
+// Shared (已转存) wins over a place in 视频收藏夹 (已收藏).
+function shareBadge(f: FileItem) {
+  if (f.restored) {
+    return { icon: <CheckIcon size={13} />, title: '已转存到 Pack From Shared', kind: 'restored' as const }
+  }
+  if (f.favorited) {
+    return { icon: <StarIcon size={13} filled />, title: '已在视频收藏夹', kind: 'star' as const }
+  }
+  return null
+}
 
 export default function ShareBrowser({
   url,
@@ -606,13 +619,7 @@ export default function ShareBrowser({
                 selected={selected}
                 onSelect={select}
                 onOpen={openFile}
-                badge={(f) =>
-                  f.restored
-                    ? { icon: '✅', title: '已转存到 Pack From Shared' }
-                    : f.favorited
-                      ? { icon: '🌟', title: '已在视频收藏夹' }
-                      : null
-                }
+                badge={(f) => shareBadge(f)}
               />
             ) : (
               <FileGrid
@@ -624,13 +631,7 @@ export default function ShareBrowser({
                 onMenu={() => undefined}
                 onDragStart={() => undefined}
                 onDropOn={() => undefined}
-                badge={(f) =>
-                  f.restored
-                    ? { side: 'right', icon: '✅', title: '已转存到 Pack From Shared' }
-                    : f.favorited
-                      ? { side: 'right', icon: '🌟', title: '已在视频收藏夹' }
-                      : null
-                }
+                badge={(f) => shareBadge(f)}
               />
             )}
           </div>

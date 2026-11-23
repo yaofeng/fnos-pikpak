@@ -14,7 +14,7 @@ export type VideoFavorite = {
   // sharing user; empty means "derive it from the share".
   group_label: string
   // restored says a copy already sits in Pack From Shared; 完整播放 reuses it
-  // instead of restoring again, and the tile shows ✅.
+  // instead of restoring again, and the tile shows the check badge.
   restored: boolean
   restored_file_id: string
   created_at: string

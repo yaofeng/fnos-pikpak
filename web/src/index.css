@@ -638,28 +638,44 @@ a.btn-icon {
   height: calc(56px * var(--tile-scale, 1));
 }
 
-/* A status over the preview: ✅ for a copy already in Pack From Shared, 🌟 for
-   a video in 视频收藏夹. The list view puts the same glyph before the icon. */
+/* A status over the preview: a check for a copy already in Pack From Shared,
+   a star for a video in 视频收藏夹. Both sit on the same white disc at the
+   bottom-left, inset from the corner; the list view puts the same glyph
+   before the file icon. */
 .tile-badge {
   position: absolute;
-  bottom: 0;
-  font-size: 15px;
-  line-height: 1;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.28);
   pointer-events: none;
 }
 
-.tile-badge.left {
-  left: 0;
+.tile-badge.restored {
+  color: #12a150;
 }
 
-.tile-badge.right {
-  right: 0;
+.tile-badge.star {
+  color: #e6a100;
 }
 
 .list-badge {
-  margin-right: 4px;
-  font-size: 13px;
-  line-height: 1;
+  display: inline-flex;
+  margin-right: 6px;
+}
+
+.list-badge.restored {
+  color: #12a150;
+}
+
+.list-badge.star {
+  color: #e6a100;
 }
 
 .tile-thumb {

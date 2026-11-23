@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from 'react'
+import { useState, type MouseEvent, type ReactNode } from 'react'
 import { formatSize, isFolder, type FileItem } from '../files'
 import { FileIcon } from './icons'
 
@@ -13,9 +13,9 @@ type Props = {
   // thumbSrc maps a file to a thumbnail URL. A tile falls back to its icon
   // when the request fails (no thumbnail, expired link, offline).
   thumbSrc?: (f: FileItem) => string
-  // badge draws a local status in a tile corner: 视频收藏夹 puts ✅ bottom-left,
-  // the share browser puts ✅ (已转存) or 🌟 (已收藏视频) bottom-right.
-  badge?: (f: FileItem) => { side: 'left' | 'right'; icon: string; title: string } | null
+  // badge draws a local status in the tile's bottom-left corner: a check for
+  // 已转存, a star for a video in 视频收藏夹. Restore wins when both apply.
+  badge?: (f: FileItem) => { icon: ReactNode; title: string; kind: 'restored' | 'star' } | null
 }
 
 // FileGrid is the icon view of the Finder: no card around each item, the name
@@ -68,7 +68,7 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
               <FileIcon file={f} size={56} />
             )}
             {mark && (
-              <span className={`tile-badge ${mark.side}`} title={mark.title} aria-label={mark.title}>
+              <span className={`tile-badge ${mark.kind}`} title={mark.title} aria-label={mark.title}>
                 {mark.icon}
               </span>
             )}
