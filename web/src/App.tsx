@@ -186,11 +186,15 @@ export default function App() {
               }
             : null,
         )
+        // Idle pages poll slowly: the bar only has to appear soon after a
+        // transfer starts, not within two seconds.
+        if (!stopped) timer = window.setTimeout(tick, active > 0 ? 2000 : 8000)
+        return
       } catch {
         // A quota or session error already shows elsewhere; the summary just
         // keeps its last value.
       }
-      if (!stopped) timer = window.setTimeout(tick, 2000)
+      if (!stopped) timer = window.setTimeout(tick, 8000)
     }
     void tick()
     return () => {
