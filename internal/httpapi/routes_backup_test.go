@@ -68,8 +68,10 @@ func TestBackupContainsOnlyTheCurrentUser(t *testing.T) {
 	if settings["language"] != "en" {
 		t.Fatalf("settings.language = %v", settings["language"])
 	}
-	if settings["search_api_key"] != "sk-secret" {
-		t.Fatalf("settings.search_api_key = %v", settings["search_api_key"])
+	// The search key is a secret and the file may be copied elsewhere, so the
+	// export never writes it; the restore path still accepts one.
+	if _, ok := settings["search_api_key"]; ok {
+		t.Fatalf("settings.search_api_key reached the backup: %v", settings["search_api_key"])
 	}
 
 	shares, _ := body["share_favorites"].([]any)
@@ -96,7 +98,7 @@ func TestBackupContainsOnlyTheCurrentUser(t *testing.T) {
 	}
 
 	raw := rec.Body.String()
-	for _, forbidden := range []string{"access_token", "refresh_token", "device_id", "credentials", `"uid"`} {
+	for _, forbidden := range []string{"sk-secret", "access_token", "refresh_token", "device_id", "credentials", `"uid"`} {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("the backup contains %q: %s", forbidden, raw)
 		}

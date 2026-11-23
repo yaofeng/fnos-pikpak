@@ -24,7 +24,11 @@ const (
 // backupUserSettingKeys belong to one fnOS user and are restored for the
 // caller only. Keys outside settingSpecs are skipped, which keeps a backup
 // from an older build from writing settings this build never reads.
-var backupGlobalSettingKeys = []string{"download_concurrency", "upload_concurrency", "search_api_key"}
+//
+// The search API key is not exported: it is a secret, and the file is meant to
+// be copied between machines. A restore still accepts one written into the
+// file by hand or by an older build, because isGlobalSettingKey covers it.
+var backupGlobalSettingKeys = []string{"download_concurrency", "upload_concurrency"}
 
 var backupUserSettingKeys = []string{"conflict", "play_mode", "player", "tile_size", "language", "download_dir"}
 

@@ -437,7 +437,10 @@ export default function Settings() {
             onChange={onBackupFilePicked}
           />
         </div>
-        <p className="muted small">备份文件包含收藏与配置（含全网搜索 API Key），请妥善保管。</p>
+        <p className="muted small">
+          备份文件包含收藏（含分享密码）和配置参数，不含账号授权与全网搜索 API Key——恢复后需要重新填写搜索 Key。
+          文件可被复制和传播，请妥善保管。
+        </p>
         {backupNote && <p className="ok muted small">{backupNote}</p>}
       </section>
 
