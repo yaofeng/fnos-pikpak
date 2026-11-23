@@ -1,5 +1,5 @@
 appname=pikpak
-version=1.0.0
+version=1.0.1
 display_name=PikPak
 desc=PikPak 文件管理、离线下载与在线播放。
 source=thirdparty
