@@ -64,7 +64,9 @@ func TestSearchAddsTheSiteFilterAndReturnsResults(t *testing.T) {
 }
 
 func TestSearchStripsASiteFilterThePersonPasted(t *testing.T) {
-	srv, gotQuery, _, _ := organicServer(t, nil)
+	srv, gotQuery, _, _ := organicServer(t, []map[string]any{
+		{"title": "主站", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
 	if _, err := c.Search(context.Background(), "key-123", "site://mypikpak.com/ 大模型", 1); err != nil {
@@ -148,5 +150,45 @@ func TestSearchReportsAnUpstreamFailureWithoutLeakingTheKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "key-123") {
 		t.Fatalf("the API key reached the error text: %v", err)
+	}
+}
+
+// One site is searched at a time. The next host is only asked when the
+// previous one has nothing — the primary answers almost every search, and a
+// host that stopped resolving simply contributes no hits.
+func TestSearchFallsBackToTheNextSiteOnlyWhenTheFirstHasNothing(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Q string `json:"q"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		queries = append(queries, body.Q)
+		if strings.Contains(body.Q, "site:mypikpak.net") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"organic": []map[string]any{
+				{"title": "备用域名", "link": "https://mypikpak.net/s/VN2", "snippet": "相关"},
+			}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"organic": []map[string]any{}})
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+
+	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	want := []string{"site:mypikpak.com 大模型", "site:mypikpak.net 大模型"}
+	if len(queries) != len(want) {
+		t.Fatalf("queries = %v", queries)
+	}
+	for i := range want {
+		if queries[i] != want[i] {
+			t.Fatalf("queries = %v", queries)
+		}
+	}
+	if len(got) != 1 || got[0].URL != "https://mypikpak.net/s/VN2" {
+		t.Fatalf("results = %+v", got)
 	}
 }

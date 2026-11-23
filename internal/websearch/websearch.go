@@ -15,13 +15,16 @@ import (
 	"time"
 )
 
-// Site is the domain every query is limited to.
+// Site is the domain a search starts on.
 const Site = "mypikpak.com"
 
-// shareSites are the hosts PikPak actually serves share pages from. Google
-// indexes all of them, so filtering to the .com alone hid most of a result
-// page — ten hits in, three shown.
-var shareSites = []string{"mypikpak.com", "mypikpak.net", "mypikpak.me", "pikpak.me"}
+// shareSites are the hosts PikPak actually serves share pages from, in the
+// order they are tried. A search asks one of them at a time and only moves on
+// when that host has nothing: the primary answers almost every query, and a
+// host that stopped resolving (mypikpak.me no longer does) simply adds no
+// hits. Results are accepted from any of them, since Google can index a share
+// under a sister domain.
+var shareSites = []string{Site, "mypikpak.net", "pikpak.me", "mypikpak.me"}
 
 // defaultEndpoint is Serper's Google proxy: it honors the site: operator and
 // returns organic results as JSON.
@@ -79,6 +82,9 @@ type serperResponse struct {
 // Search looks for keyword under Site. Only results hosted on the site are
 // returned; a provider that ignores the site filter therefore cannot put an
 // unrelated page in the list. page is 1-based; callers validate its range.
+//
+// Sites are asked one at a time: the first host with a hit answers the
+// search, and the next host is tried only when the previous one has nothing.
 func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) ([]Result, error) {
 	q := normalizeKeyword(keyword)
 	if q == "" {
@@ -87,8 +93,23 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (
 	if page < 1 {
 		page = 1
 	}
+	for _, site := range shareSites {
+		out, err := c.searchSite(ctx, apiKey, site, q, page)
+		if err != nil {
+			return nil, err
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+	return []Result{}, nil
+}
+
+// searchSite runs one site-scoped query and keeps only results on a PikPak
+// share host.
+func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int) ([]Result, error) {
 	payload, err := json.Marshal(map[string]any{
-		"q":    "site:" + Site + " " + q,
+		"q":    "site:" + site + " " + q,
 		"gl":   "cn",
 		"hl":   "zh-cn",
 		"num":  pageSize,
