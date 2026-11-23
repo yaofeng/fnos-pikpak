@@ -1333,6 +1333,12 @@ a.btn-icon {
   flex-direction: column;
 }
 
+/* The result list is the page's own content, so it scrolls the page column
+   (a bar at the window edge) instead of an inner box floating mid-screen. */
+.search-page:not(.viewer) {
+  overflow-y: auto;
+}
+
 .search-page.viewer {
   margin: -20px -24px -48px;
 }

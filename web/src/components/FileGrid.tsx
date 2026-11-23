@@ -72,12 +72,12 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
                 {mark.icon}
               </span>
             )}
+            {!isFolder(f) && <span className="tile-size">{formatSize(f.size)}</span>}
           </div>
           <div className="tile-label">
             <span className="tile-name" title={f.name}>
               {f.name}
             </span>
-            <span className="tile-meta">{isFolder(f) ? '文件夹' : formatSize(f.size)}</span>
           </div>
         </div>
         )
