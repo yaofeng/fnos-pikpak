@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendResults, crumbFromURL, hasMorePages, shareCount } from './search'
+import { appendResults, crumbFromURL, hasMorePages, shareCount, shareURL } from './search'
 
 describe('crumbFromURL', () => {
   it('shows the host and each path segment', () => {
@@ -35,6 +35,39 @@ describe('appendResults', () => {
       [hit('https://mypikpak.net/s/VN1'), hit('https://mypikpak.com/s/VN2')],
     )
     expect(got.map((r) => r.url)).toEqual(['https://mypikpak.com/s/VN1', 'https://mypikpak.com/s/VN2'])
+  })
+
+  it('drops a wrapped share the earlier pages already showed', () => {
+    // A provider redirect carries a different token each time, so the address
+    // it displayed is what tells the two entries apart.
+    const share = (url: string, display: string) => ({
+      title: display,
+      url,
+      snippet: '',
+      wrapped: true,
+      display,
+    })
+    const got = appendResults(
+      [share('https://www.google.com/goto?url=CAESa', 'mypikpak.com/s/VN9')],
+      [share('https://www.google.com/goto?url=CAESb', 'mypikpak.com/s/VN9')],
+    )
+    expect(got).toHaveLength(1)
+  })
+})
+
+describe('shareURL', () => {
+  const id = 'VOzKdR-2i9kQWNDeg0O6kQGuo2'
+
+  it('returns the share a PikPak address points at', () => {
+    expect(shareURL(`https://mypikpak.com/s/${id}?pwd=abcd`)).toBe(`https://mypikpak.com/s/${id}`)
+    expect(shareURL(`https://www.mypikpak.net/s/${id}`)).toBe(`https://mypikpak.net/s/${id}`)
+  })
+
+  it('is empty for a page the share browser cannot open', () => {
+    expect(shareURL('https://www.google.com/goto?url=CAESa')).toBe('')
+    expect(shareURL('https://mypikpak.com/')).toBe('')
+    expect(shareURL(`https://wrong.example.com/s/${id}`)).toBe('')
+    expect(shareURL('not a url')).toBe('')
   })
 })
 

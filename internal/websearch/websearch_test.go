@@ -215,13 +215,16 @@ func TestSearchUnwrapsAProviderRedirect(t *testing.T) {
 	}
 }
 
-// Google's newer /goto token is encrypted, so it cannot be decoded locally:
-// the provider's free /resolve endpoint is what turns it back into the share.
-func TestSearchResolvesAGotoWrapperBeforeJudgingIt(t *testing.T) {
+// Google's newer /goto token is encrypted and cannot be decoded offline.
+// Searching no longer asks the provider to resolve it — a page can hold
+// twenty of them and each costs a round trip — so the hit is listed as a
+// wrapper, marked for resolution when it is opened, and kept even under the
+// share scope: most of them lead to a share.
+func TestSearchListsAGotoWrapperWithoutResolvingIt(t *testing.T) {
 	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
 	dest := "https://mypikpak.com/s/VN9"
 	srv, asked := providerServer(t, []map[string]any{
-		{"title": "分享", "link": wrapped, "snippet": "相关"},
+		{"title": "分享", "link": wrapped, "snippet": "相关", "displayedLink": "mypikpak.com/s/VN9"},
 	}, map[string]string{wrapped: dest})
 	c := &Client{Endpoint: srv.URL + "/search", ResolveEndpoint: srv.URL + "/resolve", HTTP: srv.Client()}
 
@@ -229,75 +232,130 @@ func TestSearchResolvesAGotoWrapperBeforeJudgingIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(ans.Results) != 1 || ans.Results[0].URL != dest || !ans.Results[0].Share {
+	if len(ans.Results) != 1 {
 		t.Fatalf("results = %+v", ans.Results)
 	}
-	// The same token from the other hosts costs one resolution, not four.
-	if len(*asked) != 1 || (*asked)[0] != wrapped {
-		t.Fatalf("resolved links = %v", *asked)
+	got := ans.Results[0]
+	if got.URL != wrapped || !got.Wrapped || got.Share {
+		t.Fatalf("result = %+v", got)
+	}
+	if got.Display != "mypikpak.com/s/VN9" {
+		t.Fatalf("display = %q", got.Display)
+	}
+	if len(*asked) != 0 {
+		t.Fatalf("the search resolved %v", *asked)
 	}
 }
 
-// A resolution that fails must not fail the search: the wrapper is listed
-// under the wide scope and simply is not a share.
-func TestSearchKeepsTheWrapperWhenResolutionFails(t *testing.T) {
-	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/resolve") {
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"organic": []map[string]any{
-			{"title": "分享", "link": wrapped, "snippet": "相关"},
-		}})
-	}))
-	t.Cleanup(srv.Close)
-	c := &Client{
-		Endpoint:        srv.URL + "/search",
-		ResolveEndpoint: srv.URL + "/resolve",
-		HTTP:            &http.Client{Transport: offlineGoogle{next: srv.Client().Transport}},
-	}
+// The same share wrapped behind the provider's redirect reaches the list
+// from more than one host, and each host's token is different. What the
+// provider showed under the title is the same, so that is what it is deduped
+// by.
+func TestSearchShowsAWrappedShareOnceAcrossHosts(t *testing.T) {
+	srv, _ := siteAnswers(t, map[string][]map[string]any{
+		"mypikpak.com": {
+			{"title": "分享", "link": "https://www.google.com/goto?url=CAESa", "snippet": "相关", "displayedLink": "mypikpak.com/s/VN9"},
+		},
+		"mypikpak.net": {
+			{"title": "分享", "link": "https://www.google.com/goto?url=CAESb", "snippet": "相关", "displayedLink": "mypikpak.com/s/VN9"},
+		},
+	})
+	c := &Client{Endpoint: srv.URL, HTTP: &http.Client{Transport: offlineGoogle{next: srv.Client().Transport}}}
 
 	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(ans.Results) != 0 {
-		t.Fatalf("an unresolved wrapper was listed as a share: %+v", ans.Results)
-	}
-
-	ans, err = c.Search(context.Background(), "key-123", "大模型", 1, ScopeSite)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(ans.Results) != 1 || ans.Results[0].URL != wrapped || ans.Results[0].Share {
+	if len(ans.Results) != 1 || !ans.Results[0].Wrapped {
 		t.Fatalf("results = %+v", ans.Results)
 	}
 }
 
-// When the provider's resolve leaves the wrapper alone, Google's own redirect
-// still names the destination; a real /goto answers 302 and nothing else has
-// to be fetched.
-func TestSearchReadsGoogleRedirectWhenTheProviderLeavesTheWrapper(t *testing.T) {
+// The provider's free /resolve endpoint knows a wrapper's destination.
+func TestResolveLinkAsksTheProvider(t *testing.T) {
 	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
 	dest := "https://mypikpak.com/s/VN9"
-	srv, _ := providerServer(t, []map[string]any{
-		{"title": "分享", "link": wrapped, "snippet": "相关"},
-	}, nil)
+	srv, asked := providerServer(t, nil, map[string]string{wrapped: dest})
 	c := &Client{
-		Endpoint:        srv.URL + "/search",
+		ResolveEndpoint: srv.URL + "/resolve",
+		HTTP:            &http.Client{Transport: offlineGoogle{next: srv.Client().Transport}},
+	}
+
+	got, err := c.ResolveLink(context.Background(), "key-123", wrapped)
+	if err != nil {
+		t.Fatalf("ResolveLink: %v", err)
+	}
+	if got != dest {
+		t.Fatalf("destination = %q", got)
+	}
+	if len(*asked) != 1 || (*asked)[0] != wrapped {
+		t.Fatalf("resolved links = %v", *asked)
+	}
+}
+
+// When the provider leaves the wrapper alone, Google's own redirect still
+// names the destination; a real /goto answers 302 and nothing else has to be
+// fetched.
+func TestResolveLinkReadsGoogleRedirectWhenTheProviderFails(t *testing.T) {
+	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
+	dest := "https://mypikpak.com/s/VN9"
+	srv, _ := providerServer(t, nil, nil)
+	c := &Client{
 		ResolveEndpoint: srv.URL + "/resolve",
 		HTTP: &http.Client{Transport: redirectTransport{
 			next: srv.Client().Transport, from: "www.google.com", to: dest,
 		}},
 	}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
+	got, err := c.ResolveLink(context.Background(), "key-123", wrapped)
 	if err != nil {
-		t.Fatalf("Search: %v", err)
+		t.Fatalf("ResolveLink: %v", err)
 	}
-	if len(ans.Results) != 1 || ans.Results[0].URL != dest || !ans.Results[0].Share {
-		t.Fatalf("results = %+v", ans.Results)
+	if got != dest {
+		t.Fatalf("destination = %q", got)
+	}
+}
+
+// A /url redirect names its destination in the query, so it never needs the
+// network.
+func TestResolveLinkDecodesTheOlderRedirectLocally(t *testing.T) {
+	c := &Client{HTTP: &http.Client{Transport: offlineGoogle{next: http.DefaultTransport}}}
+
+	got, err := c.ResolveLink(context.Background(), "key-123", "https://www.google.com/url?q=https%3A%2F%2Fmypikpak.com%2Fs%2FVN1&sa=U")
+	if err != nil {
+		t.Fatalf("ResolveLink: %v", err)
+	}
+	if got != "https://mypikpak.com/s/VN1" {
+		t.Fatalf("destination = %q", got)
+	}
+}
+
+// An address that is not a provider redirect is already the destination; the
+// caller opens it as it is.
+func TestResolveLinkLeavesAPlainAddressAlone(t *testing.T) {
+	c := &Client{HTTP: &http.Client{Transport: offlineGoogle{next: http.DefaultTransport}}}
+
+	if _, err := c.ResolveLink(context.Background(), "key-123", "https://mypikpak.com/s/VN9"); !errors.Is(err, ErrNotWrapped) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Both ways can fail, and neither may hang the click: with the provider
+// refusing and Google unreachable the answer is a quick, explicit failure so
+// the page can fall back to the wrapper itself.
+func TestResolveLinkReportsWhenNothingAnswers(t *testing.T) {
+	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{
+		ResolveEndpoint: srv.URL + "/resolve",
+		HTTP:            &http.Client{Transport: offlineGoogle{next: srv.Client().Transport}},
+	}
+
+	if _, err := c.ResolveLink(context.Background(), "key-123", wrapped); !errors.Is(err, ErrLinkUnresolved) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

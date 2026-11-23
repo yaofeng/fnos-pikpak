@@ -34,9 +34,13 @@ var shareSites = []string{Site, "mypikpak.net", "pikpak.me", "mypikpak.me"}
 const defaultEndpoint = "https://google.serper.dev/search"
 
 // defaultResolveEndpoint turns Google's opaque /goto links back into the
-// address they lead to. It is free (credits: 0), and without it a wrapped
-// share cannot be told apart from any other page.
+// address they lead to. It is free (credits: 0). It is only asked when a
+// wrapped result is opened, not while a page of results is built.
 const defaultResolveEndpoint = "https://google.serper.dev/resolve"
+
+// ResolveTimeout bounds the click-time unwrapping of one link. A wrapper is
+// one page, so a slow provider must not hold the click any longer.
+const ResolveTimeout = 5 * time.Second
 
 // MaxPage is the last page a provider will serve; each page is one paid query.
 const MaxPage = 10
@@ -47,6 +51,14 @@ const pageSize = 20
 
 // ErrEmptyQuery means there was nothing to search for.
 var ErrEmptyQuery = errors.New("websearch: empty query")
+
+// ErrNotWrapped means the address is not a provider click redirect: it is
+// already the page the app would open.
+var ErrNotWrapped = errors.New("websearch: link is not a provider redirect")
+
+// ErrLinkUnresolved means a provider redirect could not be read within the
+// time a click may wait.
+var ErrLinkUnresolved = errors.New("websearch: link could not be resolved")
 
 // Scope decides what a search keeps.
 type Scope string
@@ -77,6 +89,14 @@ type Result struct {
 	// Share reports whether this is a share page the app can open in its own
 	// browser. It is only ever false when the scope allows other pages.
 	Share bool `json:"share"`
+	// Wrapped marks one of the provider's own click redirects (Google's
+	// /goto): the address behind it is unknown until it is opened, and most
+	// of them lead to a share.
+	Wrapped bool `json:"wrapped"`
+	// Display is the address the provider showed under the title, when it
+	// gave one; the list uses it as the breadcrumb of a wrapped result and
+	// to recognise the same share behind two different tokens.
+	Display string `json:"display,omitempty"`
 }
 
 // Client talks to one search provider. HTTP is injectable so tests can point
@@ -99,9 +119,10 @@ func New() *Client {
 }
 
 type serperResult struct {
-	Title   string `json:"title"`
-	Link    string `json:"link"`
-	Snippet string `json:"snippet"`
+	Title         string `json:"title"`
+	Link          string `json:"link"`
+	Snippet       string `json:"snippet"`
+	DisplayedLink string `json:"displayedLink"`
 }
 
 type serperResponse struct {
@@ -127,6 +148,11 @@ type Answer struct {
 // reached (mypikpak.me no longer resolves) is skipped; a provider refusal
 // stops the search, since no other host would answer either. The same share
 // is served by every host under one share id, so it is returned once.
+//
+// A provider click redirect that cannot be read locally is not resolved here:
+// a page can hold twenty of them and each one costs a round trip. It is
+// listed as Wrapped, which the share scope keeps too since most of them lead
+// to a share, and its destination is asked for when it is opened.
 func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, scope Scope) (Answer, error) {
 	q := normalizeKeyword(keyword)
 	if q == "" {
@@ -143,9 +169,6 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 	// rawSeen counts every link the provider returned once, even when a
 	// second host answers with the same list.
 	rawSeen := make(map[string]bool, pageSize)
-	// resolved remembers what a wrapped link led to, so the same token sent
-	// by more than one host costs one resolution.
-	resolved := make(map[string]string)
 	raw := 0
 	var unreachable error
 	for _, site := range shareSites {
@@ -162,9 +185,9 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 			unreachable = err
 			continue
 		}
-		links := c.resolveWrapped(ctx, apiKey, hits, resolved)
-		for i, r := range hits {
-			link := links[i]
+		for _, r := range hits {
+			// A /url redirect is decoded locally; a /goto token stays.
+			link := unwrapLink(r.Link)
 			if _, ok := webAddress(link); !ok {
 				continue
 			}
@@ -174,18 +197,32 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 			rawSeen[link] = true
 			raw++
 			id, isShare := shareIDOf(link)
-			if !isShare && scope != ScopeSite {
+			wrapped := !isShare && isGotoLink(link)
+			if !isShare && !wrapped && scope != ScopeSite {
 				continue
 			}
+			display := displayAddress(r.DisplayedLink)
 			key := link
-			if isShare {
+			switch {
+			case isShare:
 				key = id
+			case wrapped:
+				// Each host's token is different; what the provider showed
+				// under the title names the same page every time.
+				if did, ok := shareIDOf(display); ok {
+					key = did
+				} else if display != "" {
+					key = display
+				}
 			}
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			out = append(out, Result{Title: r.Title, URL: link, Snippet: r.Snippet, Share: isShare})
+			out = append(out, Result{
+				Title: r.Title, URL: link, Snippet: r.Snippet,
+				Share: isShare, Wrapped: wrapped, Display: display,
+			})
 			if len(out) >= pageSize {
 				break
 			}
@@ -293,6 +330,28 @@ func firstAddress(s string) string {
 	return rest
 }
 
+// displayAddress returns what the provider showed under a title, when it is
+// an address: either absolute or the scheme-less host/path Google prints. It
+// is only ever displayed, never opened, so anything else is dropped.
+func displayAddress(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 300 {
+		return ""
+	}
+	if _, ok := webAddress(raw); ok {
+		return raw
+	}
+	if strings.Contains(raw, "://") || !strings.Contains(raw, ".") {
+		return ""
+	}
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c <= ' ' || c >= 0x7f {
+			return ""
+		}
+	}
+	return raw
+}
+
 // webAddress reports whether raw is an http(s) address the page can open.
 // A provider result is untrusted text; a link with any other scheme could
 // run script in the app when the person clicks it.
@@ -304,69 +363,68 @@ func webAddress(raw string) (string, bool) {
 	return raw, true
 }
 
-// resolveWrapped turns each hit's address into the one the provider meant.
-// A google.com/url?q= wrapper is decoded locally; a google.com/goto token is
-// encrypted, so the address comes from the provider's /resolve endpoint or,
-// failing that, from Google's own redirect. When nothing works the wrapper
-// stays, and the caller treats it as a page that is not a share.
-func (c *Client) resolveWrapped(ctx context.Context, apiKey string, hits []serperResult, cache map[string]string) []string {
-	links := make([]string, len(hits))
-	pending := make(map[string]bool)
-	var ask []string
-	for i, hit := range hits {
-		link := unwrapLink(hit.Link)
-		if dest, ok := cache[link]; ok {
-			links[i] = dest
-			continue
-		}
-		if isGotoLink(link) && !pending[link] {
-			pending[link] = true
-			ask = append(ask, link)
-		}
-		links[i] = link
+// ResolveLink turns one listed address into the page it leads to. The search
+// lists Google's opaque /goto wrappers instead of resolving them up front, so
+// the work happens when the person opens one. A plain or locally decodable
+// address is answered here; a wrapper the provider refuses to read and Google
+// does not redirect fails within ResolveTimeout rather than hanging the click.
+func (c *Client) ResolveLink(ctx context.Context, apiKey, raw string) (string, error) {
+	if _, ok := webAddress(raw); !ok {
+		return "", ErrLinkUnresolved
 	}
-	if len(ask) > 0 {
-		c.learnResolved(ctx, apiKey, ask, cache)
+	if dest := unwrapLink(raw); dest != raw {
+		return dest, nil
 	}
-	for i := range links {
-		if dest, ok := cache[links[i]]; ok {
-			links[i] = dest
-		}
+	if !isGotoLink(raw) {
+		return "", ErrNotWrapped
 	}
-	return links
-}
-
-// learnResolved fills cache with the addresses behind wrapped links. The
-// provider's free /resolve is tried first; whatever it leaves wrapped is
-// asked of Google directly, whose redirect names the destination.
-func (c *Client) learnResolved(ctx context.Context, apiKey string, ask []string, cache map[string]string) {
-	if got, err := c.resolveLinks(ctx, apiKey, ask); err == nil {
-		for i, link := range ask {
-			if !isGotoLink(got[i]) {
-				cache[link] = got[i]
-			}
-		}
-	}
-	var left []string
-	for _, link := range ask {
-		if _, ok := cache[link]; !ok {
-			left = append(left, link)
-		}
-	}
-	if len(left) == 0 {
-		return
-	}
-	rctx, cancel := context.WithTimeout(ctx, googleRedirectTimeout)
+	ctx, cancel := context.WithTimeout(ctx, ResolveTimeout)
 	defer cancel()
-	for link, dest := range c.resolveByRedirect(rctx, left) {
-		cache[link] = dest
+	// The provider's free /resolve knows the token; Google's own redirect
+	// names it outright. Either may be the one that answers, so both are
+	// asked and the first real address wins.
+	answers := make(chan string, 2)
+	go func() { answers <- c.resolveFromProvider(ctx, apiKey, raw) }()
+	go func() { answers <- c.resolveFromRedirect(ctx, raw) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case dest := <-answers:
+			if dest != "" {
+				return dest, nil
+			}
+		case <-ctx.Done():
+			return "", ErrLinkUnresolved
+		}
 	}
+	return "", ErrLinkUnresolved
 }
 
-// googleRedirectTimeout bounds the direct-redirect fallback: when Google is
-// not reachable from this machine every attempt must fail quickly instead of
-// eating the search's budget.
-const googleRedirectTimeout = 5 * time.Second
+// resolveFromProvider asks the search provider's free /resolve for one
+// wrapper's destination.
+func (c *Client) resolveFromProvider(ctx context.Context, apiKey, raw string) string {
+	got, err := c.resolveLinks(ctx, apiKey, []string{raw})
+	if err != nil {
+		return ""
+	}
+	return readableAddress(got[0])
+}
+
+// resolveFromRedirect reads Google's Location header for one wrapper.
+func (c *Client) resolveFromRedirect(ctx context.Context, raw string) string {
+	for _, dest := range c.resolveByRedirect(ctx, []string{raw}) {
+		return readableAddress(dest)
+	}
+	return ""
+}
+
+// readableAddress returns dest when the app can open it and it is not still
+// the wrapper it came from.
+func readableAddress(dest string) string {
+	if _, ok := webAddress(dest); !ok || isGotoLink(dest) {
+		return ""
+	}
+	return dest
+}
 
 // resolveByRedirect asks Google for a wrapper's destination and reads only
 // the Location header: the redirect is never followed, so the backend does

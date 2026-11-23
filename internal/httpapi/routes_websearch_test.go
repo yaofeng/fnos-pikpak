@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -232,6 +233,109 @@ func TestWebSearchReportsARejectedKey(t *testing.T) {
 
 	rec, body := getJSON(t, h, "/api/web-search?q=大模型", "1000")
 	if rec.Code != http.StatusBadGateway || errCode(body) != "search_key_rejected" {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+}
+
+// googleOffline fails every request to a Google host so a test that leaves a
+// wrapper unresolved never reaches the network.
+type googleOffline struct{ next http.RoundTripper }
+
+func (t googleOffline) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(strings.ToLower(r.URL.Hostname()), "google.com") {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return t.next.RoundTrip(r)
+}
+
+// resolveStub answers the provider's /resolve endpoint with the destination
+// it was built with.
+func resolveStub(t *testing.T, dest string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Organic []struct {
+				Link string `json:"link"`
+			} `json:"organic"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		out := make([]map[string]any, 0, len(body.Organic))
+		for _, item := range body.Organic {
+			link := dest
+			if link == "" {
+				link = item.Link
+			}
+			out = append(out, map[string]any{"link": link})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"organic": out, "credits": 0})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Opening a wrapped result asks the server what it leads to; the address is
+// read from the wrapper then, not while the list was built.
+func TestWebSearchResolveReturnsTheAddressBehindAWrapper(t *testing.T) {
+	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
+	dest := "https://mypikpak.com/s/VN9"
+	srv := resolveStub(t, dest)
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	withSearchKey(t, deps, "key-123")
+	deps.WebSearch = &websearch.Client{
+		ResolveEndpoint: srv.URL,
+		HTTP:            &http.Client{Transport: googleOffline{next: srv.Client().Transport}},
+	}
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/web-search/resolve?url="+url.QueryEscape(wrapped), "1000")
+	if rec.Code != http.StatusOK || body["url"] != dest {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+}
+
+// A result that is not a wrapper is already the page to open.
+func TestWebSearchResolveLeavesAPlainAddressAlone(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	raw := "https://mypikpak.com/s/VN9"
+	rec, body := getJSON(t, h, "/api/web-search/resolve?url="+url.QueryEscape(raw), "1000")
+	if rec.Code != http.StatusOK || body["url"] != raw {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+}
+
+func TestWebSearchResolveNeedsAnAddress(t *testing.T) {
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/web-search/resolve", "1000")
+	if rec.Code != http.StatusBadRequest || errCode(body) != "bad_link" {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+}
+
+// A wrapper that neither route can read is a plain failure the page reports
+// by opening the wrapper itself.
+func TestWebSearchResolveReportsWhenTheWrapperCannotBeRead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	withSearchKey(t, deps, "key-123")
+	deps.WebSearch = &websearch.Client{
+		ResolveEndpoint: srv.URL,
+		HTTP:            &http.Client{Transport: googleOffline{next: srv.Client().Transport}},
+	}
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/web-search/resolve?url="+url.QueryEscape("https://www.google.com/goto?url=CAESencryptedtoken"), "1000")
+	if rec.Code != http.StatusBadGateway || errCode(body) != "link_unresolved" {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
 }

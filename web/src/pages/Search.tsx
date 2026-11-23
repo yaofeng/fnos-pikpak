@@ -9,6 +9,7 @@ import {
   crumbFromURL,
   hasMorePages,
   shareCount,
+  shareURL,
   type WebResult,
   type WebSearchPage,
 } from '../search'
@@ -39,6 +40,8 @@ export default function Search() {
   const [firstShares, setFirstShares] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  // The wrapped result whose destination is being asked for right now.
+  const [resolving, setResolving] = useState('')
   const [error, setError] = useState('')
   const [needKey, setNeedKey] = useState(false)
 
@@ -159,6 +162,49 @@ export default function Search() {
     const got = openTab(tabs, { id: nextTabId.current++, title: hit.title, url: hit.url })
     setTabs(got.tabs)
     setActiveId(got.id)
+  }
+
+  // A wrapped result is one of the search provider's click redirects: its
+  // address is asked for now, when it is opened, and not while the list was
+  // built. A share continues in an in-app tab like any other share; anything
+  // else goes to the browser. When it cannot be read the wrapper itself still
+  // opens: it is a redirect, so the browser lands on the same page.
+  async function followResult(hit: WebResult) {
+    if (!hit.wrapped) {
+      if (hit.share) openResult(hit)
+      else openExternal(hit.url)
+      return
+    }
+    setError('')
+    setResolving(hit.url)
+    try {
+      const body = await apiGet<{ url: string }>(
+        `web-search/resolve?url=${encodeURIComponent(hit.url)}`,
+      )
+      const dest = body.url
+      const share = shareURL(dest) !== ''
+      // The answer is kept, so opening it again does not ask twice.
+      setItems(
+        (prev) =>
+          prev &&
+          prev.map((r) => (r.url === hit.url ? { ...r, url: dest, wrapped: false, share } : r)),
+      )
+      if (share) openResult({ ...hit, url: dest })
+      else openExternal(dest)
+    } catch {
+      openExternal(hit.url)
+    } finally {
+      setResolving('')
+    }
+  }
+
+  // A new tab, opened by the person's own click so the browser allows it.
+  function openExternal(url: string) {
+    const a = document.createElement('a')
+    a.href = url
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    a.click()
   }
 
   function closeTab(id: number) {
@@ -289,7 +335,8 @@ export default function Search() {
           )}
           {searched && scope === 'share' && firstKept > 0 && firstRaw > firstKept && (
             <p className="se-count">
-              搜索引擎返回 {firstRaw} 条原始结果，其中 {firstKept} 条是 PikPak 分享页，其余不是分享页，已忽略。
+              搜索引擎返回 {firstRaw} 条原始结果，其中 {firstKept} 条是 PikPak 分享页或待解析的分享链接，
+              其余不是分享页，已忽略。
             </p>
           )}
           {searched && scope === 'all' && (
@@ -308,19 +355,25 @@ export default function Search() {
             <ol className="se-results">
               {items.map((hit) => (
                 <li key={hit.url}>
-                  <p className="se-breadcrumb">{crumbFromURL(hit.url)}</p>
+                  <p className="se-breadcrumb">
+                    {resolving === hit.url
+                      ? '正在解析链接…'
+                      : hit.display || crumbFromURL(hit.url)}
+                  </p>
                   <div className="se-title-row">
                     <a
                       className="se-title"
                       href={hit.url}
                       title={hit.title}
+                      aria-busy={resolving === hit.url}
                       onClick={(e) => {
                         // Modified clicks keep the browser's own behavior; a
-                        // plain click stays in the app for a share page.
+                        // plain click on a share stays in the app, and a
+                        // wrapped result is resolved before it is opened.
                         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
-                        if (hit.share === false) return
+                        if (!hit.share && !hit.wrapped) return
                         e.preventDefault()
-                        openResult(hit)
+                        void followResult(hit)
                       }}
                     >
                       {hit.title}

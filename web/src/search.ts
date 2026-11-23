@@ -9,6 +9,13 @@ export type WebResult = {
   // wide scope the list also holds ordinary pages on the site, and this is
   // what tells them apart.
   share?: boolean
+  // Wrapped marks one of the search provider's own click redirects. Its
+  // destination is asked for when the result is opened, not while the list is
+  // built: a page can hold twenty of them.
+  wrapped?: boolean
+  // Display is the address the provider showed under the title, used as the
+  // breadcrumb of a wrapped result until it is opened.
+  display?: string
 }
 export type WebSearchPage = {
   items: WebResult[]
@@ -41,15 +48,23 @@ export function crumbFromURL(raw: string): string {
 // earlier pages had (the provider sometimes repeats one). Order is arrival
 // order, so the list reads like a search engine's single long page.
 export function appendResults(shown: WebResult[], next: WebResult[]): WebResult[] {
-  const seen = new Set(shown.map((r) => shareKey(r.url)))
+  const seen = new Set(shown.map(resultKey))
   const out = shown.slice()
   for (const hit of next) {
-    const key = shareKey(hit.url)
+    const key = resultKey(hit)
     if (seen.has(key)) continue
     seen.add(key)
     out.push(hit)
   }
   return out
+}
+
+// resultKey is what tells two results apart. A wrapped share carries a
+// different provider token on every page, so the address the provider showed
+// under the title is what identifies it.
+function resultKey(hit: WebResult): string {
+  if (hit.wrapped && hit.display) return `display:${hit.display}`
+  return shareKey(hit.url)
 }
 
 // shareKey is the share a result points at. Every PikPak host serves a share
@@ -62,6 +77,27 @@ function shareKey(raw: string): string {
     // Not a URL: compare it as it is.
   }
   return raw
+}
+
+// shareHosts are the domains PikPak serves share pages from, as the server
+// knows them.
+const shareHosts = ['mypikpak.com', 'mypikpak.net', 'pikpak.me', 'mypikpak.me']
+
+// shareURL returns the share a resolved address points at, or '' when the
+// share browser cannot open it. Opening a wrapped result asks the server what
+// it leads to; this is what decides whether that answer continues in the app.
+export function shareURL(raw: string): string {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return ''
+    const host = u.hostname.toLowerCase().replace(/^www\./, '')
+    if (!shareHosts.includes(host)) return ''
+    const parts = u.pathname.split('/').filter(Boolean)
+    if (parts.length < 2 || parts[0] !== 's' || !/^[A-Za-z0-9_-]{6,64}$/.test(parts[1])) return ''
+    return `https://${host}/s/${parts[1]}`
+  } catch {
+    return ''
+  }
 }
 
 // hasMorePages says whether another page is worth asking for: an empty page
