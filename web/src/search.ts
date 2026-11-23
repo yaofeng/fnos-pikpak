@@ -20,14 +20,27 @@ export function crumbFromURL(raw: string): string {
 // earlier pages had (the provider sometimes repeats one). Order is arrival
 // order, so the list reads like a search engine's single long page.
 export function appendResults(shown: WebResult[], next: WebResult[]): WebResult[] {
-  const seen = new Set(shown.map((r) => r.url))
+  const seen = new Set(shown.map((r) => shareKey(r.url)))
   const out = shown.slice()
   for (const hit of next) {
-    if (seen.has(hit.url)) continue
-    seen.add(hit.url)
+    const key = shareKey(hit.url)
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push(hit)
   }
   return out
+}
+
+// shareKey is the share a result points at. Every PikPak host serves a share
+// at /s/<id>, so the same share reached through two hosts is one entry.
+function shareKey(raw: string): string {
+  try {
+    const parts = new URL(raw).pathname.split('/').filter(Boolean)
+    if (parts.length >= 2 && parts[0] === 's') return parts[1]
+  } catch {
+    // Not a URL: compare it as it is.
+  }
+  return raw
 }
 
 // hasMorePages says whether another page is worth asking for: an empty page

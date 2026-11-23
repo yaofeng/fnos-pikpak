@@ -28,6 +28,14 @@ describe('appendResults', () => {
     const got = appendResults([hit('a'), hit('b')], [hit('b'), hit('c')])
     expect(got.map((r) => r.url)).toEqual(['a', 'b', 'c'])
   })
+
+  it('shows a share once even when two PikPak hosts served it', () => {
+    const got = appendResults(
+      [hit('https://mypikpak.com/s/VN1')],
+      [hit('https://mypikpak.net/s/VN1'), hit('https://mypikpak.com/s/VN2')],
+    )
+    expect(got.map((r) => r.url)).toEqual(['https://mypikpak.com/s/VN1', 'https://mypikpak.com/s/VN2'])
+  })
 })
 
 describe('hasMorePages', () => {

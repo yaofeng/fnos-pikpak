@@ -23,9 +23,13 @@ func serperStub(t *testing.T, organic []map[string]any) (*httptest.Server, *stri
 			Page int    `json:"page"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		gotQuery = body.Q
-		gotKey = r.Header.Get("X-API-KEY")
-		gotPage = body.Page
+		// The first query is the one under test; the page is filled from the
+		// following share hosts when the first one answers with little.
+		if gotQuery == "" {
+			gotQuery = body.Q
+			gotKey = r.Header.Get("X-API-KEY")
+			gotPage = body.Page
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"organic": organic})
 	}))
 	t.Cleanup(srv.Close)

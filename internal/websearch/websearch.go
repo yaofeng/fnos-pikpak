@@ -19,11 +19,11 @@ import (
 const Site = "mypikpak.com"
 
 // shareSites are the hosts PikPak actually serves share pages from, in the
-// order they are tried. A search asks one of them at a time and only moves on
-// when that host has nothing: the primary answers almost every query, and a
-// host that stopped resolving (mypikpak.me no longer does) simply adds no
-// hits. Results are accepted from any of them, since Google can index a share
-// under a sister domain.
+// order they are tried. A search asks one of them at a time and keeps asking
+// while its page is short: Google's index for a single host often holds only
+// a few share pages for a keyword, and a page of three is not a page. Results
+// are accepted from any of them, since the same share is served under every
+// host. mypikpak.me no longer resolves, so it goes last.
 var shareSites = []string{Site, "mypikpak.net", "pikpak.me", "mypikpak.me"}
 
 // defaultEndpoint is Serper's Google proxy: it honors the site: operator and
@@ -83,8 +83,12 @@ type serperResponse struct {
 // returned; a provider that ignores the site filter therefore cannot put an
 // unrelated page in the list. page is 1-based; callers validate its range.
 //
-// Sites are asked one at a time: the first host with a hit answers the
-// search, and the next host is tried only when the previous one has nothing.
+// Sites are asked one at a time. Google's index for a single share domain is
+// often sparse — a page of ten holds a handful of share pages — so the hosts
+// after it are asked too until the page is full. A host that cannot be
+// reached (mypikpak.me no longer resolves) is skipped; a provider refusal
+// stops the search, since no other host would answer either. The same share
+// is served by every host under one share id, so it is returned once.
 func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) ([]Result, error) {
 	q := normalizeKeyword(keyword)
 	if q == "" {
@@ -93,16 +97,54 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (
 	if page < 1 {
 		page = 1
 	}
+	out := make([]Result, 0, pageSize)
+	seen := make(map[string]bool, pageSize)
+	var unreachable error
 	for _, site := range shareSites {
-		out, err := c.searchSite(ctx, apiKey, site, q, page)
-		if err != nil {
-			return nil, err
+		if len(out) >= pageSize {
+			break
 		}
-		if len(out) > 0 {
-			return out, nil
+		results, err := c.searchSite(ctx, apiKey, site, q, page)
+		if err != nil {
+			var upstream *UpstreamError
+			if errors.As(err, &upstream) {
+				return nil, err
+			}
+			// The host could not be reached; the next one may answer.
+			unreachable = err
+			continue
+		}
+		for _, r := range results {
+			key := shareKey(r.URL)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, r)
+			if len(out) >= pageSize {
+				break
+			}
 		}
 	}
-	return []Result{}, nil
+	if len(out) == 0 && unreachable != nil {
+		return nil, unreachable
+	}
+	return out, nil
+}
+
+// shareKey is the share a result points at. Every PikPak host serves a share
+// at /s/<id>, sometimes followed by the path inside it, so two hosts serving
+// the same share collapse to one key.
+func shareKey(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) >= 2 && parts[0] == "s" && parts[1] != "" {
+		return parts[1]
+	}
+	return raw
 }
 
 // searchSite runs one site-scoped query and keeps only results on a PikPak
