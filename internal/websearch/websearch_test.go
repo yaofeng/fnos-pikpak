@@ -156,9 +156,10 @@ func TestSearchDropsPagesOnTheSiteThatAreNotShares(t *testing.T) {
 	}
 }
 
-// When the scope allows other pages, they are kept and marked apart from the
-// shares, so the list can say what each result is.
-func TestSearchKeepsEveryPageOnTheHostsWhenTheScopeAllowsIt(t *testing.T) {
+// When the scope allows it, every hit the provider returned is kept — the
+// provider does not always honor the site: operator — and the shares are
+// marked apart from the rest.
+func TestSearchKeepsEveryHitWhenTheScopeAllowsIt(t *testing.T) {
 	srv, _ := siteAnswers(t, map[string][]map[string]any{
 		"mypikpak.com": {
 			{"title": "首页", "link": "https://mypikpak.com/", "snippet": "站内页面"},
@@ -172,9 +173,7 @@ func TestSearchKeepsEveryPageOnTheHostsWhenTheScopeAllowsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	// The page off the PikPak hosts is still dropped: scope widens what is
-	// kept on the site, not what counts as the site.
-	if len(ans.Results) != 2 {
+	if len(ans.Results) != 3 {
 		t.Fatalf("results = %+v", ans.Results)
 	}
 	if ans.Results[0].Share || ans.Results[0].URL != "https://mypikpak.com/" {
@@ -182,6 +181,9 @@ func TestSearchKeepsEveryPageOnTheHostsWhenTheScopeAllowsIt(t *testing.T) {
 	}
 	if !ans.Results[1].Share || ans.Results[1].URL != "https://mypikpak.com/s/VN1" {
 		t.Fatalf("second result = %+v", ans.Results[1])
+	}
+	if ans.Results[2].Share || ans.Results[2].URL != "https://example.com/x" {
+		t.Fatalf("third result = %+v", ans.Results[2])
 	}
 }
 
@@ -304,6 +306,31 @@ func TestSearchReportsHowManyRawHitsTheProviderReturned(t *testing.T) {
 	}
 	if ans.Raw != 4 {
 		t.Fatalf("raw = %d, want 4 (3 from the first host, 1 from the second)", ans.Raw)
+	}
+}
+
+// The same list from two hosts is one set of hits: raw counts each link once,
+// otherwise a provider that ignores site: would inflate the number fourfold.
+func TestSearchCountsALinkOnceAcrossHosts(t *testing.T) {
+	same := []map[string]any{
+		{"title": "论坛", "link": "https://www.zhihu.com/question/1", "snippet": "无关"},
+		{"title": "主站", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+	}
+	srv, _ := siteAnswers(t, map[string][]map[string]any{
+		"mypikpak.com": same,
+		"mypikpak.net": same,
+	})
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 1 {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+	if ans.Raw != 2 {
+		t.Fatalf("raw = %d, want 2 (each link counted once)", ans.Raw)
 	}
 }
 

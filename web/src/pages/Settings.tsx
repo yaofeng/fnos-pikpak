@@ -66,7 +66,7 @@ const languageOptions = [
 
 const searchScopeOptions = [
   { value: 'share', label: '只显示分享页（默认）' },
-  { value: 'all', label: '显示站内其它页面（分享页带图标）' },
+  { value: 'all', label: '显示全部结果（分享页带图标）' },
 ]
 
 function optionLabel(options: { value: string; label: string }[], value: string): string {
@@ -383,8 +383,8 @@ export default function Settings() {
         </label>
         <p className="muted small">
           当前：{optionLabel(searchScopeOptions, userSettings.search_scope ?? 'share')}
-          。选「只显示分享页」时，同域名下的首页、帮助页等不出现；选「显示站内其它页面」时会一起列出，分享页后面带分享图标，
-          只有分享页在应用内打开，其它页面交给浏览器。
+          。选「只显示分享页」时，不是分享页的结果直接忽略；选「显示全部结果」时，搜索服务返回的结果都会列出（包括不是
+          PikPak 站内的页面），分享页后面带分享图标，只有分享页在应用内打开，其它页面交给浏览器。
         </p>
 
         <label className="field">

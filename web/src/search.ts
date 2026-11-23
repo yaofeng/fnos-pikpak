@@ -19,7 +19,8 @@ export type WebSearchPage = {
 }
 
 // shareCount is how many of the listed hits are share pages. The wide scope
-// lists the site's other pages too, and the count line says how many of each.
+// lists every hit the provider returned, so the count line says how many of
+// them are shares.
 export function shareCount(items: WebResult[]): number {
   return items.filter((r) => r.share).length
 }

@@ -46,8 +46,8 @@ type Scope string
 const (
 	// ScopeShare keeps only share pages, the ones the app can open.
 	ScopeShare Scope = "share"
-	// ScopeSite keeps every page on the PikPak hosts; share pages carry
-	// Share=true so the list can mark them.
+	// ScopeSite keeps every hit the provider returned, including pages off
+	// the PikPak hosts; share pages carry Share=true so the list can mark them.
 	ScopeSite Scope = "all"
 )
 
@@ -96,17 +96,15 @@ type serperResponse struct {
 // Answer is one page of results and what the provider returned for it.
 type Answer struct {
 	Results []Result
-	// Raw counts the organic entries the provider returned for this page
-	// across the hosts asked, before results outside the share hosts were
-	// dropped. A short list with a large Raw means the provider answered with
-	// pages that are not shares.
+	// Raw counts the distinct hits the provider returned for this page across
+	// the hosts asked, before the share filter dropped any. A short list with
+	// a large Raw means the provider answered with hits that are not shares.
 	Raw int
 }
 
-// Search looks for keyword under Site. The domain filter is always applied, so
-// a provider that ignores the site: operator cannot put an unrelated page in
-// the list. Scope decides whether pages on the hosts that are not shares are
-// kept; page is 1-based and callers validate its range.
+// Search looks for keyword under Site. Scope decides what is kept: only share
+// pages (the default), or every hit the provider returned with the shares
+// marked. page is 1-based and callers validate its range.
 //
 // Sites are asked one at a time. Google's index for a single share domain is
 // often sparse — a page of ten holds a handful of share pages — so the hosts
@@ -127,13 +125,16 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 	}
 	out := make([]Result, 0, pageSize)
 	seen := make(map[string]bool, pageSize)
+	// rawSeen counts every link the provider returned once, even when a
+	// second host answers with the same list.
+	rawSeen := make(map[string]bool, pageSize)
 	raw := 0
 	var unreachable error
 	for _, site := range shareSites {
 		if len(out) >= pageSize {
 			break
 		}
-		results, organic, err := c.searchSite(ctx, apiKey, site, q, page, scope)
+		hits, err := c.searchSite(ctx, apiKey, site, q, page)
 		if err != nil {
 			var upstream *UpstreamError
 			if errors.As(err, &upstream) {
@@ -143,14 +144,25 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 			unreachable = err
 			continue
 		}
-		raw += organic
-		for _, r := range results {
-			key := shareKey(r.URL)
+		for _, r := range hits {
+			if rawSeen[r.Link] {
+				continue
+			}
+			rawSeen[r.Link] = true
+			raw++
+			id, isShare := shareIDOf(r.Link)
+			if !isShare && scope != ScopeSite {
+				continue
+			}
+			key := r.Link
+			if isShare {
+				key = id
+			}
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			out = append(out, r)
+			out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet, Share: isShare})
 			if len(out) >= pageSize {
 				break
 			}
@@ -181,20 +193,10 @@ func shareIDOf(raw string) (string, bool) {
 	return "", false
 }
 
-// shareKey is the share a result points at. Every PikPak host serves a share
-// at /s/<id>, sometimes followed by the path inside it, so two hosts serving
-// the same share collapse to one key.
-func shareKey(raw string) string {
-	if id, ok := shareIDOf(raw); ok {
-		return id
-	}
-	return raw
-}
-
-// searchSite runs one site-scoped query and keeps results on a PikPak host.
-// A share page is marked as one; when the scope allows other pages they are
-// kept too, and the share mark is what tells them apart.
-func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int, scope Scope) (results []Result, organic int, err error) {
+// searchSite runs one site-scoped query and hands back every organic hit the
+// provider answered with. The caller decides what to keep: the provider does
+// not always honor the site: operator, so the decision belongs in one place.
+func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int) (hits []serperResult, err error) {
 	payload, err := json.Marshal(map[string]any{
 		"q":    "site:" + site + " " + q,
 		"gl":   "cn",
@@ -203,7 +205,7 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 		"page": page,
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	endpoint := c.Endpoint
 	if endpoint == "" {
@@ -211,7 +213,7 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-KEY", apiKey)
@@ -222,30 +224,18 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("websearch: %w", err)
+		return nil, fmt.Errorf("websearch: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// The status is the whole story; the body and the key stay out of it.
-		return nil, 0, &UpstreamError{Status: resp.StatusCode}
+		return nil, &UpstreamError{Status: resp.StatusCode}
 	}
 	var parsed serperResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, 0, fmt.Errorf("websearch: decode response: %w", err)
+		return nil, fmt.Errorf("websearch: decode response: %w", err)
 	}
-
-	out := make([]Result, 0, len(parsed.Organic))
-	for _, r := range parsed.Organic {
-		if !onSite(r.Link) {
-			continue
-		}
-		_, isShare := shareIDOf(r.Link)
-		if !isShare && scope != ScopeSite {
-			continue
-		}
-		out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet, Share: isShare})
-	}
-	return out, len(parsed.Organic), nil
+	return parsed.Organic, nil
 }
 
 // normalizeKeyword trims the keyword and drops a leading site: operator. The

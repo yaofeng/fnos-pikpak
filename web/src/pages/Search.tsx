@@ -294,7 +294,7 @@ export default function Search() {
           )}
           {searched && scope === 'all' && (
             <p className="se-count">
-              搜索引擎返回 {firstRaw} 条原始结果，其中 {firstShares} 条是 PikPak 分享页（带分享图标）；其余是站内其它页面，
+              搜索引擎返回 {firstRaw} 条结果，其中 {firstShares} 条是 PikPak 分享页（带分享图标）；其余不是分享页，
               在浏览器中打开。
             </p>
           )}
