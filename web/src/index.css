@@ -1292,20 +1292,13 @@ a.btn-icon {
   overflow: hidden;
 }
 
-/* 我的文件 and 分享收藏夹 keep their toolbars still and roll the file area. */
+/* 我的文件, 分享收藏夹 and 视频收藏夹 keep their toolbars still and roll the
+   file area. */
 .page-fill > .file-page {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.page-fill > .page-stack {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  /* Leave room for the fixed status bar. */
-  padding-bottom: 44px;
 }
 
 .file-page .file-body,
@@ -1472,13 +1465,6 @@ a.btn-icon {
 
 .share-pass p {
   margin: 0 0 10px;
-}
-
-/* 分享收藏夹 lists saved shares; the browser opens in place above the list. */
-.page-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 /* 分享收藏夹: the pasted-link form sits on one line under the toolbar. */

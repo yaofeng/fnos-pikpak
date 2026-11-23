@@ -330,7 +330,8 @@ export default function App() {
           className={
             location.pathname === '/search' ||
             location.pathname.startsWith('/files') ||
-            location.pathname.startsWith('/favorites')
+            location.pathname.startsWith('/favorites') ||
+            location.pathname.startsWith('/video-favorites')
               ? 'page page-fill'
               : 'page'
           }

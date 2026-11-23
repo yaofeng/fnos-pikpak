@@ -240,8 +240,8 @@ export default function VideoFavorites() {
   }
 
   return (
-    <section className="page-stack">
-      <div className="actions">
+    <section className="file-page">
+      <div className="actions fm-actions">
         <button type="button" disabled={!one || busy !== ''} onClick={() => one && void preview(one)}>
           <StarIcon /> 预览
         </button>
@@ -295,9 +295,10 @@ export default function VideoFavorites() {
         </div>
       </div>
 
-      {error && <p className="error">{error}</p>}
+      <div className="file-body">
+        {error && <p className="error">{error}</p>}
 
-      {items === null || (loading && items.length === 0) ? (
+        {items === null || (loading && items.length === 0) ? (
         <p className="muted">加载中…</p>
       ) : items.length === 0 ? (
         <div className="empty-state">
@@ -429,6 +430,7 @@ export default function VideoFavorites() {
           </tbody>
         </table>
       )}
+      </div>
 
       <div className="status-bar">
         <span>
