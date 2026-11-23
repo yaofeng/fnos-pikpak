@@ -7,9 +7,17 @@ import {
   GlobeIcon,
   RefreshIcon,
   SearchIcon,
+  SortIcon,
   TrashIcon,
 } from '../components/icons'
-import { favoriteCountText, favoriteSizeText, favoriteStatsHint } from '../shares'
+import {
+  favoriteCountText,
+  favoriteSizeText,
+  favoriteStatsHint,
+  sortShareFavorites,
+  type FavoriteSortDir,
+  type FavoriteSortKey,
+} from '../shares'
 import { useFileSelection } from '../useFileSelection'
 
 // A saved share, as the list route returns it. The pass code never comes back
@@ -62,6 +70,8 @@ export default function Favorites() {
   const [addError, setAddError] = useState('')
   const [saving, setSaving] = useState(false)
   const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState<FavoriteSortKey>('default')
+  const [sortDir, setSortDir] = useState<FavoriteSortDir>('asc')
   const [busy, setBusy] = useState(false)
   // Bumped when a share closes: the server started counting it as it was
   // opened, so the list takes a few cached reads before settling.
@@ -113,15 +123,19 @@ export default function Favorites() {
     }
   }, [visitReload])
 
-  const shown = (items ?? []).filter((fav) => {
-    if (!q.trim()) return true
-    const needle = q.trim().toLowerCase()
-    return (
-      nameOf(fav).toLowerCase().includes(needle) ||
-      (fav.owner_name || '').toLowerCase().includes(needle) ||
-      fav.share_id.toLowerCase().includes(needle)
-    )
-  })
+  const shown = sortShareFavorites(
+    (items ?? []).filter((fav) => {
+      if (!q.trim()) return true
+      const needle = q.trim().toLowerCase()
+      return (
+        nameOf(fav).toLowerCase().includes(needle) ||
+        (fav.owner_name || '').toLowerCase().includes(needle) ||
+        fav.share_id.toLowerCase().includes(needle)
+      )
+    }),
+    sortKey,
+    sortDir,
+  )
   const order = shown.map((fav) => String(fav.id))
   const { selected, select, clear } = useFileSelection(order)
   const picked = shown.filter((fav) => selected.has(String(fav.id)))
@@ -264,6 +278,33 @@ export default function Favorites() {
         </button>
 
         <span className="fm-spacer" />
+
+        <label className="fm-pick">
+          <SortIcon />
+          <select
+            value={`${sortKey}:${sortDir}`}
+            onChange={(e) => {
+              const [k, d] = e.target.value.split(':')
+              setSortKey(k as FavoriteSortKey)
+              setSortDir(d as FavoriteSortDir)
+            }}
+            aria-label="排序"
+          >
+            <option value="default:asc">默认（收藏时间）</option>
+            <option value="name:asc">分享名称 ↑</option>
+            <option value="name:desc">分享名称 ↓</option>
+            <option value="owner:asc">创建者 ↑</option>
+            <option value="owner:desc">创建者 ↓</option>
+            <option value="count:desc">总文件数 ↓</option>
+            <option value="count:asc">总文件数 ↑</option>
+            <option value="size:desc">总大小 ↓</option>
+            <option value="size:asc">总大小 ↑</option>
+            <option value="shared:desc">分享时间 ↓</option>
+            <option value="shared:asc">分享时间 ↑</option>
+            <option value="expire:asc">过期时间 ↑</option>
+            <option value="expire:desc">过期时间 ↓</option>
+          </select>
+        </label>
       </div>
 
       {adding && (

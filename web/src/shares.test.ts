@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { favoriteCountText, favoriteSizeText, favoriteStatsHint, onlyFolderEntry, shareBadgeKind } from './shares'
+import { favoriteCountText, favoriteSizeText, favoriteStatsHint, onlyFolderEntry, shareBadgeKind, sortShareFavorites } from './shares'
 import type { FileItem } from './files'
 
 function item(id: string, kind: string): FileItem {
@@ -74,5 +74,83 @@ describe('分享收藏夹 totals come from the cache alone', () => {
     expect(favoriteCountText(fav)).toBe('—')
     expect(favoriteSizeText(fav)).toBe('—')
     expect(favoriteStatsHint(fav)).toBe('无法统计这个分享')
+  })
+})
+
+describe('sortShareFavorites', () => {
+  function fav(over: Record<string, unknown> = {}) {
+    return {
+      display_title: '',
+      title: '',
+      share_id: '',
+      owner_name: '',
+      file_count: 0,
+      total_size: 0,
+      share_created_at: '',
+      expire_at: 0,
+      ...over,
+    }
+  }
+
+  test('default keeps the order the server sent', () => {
+    const items = [fav({ share_id: 'b' }), fav({ share_id: 'a' })]
+    expect(sortShareFavorites(items, 'default', 'asc').map((f) => f.share_id)).toEqual(['b', 'a'])
+  })
+
+  test('name sorts by the title shown, falling back to the share id', () => {
+    const items = [
+      fav({ share_id: 'S1', title: 'Beta' }),
+      fav({ share_id: 'S2', title: 'Alpha' }),
+      fav({ share_id: 'S3', display_title: 'Aardvark' }),
+      fav({ share_id: 'A0' }),
+    ]
+    expect(sortShareFavorites(items, 'name', 'asc').map((f) => f.share_id)).toEqual(['A0', 'S3', 'S2', 'S1'])
+  })
+
+  test('size sorts numerically and keeps unknown totals last', () => {
+    const items = [
+      fav({ share_id: 'small', total_size: 10 }),
+      fav({ share_id: 'unknown', total_size: -1 }),
+      fav({ share_id: 'large', total_size: 900 }),
+    ]
+    expect(sortShareFavorites(items, 'size', 'desc').map((f) => f.share_id)).toEqual(['large', 'small', 'unknown'])
+    expect(sortShareFavorites(items, 'size', 'asc').map((f) => f.share_id)).toEqual(['small', 'large', 'unknown'])
+  })
+
+  test('file count compares as a number', () => {
+    const items = [
+      fav({ share_id: 'ten', file_count: 10 }),
+      fav({ share_id: 'two', file_count: 2 }),
+      fav({ share_id: 'unknown', file_count: -1 }),
+    ]
+    expect(sortShareFavorites(items, 'count', 'asc').map((f) => f.share_id)).toEqual(['two', 'ten', 'unknown'])
+  })
+
+  test('share time compares instants, not strings', () => {
+    const items = [
+      fav({ share_id: 'local', share_created_at: '2026-01-01T00:00:00+08:00' }),
+      fav({ share_id: 'utc', share_created_at: '2025-12-31T20:00:00Z' }),
+      fav({ share_id: 'unknown', share_created_at: '' }),
+    ]
+    expect(sortShareFavorites(items, 'shared', 'desc').map((f) => f.share_id)).toEqual(['utc', 'local', 'unknown'])
+  })
+
+  test('expiry puts 永久 and unknown last', () => {
+    const items = [
+      fav({ share_id: 'soon', expire_at: 1000 }),
+      fav({ share_id: 'later', expire_at: 2000 }),
+      fav({ share_id: 'never', expire_at: -1 }),
+      fav({ share_id: 'unknown', expire_at: 0 }),
+    ]
+    expect(sortShareFavorites(items, 'expire', 'asc').map((f) => f.share_id)).toEqual(['soon', 'later', 'never', 'unknown'])
+  })
+
+  test('an unknown creator sorts last', () => {
+    const items = [
+      fav({ share_id: 'b', owner_name: 'Bob' }),
+      fav({ share_id: 'none', owner_name: '' }),
+      fav({ share_id: 'a', owner_name: 'Alice' }),
+    ]
+    expect(sortShareFavorites(items, 'owner', 'asc').map((f) => f.share_id)).toEqual(['a', 'b', 'none'])
   })
 })

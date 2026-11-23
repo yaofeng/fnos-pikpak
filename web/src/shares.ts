@@ -41,3 +41,64 @@ export function favoriteStatsHint(fav: ShareTotals): string {
   if (fav.file_count >= 0) return ''
   return fav.stats_checked ? '无法统计这个分享' : '进入分享后自动统计'
 }
+
+// 分享收藏夹 sorts the cached list in the browser: there is nothing to ask
+// the server for. 'default' keeps the order the list arrived in.
+export type FavoriteSortKey = 'default' | 'name' | 'owner' | 'count' | 'size' | 'shared' | 'expire'
+export type FavoriteSortDir = 'asc' | 'desc'
+
+type FavoriteSortable = {
+  display_title: string
+  title: string
+  share_id: string
+  owner_name: string
+  file_count: number
+  total_size: number
+  share_created_at: string
+  expire_at: number
+}
+
+type SortValue = { v: number | string; unknown?: boolean }
+
+function sortValue(fav: FavoriteSortable, key: Exclude<FavoriteSortKey, 'default'>): SortValue {
+  switch (key) {
+    case 'name':
+      return { v: fav.display_title || fav.title || fav.share_id }
+    case 'owner':
+      return { v: fav.owner_name, unknown: fav.owner_name === '' }
+    case 'count':
+      return { v: fav.file_count, unknown: fav.file_count < 0 }
+    case 'size':
+      return { v: fav.total_size, unknown: fav.total_size < 0 }
+    case 'shared': {
+      const at = Date.parse(fav.share_created_at)
+      return { v: Number.isNaN(at) ? 0 : at, unknown: Number.isNaN(at) }
+    }
+    case 'expire':
+      // -1 is PikPak's "never expires": the farthest date, not an unknown.
+      return fav.expire_at === -1
+        ? { v: Number.MAX_SAFE_INTEGER }
+        : { v: fav.expire_at, unknown: fav.expire_at === 0 }
+  }
+}
+
+export function sortShareFavorites<T extends FavoriteSortable>(
+  items: T[],
+  key: FavoriteSortKey,
+  dir: FavoriteSortDir,
+): T[] {
+  if (key === 'default') return items.slice()
+  const sign = dir === 'asc' ? 1 : -1
+  return items.slice().sort((a, b) => {
+    const x = sortValue(a, key)
+    const y = sortValue(b, key)
+    // A missing total, creator or date sinks to the bottom either way; it is
+    // not a small value that flips to the top when the order reverses.
+    if (x.unknown || y.unknown) {
+      if (x.unknown && y.unknown) return 0
+      return x.unknown ? 1 : -1
+    }
+    if (typeof x.v === 'number' && typeof y.v === 'number') return (x.v - y.v) * sign
+    return String(x.v).localeCompare(String(y.v), 'zh') * sign
+  })
+}
