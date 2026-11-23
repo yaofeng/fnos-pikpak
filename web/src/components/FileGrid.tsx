@@ -14,7 +14,7 @@ type Props = {
   // when the request fails (no thumbnail, expired link, offline).
   thumbSrc?: (f: FileItem) => string
   // badge draws a local status in the tile's bottom-left corner: a check for
-  // 已转存, a star for a video in 视频收藏夹. Restore wins when both apply.
+  // 已转存, a star for a video in 视频收藏夹. The caller decides which one wins.
   badge?: (f: FileItem) => { icon: ReactNode; title: string; kind: 'restored' | 'star' } | null
 }
 

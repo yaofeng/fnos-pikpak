@@ -131,6 +131,13 @@ func (u *videoUpstream) handler() http.Handler {
 		})
 	})
 
+	mux.HandleFunc("/drive/v1/share/detail", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"files":           u.children(r.URL.Query().Get("parent_id")),
+			"next_page_token": "",
+		})
+	})
+
 	mux.HandleFunc("/drive/v1/share/file_info", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"file_info": map[string]any{
 			"id": r.URL.Query().Get("file_id"), "name": "new.mp4",
@@ -753,6 +760,29 @@ func TestShareListingBadgesAFavoriteWhoseFileIDChanged(t *testing.T) {
 	}
 
 	_, body := getJSON(t, h, "/api/share?url=VOabc123", "1000")
+	item := body["items"].([]any)[0].(map[string]any)
+	if item["favorited"] != true {
+		t.Fatalf("favorited = %v", item)
+	}
+}
+
+// The share browser collects videos inside folders, not just at the root; the
+// folder listing must badge them the same way.
+func TestShareFolderListingBadgesASavedVideo(t *testing.T) {
+	deps, h, _ := newVideoEnv(t, func(up *videoUpstream) {
+		up.set("", folderEntry("A", "资料"))
+		up.set("A", fileEntry("sf9", "new.mp4", 50, "2026-11-01T00:00:00Z"))
+	})
+	if _, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf9", Name: "new.mp4", Size: 50,
+	}); err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+
+	rec, body := getJSON(t, h, "/api/share/files?share_id=VOabc123&parent_id=A", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d %v", rec.Code, body)
+	}
 	item := body["items"].([]any)[0].(map[string]any)
 	if item["favorited"] != true {
 		t.Fatalf("favorited = %v", item)

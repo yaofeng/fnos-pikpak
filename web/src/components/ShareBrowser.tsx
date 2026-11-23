@@ -3,7 +3,7 @@ import { apiDelete, apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../
 import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
-import { onlyFolderEntry } from '../shares'
+import { onlyFolderEntry, shareBadgeKind } from '../shares'
 import { useFileSelection } from '../useFileSelection'
 import FileGrid from './FileGrid'
 import FileTable from './FileTable'
@@ -54,16 +54,17 @@ type Crumb = { id: string; name: string }
 
 export type ShareState = { title: string; passCode: string; protected: boolean; owner: string }
 
-// shareBadge marks the videos the app already knows: a copy in Pack From
-// Shared (已转存) wins over a place in 视频收藏夹 (已收藏).
+// shareBadge marks the videos the app already knows. 已收藏 wins over
+// 已转存: see shareBadgeKind.
 function shareBadge(f: FileItem) {
-  if (f.restored) {
-    return { icon: <CheckIcon size={13} />, title: '已转存到 Pack From Shared', kind: 'restored' as const }
+  switch (shareBadgeKind(Boolean(f.restored), Boolean(f.favorited))) {
+    case 'star':
+      return { icon: <StarIcon size={13} filled />, title: '已在视频收藏夹', kind: 'star' as const }
+    case 'restored':
+      return { icon: <CheckIcon size={13} />, title: '已转存到 Pack From Shared', kind: 'restored' as const }
+    default:
+      return null
   }
-  if (f.favorited) {
-    return { icon: <StarIcon size={13} filled />, title: '已在视频收藏夹', kind: 'star' as const }
-  }
-  return null
 }
 
 export default function ShareBrowser({

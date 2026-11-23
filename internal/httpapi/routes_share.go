@@ -363,8 +363,8 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 // annotateShareFiles adds the two local badges the share browser shows on a
 // video: restored when Pack From Shared already holds a copy with its name and
 // size (the copy 完整播放 would reuse), favorited when it is in 视频收藏夹. The
-// restore wins on the tile. A drive that cannot be read simply carries no
-// badges — the listing itself still shows.
+// browser shows the star when both are set. A drive that cannot be read simply
+// carries no badges — the listing itself still shows.
 func annotateShareFiles(ctx context.Context, deps Deps, client *pikpak.Client, uid int, shareID string, files []pikpak.File) []map[string]any {
 	// A saved video is found by its share file id. PikPak can reissue that id
 	// for the same entry, so name and size — the pair a restored copy is

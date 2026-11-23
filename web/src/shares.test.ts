@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { onlyFolderEntry } from './shares'
+import { onlyFolderEntry, shareBadgeKind } from './shares'
 import type { FileItem } from './files'
 
 function item(id: string, kind: string): FileItem {
@@ -27,5 +27,23 @@ describe('onlyFolderEntry', () => {
 
   test('does not skip an empty root', () => {
     expect(onlyFolderEntry([], '')).toBeNull()
+  })
+})
+
+describe('shareBadgeKind', () => {
+  test('a saved video keeps its star even when a copy also exists', () => {
+    expect(shareBadgeKind(true, true)).toBe('star')
+  })
+
+  test('a restored video without a favourite shows the check', () => {
+    expect(shareBadgeKind(true, false)).toBe('restored')
+  })
+
+  test('a favourite without a copy shows the star', () => {
+    expect(shareBadgeKind(false, true)).toBe('star')
+  })
+
+  test('neither flag shows nothing', () => {
+    expect(shareBadgeKind(false, false)).toBeNull()
   })
 })
