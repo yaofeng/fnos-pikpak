@@ -366,10 +366,21 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 // restore wins on the tile. A drive that cannot be read simply carries no
 // badges — the listing itself still shows.
 func annotateShareFiles(ctx context.Context, deps Deps, client *pikpak.Client, uid int, shareID string, files []pikpak.File) []map[string]any {
+	// A saved video is found by its share file id. PikPak can reissue that id
+	// for the same entry, so name and size — the pair a restored copy is
+	// already matched by — stand in when the id no longer resolves.
+	type videoKey struct {
+		name string
+		size int64
+	}
 	favorited := map[string]bool{}
+	favoritedByName := map[videoKey]bool{}
 	if deps.Store != nil {
-		if ids, err := deps.Store.VideoFavoriteFileIDs(ctx, uid, shareID); err == nil {
-			favorited = ids
+		if favs, err := deps.Store.VideoFavoritesInShare(ctx, uid, shareID); err == nil {
+			for _, fav := range favs {
+				favorited[fav.FileID] = true
+				favoritedByName[videoKey{fav.Name, fav.Size}] = true
+			}
 		}
 	}
 	restored := map[string]bool{}
@@ -394,8 +405,12 @@ func annotateShareFiles(ctx context.Context, deps Deps, client *pikpak.Client, u
 		raw, _ := json.Marshal(f)
 		var item map[string]any
 		_ = json.Unmarshal(raw, &item)
+		isFavorite := favorited[f.ID]
+		if !isFavorite && f.Kind != "drive#folder" {
+			isFavorite = favoritedByName[videoKey{f.Name, f.Size}]
+		}
 		item["restored"] = restored[f.ID]
-		item["favorited"] = favorited[f.ID]
+		item["favorited"] = isFavorite
 		out = append(out, item)
 	}
 	return out

@@ -297,6 +297,9 @@ export default function ShareBrowser({
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
       if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
+      // The copy now sits in Pack From Shared, so the tile earns its check
+      // without another listing.
+      setItems((prev) => (prev ?? []).map((item) => (item.id === f.id ? { ...item, restored: true } : item)))
       if (job.direct_url) {
         handToIINA(job.direct_url)
         return
@@ -398,6 +401,10 @@ export default function ShareBrowser({
           pass_code: passCode,
         })
       }
+      // The listing was rendered before the save; mark the copies now so the
+      // star badge appears without a refresh.
+      const added = new Set(list.map((f) => f.id))
+      setItems((prev) => (prev ?? []).map((f) => (added.has(f.id) ? { ...f, favorited: true } : f)))
       setNotice(list.length === 1 ? `「${list[0].name}」已加入视频收藏夹` : `${list.length} 个视频已加入视频收藏夹`)
       clearSelection()
     } catch (err) {

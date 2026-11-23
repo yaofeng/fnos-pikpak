@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -705,5 +706,55 @@ func TestShareListingMarksRestoredAndFavoritedVideos(t *testing.T) {
 	item = body["items"].([]any)[0].(map[string]any)
 	if item["restored"] != false || item["favorited"] != true {
 		t.Fatalf("after the copy went away: %v", item)
+	}
+}
+
+// A video collected from a share opened through 分享收藏夹 is saved with the
+// share id the listing returned; reopening the same favourite must badge it.
+// This walks the browser's own calls, so a field the page forgets to send
+// fails here instead of in the app.
+func TestShareListingBadgesAVideoCollectedTheBrowserWay(t *testing.T) {
+	deps, h, _ := newVideoEnv(t, nil)
+	if _, err := deps.Store.AddShareFavorite(t.Context(), 1000, "VOabc123", "资料", ""); err != nil {
+		t.Fatalf("share favorite: %v", err)
+	}
+	fav := 0
+	if items, err := deps.Store.ListShareFavorites(t.Context(), 1000); err == nil && len(items) == 1 {
+		fav = int(items[0].ID)
+	}
+	_, opened := getJSON(t, h, "/api/share?favorite_id="+strconv.Itoa(fav), "1000")
+	shareID, _ := opened["share_id"].(string)
+	if shareID == "" {
+		t.Fatalf("share id missing: %v", opened)
+	}
+
+	rec, out := postJSON(t, h, "/api/video-favorites", "1000",
+		`{"share_id":"`+shareID+`","file_id":"sf2","name":"new.mp4","size":50,"owner":"张三","share_title":"资料"}`)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("collect = %d %v", rec.Code, out)
+	}
+
+	_, again := getJSON(t, h, "/api/share?favorite_id="+strconv.Itoa(fav), "1000")
+	item := again["items"].([]any)[0].(map[string]any)
+	if item["favorited"] != true {
+		t.Fatalf("favorited = %v", item)
+	}
+}
+
+// A saved video is matched to the listing by its share file id. When PikPak
+// reports the same entry under a different id, the badge falls back to the
+// name and size a restored copy is already found by.
+func TestShareListingBadgesAFavoriteWhoseFileIDChanged(t *testing.T) {
+	deps, h, _ := newVideoEnv(t, nil)
+	if _, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "old-sf2", Name: "new.mp4", Size: 50,
+	}); err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+
+	_, body := getJSON(t, h, "/api/share?url=VOabc123", "1000")
+	item := body["items"].([]any)[0].(map[string]any)
+	if item["favorited"] != true {
+		t.Fatalf("favorited = %v", item)
 	}
 }

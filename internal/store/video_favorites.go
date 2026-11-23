@@ -281,22 +281,25 @@ func (s *Store) SetVideoFavoriteRestoredID(ctx context.Context, uid int, id int6
 	return nil
 }
 
-// VideoFavoriteFileIDs is the set of share file ids this user saved from one
-// share; the share browser flags those videos with 🌟.
-func (s *Store) VideoFavoriteFileIDs(ctx context.Context, uid int, shareID string) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT file_id FROM video_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
+// VideoFavoritesInShare returns every video this user saved from one share,
+// with its pass code still sealed. The share listing uses the file id to badge
+// them, and falls back to name and size when PikPak reports a new id.
+func (s *Store) VideoFavoritesInShare(ctx context.Context, uid int, shareID string) ([]VideoFavorite, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, uid, share_id, file_id, name, size, owner, share_title, display_name, group_label, restored_file_id, pass_code_enc, created_at
+FROM video_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	out := []VideoFavorite{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		fav, err := scanVideoFavorite(rows)
+		if err != nil {
 			return nil, err
 		}
-		out[id] = true
+		fav.PassCode = ""
+		out = append(out, fav)
 	}
 	return out, rows.Err()
 }
