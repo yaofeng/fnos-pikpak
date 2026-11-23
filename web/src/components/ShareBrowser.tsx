@@ -3,6 +3,7 @@ import { apiDelete, apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../
 import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
+import { onlyFolderEntry } from '../shares'
 import { useFileSelection } from '../useFileSelection'
 import FileGrid from './FileGrid'
 import FileTable from './FileTable'
@@ -83,6 +84,9 @@ export default function ShareBrowser({
 
   const [items, setItems] = useState<FileItem[] | null>(null)
   const [stack, setStack] = useState<Crumb[]>([])
+  // rootSkipped says the share's root held one folder and was stepped through;
+  // going "up" from that folder would only show a level with no choice.
+  const [rootSkipped, setRootSkipped] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -126,12 +130,18 @@ export default function ShareBrowser({
         // the form, not a failure to shout about.
         const info = await apiGetQuiet<ShareInfo>(base + suffix)
         const name = info.title || fallbackTitle.current || '分享'
+        const rootItems = info.items ?? []
+        // A root that is a single folder is stepped through: the browser
+        // opens that folder and offers no way back to the level above it.
+        const skip = onlyFolderEntry(rootItems, info.next_page_token ?? '')
         setShareId(info.share_id)
         setTitle(name)
         setOwner(info.owner ?? '')
-        setItems(info.items ?? [])
-        setStack([])
+        setItems(skip ? null : rootItems)
+        setStack(skip ? [{ id: skip.id, name: skip.name }] : [])
+        setRootSkipped(Boolean(skip))
         setQ('')
+        if (skip) void loadFolder(skip.id, info.share_id)
         setNeedPass(false)
         setPassCode(code)
         callbacks.current.onState?.({ title: name, passCode: code, protected: info.protected, owner: info.owner ?? '' })
@@ -158,12 +168,12 @@ export default function ShareBrowser({
     void open(rememberedCode.current)
   }, [open])
 
-  async function loadFolder(parentId: string) {
+  async function loadFolder(parentId: string, sid = shareId) {
     setLoading(true)
     setError('')
     try {
       const page = await apiGet<SharePage>(
-        `share/files?share_id=${encodeURIComponent(shareId)}&parent_id=${encodeURIComponent(parentId)}`,
+        `share/files?share_id=${encodeURIComponent(sid)}&parent_id=${encodeURIComponent(parentId)}`,
       )
       setItems(page.items ?? [])
       setQ('')
@@ -186,6 +196,8 @@ export default function ShareBrowser({
   }
 
   function goTo(index: number) {
+    // The stepped-through root is not reachable from below.
+    if (rootSkipped && index < 0) return
     const next = index < 0 ? [] : stack.slice(0, index + 1)
     setStack(next)
     void loadFolder(next.length ? next[next.length - 1].id : '')
@@ -432,7 +444,7 @@ export default function ShareBrowser({
               className="icon-btn"
               type="button"
               onClick={() => goTo(stack.length - 2)}
-              disabled={stack.length === 0}
+              disabled={stack.length === 0 || (rootSkipped && stack.length === 1)}
               title="上一级"
               aria-label="上一级"
             >
@@ -450,7 +462,12 @@ export default function ShareBrowser({
             </button>
             <div className="crumb-box">
               <nav className="share-crumbs" aria-label="分享目录">
-                <button type="button" onClick={() => goTo(-1)} disabled={stack.length === 0} title="分享根目录">
+                <button
+                  type="button"
+                  onClick={() => goTo(-1)}
+                  disabled={stack.length === 0 || rootSkipped}
+                  title="分享根目录"
+                >
                   {title || '分享'}
                 </button>
                 {stack.map((c, i) => (
