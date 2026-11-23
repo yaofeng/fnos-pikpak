@@ -66,17 +66,14 @@ func shareTotals(ctx context.Context, client *pikpak.Client, shareID, passToken 
 	return files, size, nil
 }
 
-// refreshShareFavoriteStats opens a share and records it needs no more: who
-// shared it, when, whether it expires, and (when count is set) the totals a
-// recursive walk finds. A failed attempt is still marked checked, so a share
-// that cannot be opened does not cost a PikPak round trip on every load.
+// refreshShareFavoriteStats opens a share and records who shared it, when,
+// whether it expires, and (when count is set) the totals a recursive walk
+// finds. Only a successful walk writes stats_at: a failed count leaves the
+// cache empty, so the next visit tries again instead of showing a dash for a
+// day. Metadata is kept even when the walk fails.
 func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav store.ShareFavorite, client *pikpak.Client, count bool) store.ShareFavorite {
 	now := time.Now()
-	meta := store.ShareFavoriteMeta{
-		FileCount: -1,
-		TotalSize: -1,
-		StatsAt:   now.UTC().Format(time.RFC3339Nano),
-	}
+	meta := store.ShareFavoriteMeta{FileCount: -1, TotalSize: -1}
 	token, cached := deps.ShareSessions.get(uid, fav.ShareID, now)
 	needInfo := fav.OwnerName == "" || fav.ShareCreatedAt == ""
 	if !cached || needInfo {
@@ -90,19 +87,11 @@ func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav stor
 		info, err := client.GetShare(ctx, fav.ShareID, code)
 		if err != nil {
 			if !cached {
-				if deps.Store.UpdateShareFavoriteMeta(ctx, uid, fav.ID, meta) == nil {
-					fav.StatsAt = meta.StatsAt
-					fav.StatsReady = true
-				}
+				// Nothing learned and no token to walk with.
 				return fav
 			}
 			// The cached token still lets the walk below run.
 		} else {
-			if !count {
-				// Metadata only: the list still owes this share a count, so it
-				// must not look checked yet.
-				meta.StatsAt = ""
-			}
 			meta.OwnerName = info.Owner
 			meta.OwnerAvatar = info.Avatar
 			meta.ShareCreatedAt = info.CreatedAt
@@ -111,9 +100,12 @@ func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav stor
 			deps.ShareSessions.put(uid, fav.ShareID, token, now)
 		}
 	}
-	if count && token != "" {
+	// A share without a pass code answers with no token, and its folders are
+	// still counted: ListShareFiles accepts an empty pass_code_token.
+	if count {
 		if n, size, err := shareTotals(ctx, client, fav.ShareID, token); err == nil {
 			meta.FileCount, meta.TotalSize = n, size
+			meta.StatsAt = now.UTC().Format(time.RFC3339Nano)
 		}
 	}
 	if err := deps.Store.UpdateShareFavoriteMeta(ctx, uid, fav.ID, meta); err != nil {
@@ -131,8 +123,10 @@ func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav stor
 	if meta.TotalSize >= 0 {
 		fav.TotalSize = meta.TotalSize
 	}
-	fav.StatsAt = meta.StatsAt
-	fav.StatsReady = true
+	if meta.StatsAt != "" {
+		fav.StatsAt = meta.StatsAt
+		fav.StatsReady = true
+	}
 	return fav
 }
 
@@ -154,10 +148,11 @@ func shareStatsStale(statsAt string, now time.Time) bool {
 }
 
 // startShareStats counts a saved share in the background when its cached
-// total is missing or stale. 分享收藏夹 itself never counts — the walk happens
-// when the user enters the share, and the next visit to the list reads it.
+// total is missing, stale, or the last attempt failed. 分享收藏夹 itself never
+// counts — the walk happens when the user enters the share, and the next
+// visit to the list reads it.
 func startShareStats(deps Deps, uid int, fav store.ShareFavorite) {
-	if !shareStatsStale(fav.StatsAt, time.Now()) {
+	if fav.FileCount >= 0 && !shareStatsStale(fav.StatsAt, time.Now()) {
 		return
 	}
 	key := strconv.Itoa(uid) + "/" + fav.ShareID

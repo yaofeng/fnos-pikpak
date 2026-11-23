@@ -21,6 +21,11 @@ type statsUpstream struct {
 	srv         *httptest.Server
 	mu          sync.Mutex
 	detailCalls int
+	// noToken drops pass_code_token from the share answer: a share without a
+	// pass code still has its folders to count.
+	noToken bool
+	// detailStatus, when non-zero, fails every share detail call.
+	detailStatus int
 }
 
 const (
@@ -38,7 +43,7 @@ func newStatsUpstream(t *testing.T) *statsUpstream {
 			if r.URL.Query().Get("pass_code") == "" {
 				status = "PASS_CODE_EMPTY"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			answer := map[string]any{
 				"share_status":    status,
 				"pass_code_token": "tok-stats",
 				"title":           "资料合集",
@@ -49,11 +54,22 @@ func newStatsUpstream(t *testing.T) *statsUpstream {
 					"nickname":     statsOwner,
 					"portrait_url": up.srv.URL + "/avatar.png",
 				},
-			})
+			}
+			up.mu.Lock()
+			if up.noToken {
+				delete(answer, "pass_code_token")
+			}
+			up.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(answer)
 		case "/drive/v1/share/detail":
 			up.mu.Lock()
 			up.detailCalls++
+			status := up.detailStatus
 			up.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				return
+			}
 			parent, page := r.URL.Query().Get("parent_id"), r.URL.Query().Get("page_token")
 			var body map[string]any
 			switch {
@@ -323,4 +339,72 @@ func rawGet(t *testing.T, h http.Handler, path, uid string) *httptest.ResponseRe
 
 func storeMeta(avatar string) store.ShareFavoriteMeta {
 	return store.ShareFavoriteMeta{OwnerAvatar: avatar}
+}
+
+// A share without a pass code answers with no pass_code_token, yet its
+// folders still count. The walk must not be skipped just because the token is
+// empty, or such a share shows no totals however often it is opened.
+func TestOpeningAShareWithoutAPassCodeTokenStillCounts(t *testing.T) {
+	up := newStatsUpstream(t)
+	up.noToken = true
+	deps, _ := newAuthTestDeps(t, up.srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	fav, err := deps.Store.AddShareFavorite(context.Background(), 1000, "share-public", "资料合集", "7f3a")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if rec, body := getJSON(t, h, "/api/share?favorite_id="+strconv.FormatInt(fav.ID, 10), "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("open: %d %v", rec.Code, body)
+	}
+	got := waitForShareStats(t, deps.Store, 1000, fav.ID, 4)
+	if got.FileCount != 4 || got.TotalSize != 36 {
+		t.Fatalf("counted = %d files / %d bytes", got.FileCount, got.TotalSize)
+	}
+}
+
+// A count that fails leaves no cache behind: the row keeps asking for one, and
+// the next visit tries again instead of showing a dash for a day.
+func TestAFailedCountIsRetriedOnTheNextVisit(t *testing.T) {
+	up := newStatsUpstream(t)
+	up.detailStatus = http.StatusInternalServerError
+	deps, _ := newAuthTestDeps(t, up.srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	fav, err := deps.Store.AddShareFavorite(context.Background(), 1000, "share-retry", "资料合集", "7f3a")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if rec, body := getJSON(t, h, "/api/share?favorite_id="+strconv.FormatInt(fav.ID, 10), "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("open: %d %v", rec.Code, body)
+	}
+	waitForDetailCalls(t, up, 1)
+	time.Sleep(150 * time.Millisecond)
+	if got, _ := deps.Store.GetShareFavorite(context.Background(), 1000, fav.ID); got.StatsReady {
+		t.Fatalf("a failed count was cached: %+v", got)
+	}
+
+	up.mu.Lock()
+	up.detailStatus = 0
+	up.mu.Unlock()
+	if rec, body := getJSON(t, h, "/api/share?favorite_id="+strconv.FormatInt(fav.ID, 10), "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("reopen: %d %v", rec.Code, body)
+	}
+	got := waitForShareStats(t, deps.Store, 1000, fav.ID, 4)
+	if got.FileCount != 4 || got.TotalSize != 36 {
+		t.Fatalf("retry = %d files / %d bytes", got.FileCount, got.TotalSize)
+	}
+}
+
+func waitForDetailCalls(t *testing.T, up *statsUpstream, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for up.details() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("detail calls never reached %d: %d", want, up.details())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
