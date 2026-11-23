@@ -144,17 +144,31 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (
 	return Answer{Results: out, Raw: raw}, nil
 }
 
+// shareIDOf returns the share a result points at when it is a share page on
+// one of PikPak's hosts. A site: query keeps results on the domain, not on
+// share pages: the homepage, help and download pages pass the operator too,
+// and none of them can be opened in the share browser.
+func shareIDOf(raw string) (string, bool) {
+	if !onSite(raw) {
+		return "", false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) >= 2 && parts[0] == "s" && parts[1] != "" {
+		return parts[1], true
+	}
+	return "", false
+}
+
 // shareKey is the share a result points at. Every PikPak host serves a share
 // at /s/<id>, sometimes followed by the path inside it, so two hosts serving
 // the same share collapse to one key.
 func shareKey(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) >= 2 && parts[0] == "s" && parts[1] != "" {
-		return parts[1]
+	if id, ok := shareIDOf(raw); ok {
+		return id
 	}
 	return raw
 }
@@ -203,7 +217,7 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 
 	out := make([]Result, 0, len(parsed.Organic))
 	for _, r := range parsed.Organic {
-		if !onSite(r.Link) {
+		if _, ok := shareIDOf(r.Link); !ok {
 			continue
 		}
 		out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet})

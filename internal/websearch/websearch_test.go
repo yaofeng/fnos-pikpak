@@ -131,6 +131,31 @@ func TestSearchKeepsEveryPikPakShareHost(t *testing.T) {
 	}
 }
 
+// A site: query keeps the results on the domain, not on share pages: PikPak's
+// own homepage, help and download pages pass the operator too, and none of
+// them can be opened in the share browser.
+func TestSearchDropsPagesOnTheSiteThatAreNotShares(t *testing.T) {
+	srv, _ := siteAnswers(t, map[string][]map[string]any{
+		"mypikpak.com": {
+			{"title": "首页", "link": "https://mypikpak.com/", "snippet": "无关"},
+			{"title": "帮助", "link": "https://mypikpak.com/help/contact", "snippet": "无关"},
+			{"title": "分享", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+		},
+	})
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 1 || ans.Results[0].URL != "https://mypikpak.com/s/VN1" {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+	if ans.Raw != 3 {
+		t.Fatalf("raw = %d, want the three organic hits", ans.Raw)
+	}
+}
+
 func TestSearchRefusesAnEmptyKeywordWithoutCallingUpstream(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
