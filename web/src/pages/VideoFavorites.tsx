@@ -402,6 +402,11 @@ export default function VideoFavorites() {
                     <td className="col-open" />
                     <td>
                       <span className="shine-name">
+                        {f.restored && (
+                          <span className="list-badge" title="已转存到 Pack From Shared">
+                            ✅
+                          </span>
+                        )}
                         <FileIcon file={toFileItem(f)} size={20} />
                         <span title={f.name}>{f.display_name || f.name}</span>
                       </span>

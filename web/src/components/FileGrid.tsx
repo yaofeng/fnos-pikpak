@@ -67,12 +67,12 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
             ) : (
               <FileIcon file={f} size={56} />
             )}
+            {mark && (
+              <span className={`tile-badge ${mark.side}`} title={mark.title} aria-label={mark.title}>
+                {mark.icon}
+              </span>
+            )}
           </div>
-          {mark && (
-            <span className={`tile-badge ${mark.side}`} title={mark.title} aria-label={mark.title}>
-              {mark.icon}
-            </span>
-          )}
           <div className="tile-label">
             <span className="tile-name" title={f.name}>
               {f.name}

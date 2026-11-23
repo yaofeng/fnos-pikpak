@@ -584,7 +584,19 @@ export default function ShareBrowser({
 
           <div className="file-body">
             {view === 'list' ? (
-              <FileTable items={shown} selected={selected} onSelect={select} onOpen={openFile} />
+              <FileTable
+                items={shown}
+                selected={selected}
+                onSelect={select}
+                onOpen={openFile}
+                badge={(f) =>
+                  f.restored
+                    ? { icon: '✅', title: '已转存到 Pack From Shared' }
+                    : f.favorited
+                      ? { icon: '🌟', title: '已在视频收藏夹' }
+                      : null
+                }
+              />
             ) : (
               <FileGrid
                 thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id, shareId)}`}

@@ -10,13 +10,15 @@ type Props = {
   onMenu?: (e: MouseEvent, f: FileItem) => void
   onDragStart?: (f: FileItem) => void
   onDropOn?: (folderId: string) => void
+  // badge puts the local status before the icon, where a list keeps the eye.
+  badge?: (f: FileItem) => { icon: string; title: string } | null
 }
 
 // FileTable renders the list view with the Finder's selection: a row is
 // selected by clicking it, there are no checkboxes. Every interaction is
 // optional, so the 最近 and 回收站 pages can show the same table read-only or
 // with their own actions.
-export default function FileTable({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn }: Props) {
+export default function FileTable({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, badge }: Props) {
   return (
     <table className="file-table">
       <thead>
@@ -30,6 +32,7 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
       <tbody>
         {items.map((f, index) => {
           const isSelected = selected?.has(f.id) ?? false
+          const mark = badge?.(f)
           return (
             <tr
               key={f.id}
@@ -67,6 +70,11 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
               </td>
               <td className="col-name">
                 <span className="name-cell">
+                  {mark && (
+                    <span className="list-badge" title={mark.title} aria-label={mark.title}>
+                      {mark.icon}
+                    </span>
+                  )}
                   <span className="file-icon">
                     <FileIcon file={f} />
                   </span>

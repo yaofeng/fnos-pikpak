@@ -620,6 +620,7 @@ button.primary {
 }
 
 .tile-icon {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -631,22 +632,28 @@ button.primary {
   height: calc(56px * var(--tile-scale, 1));
 }
 
-/* A tile-corner status: ✅ for a copy already in Pack From Shared, 🌟 for a
-   video in 视频收藏夹. */
+/* A status over the preview: ✅ for a copy already in Pack From Shared, 🌟 for
+   a video in 视频收藏夹. The list view puts the same glyph before the icon. */
 .tile-badge {
   position: absolute;
-  bottom: 6px;
-  font-size: 14px;
+  bottom: 0;
+  font-size: 15px;
   line-height: 1;
   pointer-events: none;
 }
 
 .tile-badge.left {
-  left: 8px;
+  left: 0;
 }
 
 .tile-badge.right {
-  right: 8px;
+  right: 0;
+}
+
+.list-badge {
+  margin-right: 4px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .tile-thumb {
