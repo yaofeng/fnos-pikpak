@@ -1,8 +1,28 @@
 // Web-search result types and the small pieces of copy-free logic the 全网搜索
 // page uses. The server owns the query: it adds the site: filter, so nothing
 // here ever builds one.
-export type WebResult = { title: string; url: string; snippet: string }
-export type WebSearchPage = { items: WebResult[]; query: string; page: number; raw?: number }
+export type WebResult = {
+  title: string
+  url: string
+  snippet: string
+  // Share marks a page the app can open in its own share browser. With the
+  // wide scope the list also holds ordinary pages on the site, and this is
+  // what tells them apart.
+  share?: boolean
+}
+export type WebSearchPage = {
+  items: WebResult[]
+  query: string
+  page: number
+  raw?: number
+  scope?: 'share' | 'all'
+}
+
+// shareCount is how many of the listed hits are share pages. The wide scope
+// lists the site's other pages too, and the count line says how many of each.
+export function shareCount(items: WebResult[]): number {
+  return items.filter((r) => r.share).length
+}
 
 // crumbFromURL renders a result address the way a search engine does: the
 // host first, then each path segment, without the scheme.

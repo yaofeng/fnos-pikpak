@@ -64,6 +64,10 @@ var settingSpecs = map[string]settingSpec{
 	// medium is 1.5x and large 2x its width and height.
 	"tile_size": {def: "small", valid: oneOf("small", "medium", "large")},
 	"language":  {def: "zh-CN", valid: oneOf("zh-CN", "en")},
+	// search_scope decides what 全网搜索 lists: only openable share pages
+	// (share, the default), or every page on the PikPak hosts with the
+	// share pages marked as such (all).
+	"search_scope": {def: "share", valid: oneOf("share", "all")},
 	// Empty means "not set yet". Whether the directory may be written is a
 	// question only fnOS can answer, so it is checked separately.
 	"download_dir": {def: "", valid: func(s string) bool { return s == "" || filepath.IsAbs(s) }},

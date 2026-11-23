@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/store"
 	"fnos-pikpak/internal/websearch"
 )
@@ -55,9 +56,16 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 		if client == nil {
 			client = websearch.New()
 		}
+		// The scope is a per-user preference: 只显示分享页 by default, or
+		// every page on the PikPak hosts with the shares marked.
+		id, _ := fnos.IdentityFrom(r.Context())
+		scope := websearch.ScopeShare
+		if v, err := deps.Store.GetUserSetting(r.Context(), id.UID, "search_scope"); err == nil && v == string(websearch.ScopeSite) {
+			scope = websearch.ScopeSite
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), webSearchTimeout)
 		defer cancel()
-		ans, err := client.Search(ctx, apiKey, query, page)
+		ans, err := client.Search(ctx, apiKey, query, page, scope)
 		if err != nil {
 			var upstream *websearch.UpstreamError
 			if errors.As(err, &upstream) && (upstream.Status == http.StatusUnauthorized || upstream.Status == http.StatusForbidden) {
@@ -73,6 +81,8 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		// raw is what the provider returned before results outside the share
 		// hosts were dropped; the page says so when the list is much shorter.
-		writeJSON(w, http.StatusOK, map[string]any{"items": ans.Results, "query": query, "page": page, "raw": ans.Raw})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items": ans.Results, "query": query, "page": page, "raw": ans.Raw, "scope": string(scope),
+		})
 	})
 }

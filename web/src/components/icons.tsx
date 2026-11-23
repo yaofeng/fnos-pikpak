@@ -241,6 +241,18 @@ export function GlobeIcon({ size = 16 }: IconProps) {
   )
 }
 
+// ShareIcon marks a search result as a PikPak share page the app can open.
+export function ShareIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...stroke(size)}>
+      <circle cx="6" cy="12" r="2.6" />
+      <circle cx="17.5" cy="6" r="2.6" />
+      <circle cx="17.5" cy="18" r="2.6" />
+      <path d="m8.4 10.8 6.8-3.5M8.4 13.2l6.8 3.5" />
+    </svg>
+  )
+}
+
 export function GearIcon({ size = 16 }: IconProps) {
   return (
     <svg {...stroke(size)}>

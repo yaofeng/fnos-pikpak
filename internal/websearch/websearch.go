@@ -40,6 +40,17 @@ const pageSize = 20
 // ErrEmptyQuery means there was nothing to search for.
 var ErrEmptyQuery = errors.New("websearch: empty query")
 
+// Scope decides what a search keeps.
+type Scope string
+
+const (
+	// ScopeShare keeps only share pages, the ones the app can open.
+	ScopeShare Scope = "share"
+	// ScopeSite keeps every page on the PikPak hosts; share pages carry
+	// Share=true so the list can mark them.
+	ScopeSite Scope = "all"
+)
+
 // UpstreamError is a provider refusal, carrying only its status so callers can
 // tell a bad key (401/403) from an outage without reading the body.
 type UpstreamError struct {
@@ -55,6 +66,9 @@ type Result struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
+	// Share reports whether this is a share page the app can open in its own
+	// browser. It is only ever false when the scope allows other pages.
+	Share bool `json:"share"`
 }
 
 // Client talks to one search provider. HTTP is injectable so tests can point
@@ -89,9 +103,10 @@ type Answer struct {
 	Raw int
 }
 
-// Search looks for keyword under Site. Only results hosted on the site are
-// returned; a provider that ignores the site filter therefore cannot put an
-// unrelated page in the list. page is 1-based; callers validate its range.
+// Search looks for keyword under Site. The domain filter is always applied, so
+// a provider that ignores the site: operator cannot put an unrelated page in
+// the list. Scope decides whether pages on the hosts that are not shares are
+// kept; page is 1-based and callers validate its range.
 //
 // Sites are asked one at a time. Google's index for a single share domain is
 // often sparse — a page of ten holds a handful of share pages — so the hosts
@@ -99,13 +114,16 @@ type Answer struct {
 // reached (mypikpak.me no longer resolves) is skipped; a provider refusal
 // stops the search, since no other host would answer either. The same share
 // is served by every host under one share id, so it is returned once.
-func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (Answer, error) {
+func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, scope Scope) (Answer, error) {
 	q := normalizeKeyword(keyword)
 	if q == "" {
 		return Answer{}, ErrEmptyQuery
 	}
 	if page < 1 {
 		page = 1
+	}
+	if scope != ScopeSite {
+		scope = ScopeShare
 	}
 	out := make([]Result, 0, pageSize)
 	seen := make(map[string]bool, pageSize)
@@ -115,7 +133,7 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (
 		if len(out) >= pageSize {
 			break
 		}
-		results, organic, err := c.searchSite(ctx, apiKey, site, q, page)
+		results, organic, err := c.searchSite(ctx, apiKey, site, q, page, scope)
 		if err != nil {
 			var upstream *UpstreamError
 			if errors.As(err, &upstream) {
@@ -173,9 +191,10 @@ func shareKey(raw string) string {
 	return raw
 }
 
-// searchSite runs one site-scoped query and keeps only results on a PikPak
-// share host.
-func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int) (results []Result, organic int, err error) {
+// searchSite runs one site-scoped query and keeps results on a PikPak host.
+// A share page is marked as one; when the scope allows other pages they are
+// kept too, and the share mark is what tells them apart.
+func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int, scope Scope) (results []Result, organic int, err error) {
 	payload, err := json.Marshal(map[string]any{
 		"q":    "site:" + site + " " + q,
 		"gl":   "cn",
@@ -217,10 +236,14 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 
 	out := make([]Result, 0, len(parsed.Organic))
 	for _, r := range parsed.Organic {
-		if _, ok := shareIDOf(r.Link); !ok {
+		if !onSite(r.Link) {
 			continue
 		}
-		out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet})
+		_, isShare := shareIDOf(r.Link)
+		if !isShare && scope != ScopeSite {
+			continue
+		}
+		out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet, Share: isShare})
 	}
 	return out, len(parsed.Organic), nil
 }

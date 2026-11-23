@@ -51,7 +51,7 @@ func TestSearchAddsTheSiteFilterAndReturnsResults(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "  大模型 ", 1)
+	ans, err := c.Search(context.Background(), "key-123", "  大模型 ", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestSearchStripsASiteFilterThePersonPasted(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	if _, err := c.Search(context.Background(), "key-123", "site://mypikpak.com/ 大模型", 1); err != nil {
+	if _, err := c.Search(context.Background(), "key-123", "site://mypikpak.com/ 大模型", 1, ScopeShare); err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	if *gotQuery != "site:mypikpak.com 大模型" {
@@ -90,7 +90,7 @@ func TestSearchAsksForTheRequestedPage(t *testing.T) {
 	srv, _, _, gotPage := organicServer(t, nil)
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	if _, err := c.Search(context.Background(), "key-123", "大模型", 3); err != nil {
+	if _, err := c.Search(context.Background(), "key-123", "大模型", 3, ScopeShare); err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	if *gotPage != 3 {
@@ -111,7 +111,7 @@ func TestSearchKeepsEveryPikPakShareHost(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestSearchDropsPagesOnTheSiteThatAreNotShares(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -156,6 +156,35 @@ func TestSearchDropsPagesOnTheSiteThatAreNotShares(t *testing.T) {
 	}
 }
 
+// When the scope allows other pages, they are kept and marked apart from the
+// shares, so the list can say what each result is.
+func TestSearchKeepsEveryPageOnTheHostsWhenTheScopeAllowsIt(t *testing.T) {
+	srv, _ := siteAnswers(t, map[string][]map[string]any{
+		"mypikpak.com": {
+			{"title": "首页", "link": "https://mypikpak.com/", "snippet": "站内页面"},
+			{"title": "分享", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+			{"title": "站外", "link": "https://example.com/x", "snippet": "无关"},
+		},
+	})
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeSite)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	// The page off the PikPak hosts is still dropped: scope widens what is
+	// kept on the site, not what counts as the site.
+	if len(ans.Results) != 2 {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+	if ans.Results[0].Share || ans.Results[0].URL != "https://mypikpak.com/" {
+		t.Fatalf("first result = %+v", ans.Results[0])
+	}
+	if !ans.Results[1].Share || ans.Results[1].URL != "https://mypikpak.com/s/VN1" {
+		t.Fatalf("second result = %+v", ans.Results[1])
+	}
+}
+
 func TestSearchRefusesAnEmptyKeywordWithoutCallingUpstream(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +193,7 @@ func TestSearchRefusesAnEmptyKeywordWithoutCallingUpstream(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	if _, err := c.Search(context.Background(), "key-123", "  ", 1); !errors.Is(err, ErrEmptyQuery) {
+	if _, err := c.Search(context.Background(), "key-123", "  ", 1, ScopeShare); !errors.Is(err, ErrEmptyQuery) {
 		t.Fatalf("err = %v", err)
 	}
 	if calls != 0 {
@@ -179,7 +208,7 @@ func TestSearchReportsAnUpstreamFailureWithoutLeakingTheKey(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	_, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	_, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err == nil {
 		t.Fatal("a rejected request looked like an empty result")
 	}
@@ -209,7 +238,7 @@ func TestSearchAsksTheSitesOneAtATime(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -266,7 +295,7 @@ func TestSearchReportsHowManyRawHitsTheProviderReturned(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -293,7 +322,7 @@ func TestSearchFillsThePageFromTheNextSitesWhenTheFirstIsSparse(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -325,7 +354,7 @@ func TestSearchStopsAskingSitesOnceThePageIsFull(t *testing.T) {
 	srv, queries := siteAnswers(t, map[string][]map[string]any{"mypikpak.com": full})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -347,7 +376,7 @@ func TestSearchShowsAShareOnceAcrossHosts(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -368,7 +397,7 @@ func TestSearchSkipsAHostThatCannotBeReached(t *testing.T) {
 		Transport: failingTransport{next: srv.Client().Transport, failOn: "site:mypikpak.net "},
 	}}
 
-	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -413,7 +442,7 @@ func TestSearchReportsAProviderRefusalWithoutAskingTheOtherSites(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	_, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	_, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	var upstream *UpstreamError
 	if !errors.As(err, &upstream) || upstream.Status != http.StatusForbidden {
 		t.Fatalf("err = %v", err)

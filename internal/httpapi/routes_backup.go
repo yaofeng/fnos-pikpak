@@ -30,7 +30,7 @@ const (
 // file by hand or by an older build, because isGlobalSettingKey covers it.
 var backupGlobalSettingKeys = []string{"download_concurrency", "upload_concurrency"}
 
-var backupUserSettingKeys = []string{"conflict", "play_mode", "player", "tile_size", "language", "download_dir"}
+var backupUserSettingKeys = []string{"conflict", "play_mode", "player", "tile_size", "language", "search_scope", "download_dir"}
 
 type backupDocument struct {
 	Format     int    `json:"format"`

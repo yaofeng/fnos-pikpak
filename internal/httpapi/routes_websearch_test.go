@@ -118,6 +118,47 @@ func TestWebSearchReportsTheRawCountBeforeFiltering(t *testing.T) {
 	}
 }
 
+// The scope setting decides whether pages that are not shares are listed.
+// Share pages are always marked, so a mixed list can tell them apart.
+func TestWebSearchHonoursTheSearchScopeSetting(t *testing.T) {
+	srv, _, _, _ := serperStub(t, []map[string]any{
+		{"title": "首页", "link": "https://mypikpak.com/", "snippet": "站内页面"},
+		{"title": "分享", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+	})
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	withSearchKey(t, deps, "key-123")
+	deps.WebSearch = &websearch.Client{Endpoint: srv.URL, HTTP: srv.Client()}
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	// The default keeps only the page the app can open.
+	rec, body := getJSON(t, h, "/api/web-search?q=大模型", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 || body["scope"] != "share" {
+		t.Fatalf("items = %v scope = %v", items, body["scope"])
+	}
+
+	if err := deps.Store.SetUserSetting(context.Background(), 1000, "search_scope", "all"); err != nil {
+		t.Fatalf("set scope: %v", err)
+	}
+	rec, body = getJSON(t, h, "/api/web-search?q=大模型", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ = body["items"].([]any)
+	if len(items) != 2 || body["scope"] != "all" {
+		t.Fatalf("items = %v scope = %v", items, body["scope"])
+	}
+	first, _ := items[0].(map[string]any)
+	second, _ := items[1].(map[string]any)
+	if first["share"] != false || second["share"] != true {
+		t.Fatalf("share marks = %v / %v", first["share"], second["share"])
+	}
+}
+
 func TestWebSearchPassesThePageThrough(t *testing.T) {
 	srv, _, _, gotPage := serperStub(t, []map[string]any{
 		{"title": "第二页", "link": "https://mypikpak.com/s/VN2", "snippet": "资料"},

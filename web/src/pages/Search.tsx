@@ -3,8 +3,15 @@ import { Link } from 'react-router-dom'
 import { apiGet, apiPost, ApiError } from '../api'
 import { copyText } from '../clipboard'
 import ShareBrowser, { type ShareState } from '../components/ShareBrowser'
-import { GlobeIcon, SearchIcon } from '../components/icons'
-import { appendResults, crumbFromURL, hasMorePages, type WebResult, type WebSearchPage } from '../search'
+import { GlobeIcon, SearchIcon, ShareIcon } from '../components/icons'
+import {
+  appendResults,
+  crumbFromURL,
+  hasMorePages,
+  shareCount,
+  type WebResult,
+  type WebSearchPage,
+} from '../search'
 import { afterClose, openTab, type WebTab } from '../webTabs'
 
 // The provider serves ten pages, each one a paid query.
@@ -26,6 +33,10 @@ export default function Search() {
   // share pages: shown when most of a page was dropped for not being a share.
   const [firstRaw, setFirstRaw] = useState(0)
   const [firstKept, setFirstKept] = useState(0)
+  // 'share' lists only pages the app can open; 'all' also lists the site's
+  // other pages, and the share pages are marked with an icon.
+  const [scope, setScope] = useState<'share' | 'all'>('share')
+  const [firstShares, setFirstShares] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
@@ -82,6 +93,8 @@ export default function Search() {
       setHasMore(hasMorePages(1, got.length, maxPage))
       setFirstRaw(body.raw ?? 0)
       setFirstKept(got.length)
+      setScope(body.scope === 'all' ? 'all' : 'share')
+      setFirstShares(shareCount(got))
     } catch (err) {
       // A missing or rejected provider key is a setup step, not a failed
       // search: point at 参数设置 instead of shouting in red.
@@ -274,9 +287,15 @@ export default function Search() {
           {searched && items.length > 0 && (
             <p className="se-count">已加载 {items.length} 条结果</p>
           )}
-          {searched && firstKept > 0 && firstRaw > firstKept && (
+          {searched && scope === 'share' && firstKept > 0 && firstRaw > firstKept && (
             <p className="se-count">
               搜索引擎返回 {firstRaw} 条原始结果，其中 {firstKept} 条是 PikPak 分享页，其余不是分享页，已忽略。
+            </p>
+          )}
+          {searched && scope === 'all' && (
+            <p className="se-count">
+              搜索引擎返回 {firstRaw} 条原始结果，其中 {firstShares} 条是 PikPak 分享页（带分享图标）；其余是站内其它页面，
+              在浏览器中打开。
             </p>
           )}
           {searched && items.length === 0 && page === 1 && (
@@ -290,20 +309,28 @@ export default function Search() {
               {items.map((hit) => (
                 <li key={hit.url}>
                   <p className="se-breadcrumb">{crumbFromURL(hit.url)}</p>
-                  <a
-                    className="se-title"
-                    href={hit.url}
-                    title={hit.title}
-                    onClick={(e) => {
-                      // Modified clicks keep the browser's own behavior; a
-                      // plain click stays in the app.
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
-                      e.preventDefault()
-                      openResult(hit)
-                    }}
-                  >
-                    {hit.title}
-                  </a>
+                  <div className="se-title-row">
+                    <a
+                      className="se-title"
+                      href={hit.url}
+                      title={hit.title}
+                      onClick={(e) => {
+                        // Modified clicks keep the browser's own behavior; a
+                        // plain click stays in the app for a share page.
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                        if (hit.share === false) return
+                        e.preventDefault()
+                        openResult(hit)
+                      }}
+                    >
+                      {hit.title}
+                    </a>
+                    {scope === 'all' && hit.share && (
+                      <span className="se-share" title="PikPak 分享页">
+                        <ShareIcon size={13} />
+                      </span>
+                    )}
+                  </div>
                   {hit.snippet && <p className="se-snippet">{hit.snippet}</p>}
                 </li>
               ))}

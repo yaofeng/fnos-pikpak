@@ -1728,6 +1728,33 @@ a.btn-icon {
   text-decoration: underline;
 }
 
+/* The title and its share mark sit on one line; the mark only appears when
+   the list also holds pages that are not shares. */
+.se-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+/* The title is the shrinkable part: its ellipsis must leave room for the
+   share mark instead of pushing it off the line. */
+.se-title-row .se-title {
+  min-width: 0;
+}
+
+.se-share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+}
+
 .se-snippet {
   margin: 4px 0 0;
   color: var(--muted);

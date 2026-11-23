@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendResults, crumbFromURL, hasMorePages } from './search'
+import { appendResults, crumbFromURL, hasMorePages, shareCount } from './search'
 
 describe('crumbFromURL', () => {
   it('shows the host and each path segment', () => {
@@ -35,6 +35,17 @@ describe('appendResults', () => {
       [hit('https://mypikpak.net/s/VN1'), hit('https://mypikpak.com/s/VN2')],
     )
     expect(got.map((r) => r.url)).toEqual(['https://mypikpak.com/s/VN1', 'https://mypikpak.com/s/VN2'])
+  })
+})
+
+describe('shareCount', () => {
+  it('counts only the results the server marked as shares', () => {
+    const got = shareCount([
+      { title: '首页', url: 'https://mypikpak.com/', snippet: '' },
+      { title: '分享', url: 'https://mypikpak.com/s/VN1', snippet: '', share: true },
+      { title: '另一个分享', url: 'https://mypikpak.net/s/VN2', snippet: '', share: true },
+    ])
+    expect(got).toBe(2)
   })
 })
 

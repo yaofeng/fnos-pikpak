@@ -64,6 +64,11 @@ const languageOptions = [
   { value: 'en', label: 'English' },
 ]
 
+const searchScopeOptions = [
+  { value: 'share', label: '只显示分享页（默认）' },
+  { value: 'all', label: '显示站内其它页面（分享页带图标）' },
+]
+
 function optionLabel(options: { value: string; label: string }[], value: string): string {
   for (const o of options) {
     if (o.value === value) return o.label
@@ -361,6 +366,25 @@ export default function Settings() {
         <p className="muted small">
           「全网搜索」通过 Serper（Google 结果）搜索 mypikpak.com 站内分享页。Key 只存在本机数据库，读取设置时不会返回，
           也不会写进日志。可以在 serper.dev 免费申请。
+        </p>
+
+        <label className="field">
+          <span>全网搜索范围</span>
+          <select
+            value={userSettings.search_scope ?? 'share'}
+            onChange={(e) => editUser('search_scope', e.target.value)}
+          >
+            {searchScopeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          当前：{optionLabel(searchScopeOptions, userSettings.search_scope ?? 'share')}
+          。选「只显示分享页」时，同域名下的首页、帮助页等不出现；选「显示站内其它页面」时会一起列出，分享页后面带分享图标，
+          只有分享页在应用内打开，其它页面交给浏览器。
         </p>
 
         <label className="field">
