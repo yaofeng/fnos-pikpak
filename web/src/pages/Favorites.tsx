@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
 import ShareBrowser from '../components/ShareBrowser'
@@ -9,14 +9,15 @@ import {
   SearchIcon,
   TrashIcon,
 } from '../components/icons'
-import { formatSize } from '../files'
+import { favoriteCountText, favoriteSizeText, favoriteStatsHint } from '../shares'
 import { useFileSelection } from '../useFileSelection'
 
 // A saved share, as the list route returns it. The pass code never comes back
 // from the server; opening a favourite makes the server read the sealed one.
 // The owner and the timestamps come from PikPak when the share was added or
-// counted; file_count/total_size are the recursive totals, computed server-side
-// and remembered, with -1 meaning "not countable".
+// first visited; file_count/total_size are the recursive totals, counted in
+// the background when the share is entered and cached for a day, with -1
+// meaning "not counted or not countable".
 type ShareFavorite = {
   id: number
   share_id: string
@@ -43,18 +44,6 @@ function dateText(value: string): string {
   return Number.isNaN(at.getTime()) ? value : at.toLocaleString()
 }
 
-function countText(fav: ShareFavorite): string {
-  if (fav.file_count >= 0) return fav.file_count.toLocaleString()
-  return fav.stats_checked ? '—' : '统计中…'
-}
-
-function sizeText(fav: ShareFavorite): string {
-  if (fav.total_size > 0) return formatSize(fav.total_size)
-  if (!fav.stats_checked) return '统计中…'
-  // A counted share with nothing in it is 0 B; an uncountable one is unknown.
-  return fav.file_count === 0 ? '0 B' : '—'
-}
-
 function expireText(expireAt: number): string {
   // -1 is PikPak's "never expires"; 0 means the response did not say.
   if (expireAt === -1) return '永久'
@@ -74,29 +63,19 @@ export default function Favorites() {
   const [saving, setSaving] = useState(false)
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
+  // Bumped when a share closes: the server started counting it as it was
+  // opened, so the list takes a few cached reads before settling.
+  const [visitReload, setVisitReload] = useState(0)
 
-  // The server counts a few uncounted shares per list call; while any remain,
-  // the page asks again instead of leaving half the column as 统计中….
-  const loadRef = useRef<(refresh?: boolean) => Promise<void>>(async () => undefined)
-  const pollTimer = useRef<number | undefined>(undefined)
-  const pendingPolls = useRef(0)
-
-  const load = useCallback(async (refresh = false) => {
-    window.clearTimeout(pollTimer.current)
+  // The list only reads the totals the server has cached. A share counted
+  // for the first time — or recounted a day later — is visited from here, so
+  // the next look shows its numbers.
+  const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const body = await apiGet<{ items: ShareFavorite[]; stats_pending?: number }>(
-        refresh ? 'share-favorites?refresh=1' : 'share-favorites',
-      )
+      const body = await apiGet<{ items: ShareFavorite[] }>('share-favorites')
       setItems(body.items ?? [])
-      const pending = body.stats_pending ?? 0
-      if (pending > 0 && pendingPolls.current < 5) {
-        pendingPolls.current++
-        pollTimer.current = window.setTimeout(() => void loadRef.current(false), 1500)
-      } else if (pending === 0) {
-        pendingPolls.current = 0
-      }
     } catch (err) {
       setError((err as Error).message)
       setItems([])
@@ -106,13 +85,33 @@ export default function Favorites() {
   }, [])
 
   useEffect(() => {
-    loadRef.current = load
+    void load()
   }, [load])
 
+  // Coming back from a share, its count may still be running in the
+  // background. Re-read the cache a few times instead of leaving the row
+  // blank until the next manual refresh; every read is cache-only.
   useEffect(() => {
-    void load()
-    return () => window.clearTimeout(pollTimer.current)
-  }, [load])
+    if (!visitReload) return
+    let cancelled = false
+    const tick = async (attempt: number) => {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (cancelled || attempt > 3) return
+      try {
+        const body = await apiGet<{ items: ShareFavorite[] }>('share-favorites')
+        if (cancelled) return
+        const list = body.items ?? []
+        setItems(list)
+        if (list.some((fav) => !fav.stats_checked)) void tick(attempt + 1)
+      } catch {
+        // Keep the list as it stands.
+      }
+    }
+    void tick(1)
+    return () => {
+      cancelled = true
+    }
+  }, [visitReload])
 
   const shown = (items ?? []).filter((fav) => {
     if (!q.trim()) return true
@@ -138,7 +137,6 @@ export default function Favorites() {
       setNewURL('')
       setAdding(false)
       setNotice('已加入分享收藏夹')
-      pendingPolls.current = 0
       await load()
     } catch (err) {
       setAddError((err as Error).message)
@@ -190,9 +188,8 @@ export default function Favorites() {
   }
 
   function refresh() {
-    pendingPolls.current = 0
     setNotice('')
-    void load(true)
+    void load()
   }
 
   if (openFav !== null) {
@@ -205,8 +202,8 @@ export default function Favorites() {
         initialTitle={nameOf(openFav)}
         onHome={() => {
           setOpenFav(null)
-          pendingPolls.current = 0
           void load()
+          setVisitReload((n) => n + 1)
         }}
       />
     )
@@ -220,7 +217,7 @@ export default function Favorites() {
           type="button"
           onClick={refresh}
           disabled={loading}
-          title="刷新并重新统计"
+          title="刷新"
           aria-label="刷新"
         >
           <RefreshIcon />
@@ -353,8 +350,12 @@ export default function Favorites() {
                       <span>{fav.owner_name || '—'}</span>
                     </span>
                   </td>
-                  <td className="col-size muted small">{countText(fav)}</td>
-                  <td className="col-size muted small">{sizeText(fav)}</td>
+                  <td className="col-size muted small" title={favoriteStatsHint(fav) || undefined}>
+                    {favoriteCountText(fav)}
+                  </td>
+                  <td className="col-size muted small" title={favoriteStatsHint(fav) || undefined}>
+                    {favoriteSizeText(fav)}
+                  </td>
                   <td className="col-time muted small">{dateText(fav.share_created_at)}</td>
                   <td className="col-time muted small">{expireText(fav.expire_at)}</td>
                 </tr>

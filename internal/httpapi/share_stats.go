@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"fnos-pikpak/internal/fnos"
@@ -14,15 +15,14 @@ import (
 
 const (
 	// shareStatsMaxPages bounds one share's walk: a share that needs more
-	// pages than this is reported as uncountable rather than locking the
-	// list for minutes.
+	// pages than this is reported as uncountable rather than walking forever.
 	shareStatsMaxPages = 400
-	// shareStatsTimeout is how long one share may take to open and count.
-	shareStatsTimeout = 12 * time.Second
-	// shareStatsPerList caps the uncounted favourites one list call fills in,
-	// so the first load after an upgrade stays responsive; the client asks
-	// again while stats_pending stays above zero.
-	shareStatsPerList = 3
+	// shareStatsJobTimeout is how long a background count may take. It runs
+	// off the request path, so it can outlast the 12s the list used to allow.
+	shareStatsJobTimeout = 2 * time.Minute
+	// shareStatsStaleAfter is how long a remembered total is trusted; a visit
+	// after that counts the share again.
+	shareStatsStaleAfter = 24 * time.Hour
 )
 
 var errShareTooLarge = errors.New("share has too many entries to count")
@@ -136,43 +136,44 @@ func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav stor
 	return fav
 }
 
-// listShareFavoritesWithStats returns the favourites with their metadata,
-// counting the ones never counted (or all of them, when force is set).
-// stats_pending tells the client how many rows still have no count, so it can
-// ask again instead of walking every share in one request.
-func listShareFavoritesWithStats(ctx context.Context, deps Deps, uid int, force bool) ([]store.ShareFavorite, int, error) {
-	items, err := deps.Store.ListShareFavorites(ctx, uid)
+// runningShareStats holds the "uid/shareID" keys of counts in flight, so a
+// share opened twice in one gesture is walked once.
+var runningShareStats sync.Map
+
+// shareStatsStale reports whether a remembered count should be refreshed: a
+// share never counted, an unreadable timestamp, or one older than a day.
+func shareStatsStale(statsAt string, now time.Time) bool {
+	if statsAt == "" {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339Nano, statsAt)
 	if err != nil {
-		return nil, 0, err
+		return true
 	}
-	items = migrateShareFavorites(ctx, deps, uid, items)
-	client, err := deps.Sessions.ClientFor(ctx, uid)
-	if err != nil {
-		return items, 0, nil
+	return now.Sub(at) > shareStatsStaleAfter
+}
+
+// startShareStats counts a saved share in the background when its cached
+// total is missing or stale. 分享收藏夹 itself never counts — the walk happens
+// when the user enters the share, and the next visit to the list reads it.
+func startShareStats(deps Deps, uid int, fav store.ShareFavorite) {
+	if !shareStatsStale(fav.StatsAt, time.Now()) {
+		return
 	}
-	budget := shareStatsPerList
-	if force {
-		budget = len(items)
+	key := strconv.Itoa(uid) + "/" + fav.ShareID
+	if _, busy := runningShareStats.LoadOrStore(key, struct{}{}); busy {
+		return
 	}
-	for i := range items {
-		if !force && items[i].StatsAt != "" {
-			continue
+	go func() {
+		defer runningShareStats.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), shareStatsJobTimeout)
+		defer cancel()
+		client, err := deps.Sessions.ClientFor(ctx, uid)
+		if err != nil {
+			return
 		}
-		if budget <= 0 {
-			break
-		}
-		budget--
-		shareCtx, cancel := context.WithTimeout(ctx, shareStatsTimeout)
-		items[i] = refreshShareFavoriteStats(shareCtx, deps, uid, items[i], client, true)
-		cancel()
-	}
-	pending := 0
-	for _, fav := range items {
-		if fav.StatsAt == "" {
-			pending++
-		}
-	}
-	return items, pending, nil
+		refreshShareFavoriteStats(ctx, deps, uid, fav, client, true)
+	}()
 }
 
 // registerShareFavoriteAvatar proxies the sharing user's avatar. The CDN URL

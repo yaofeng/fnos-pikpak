@@ -52,6 +52,12 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		deps.ShareSessions.put(id.UID, shareID, info.PassCodeToken, time.Now())
 
+		// 分享收藏夹 never counts a share; entering it does, off this request,
+		// when the cached total is missing or older than a day.
+		if fav, err := deps.Store.ShareFavoriteByShareID(r.Context(), id.UID, shareID); err == nil {
+			startShareStats(deps, id.UID, fav)
+		}
+
 		title := info.Title
 		if title == "" {
 			title = savedTitle
@@ -257,13 +263,14 @@ func migrateShareFavorites(ctx context.Context, deps Deps, uid int, items []stor
 func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/share-favorites", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		items, pending, err := listShareFavoritesWithStats(r.Context(), deps, id.UID,
-			r.URL.Query().Get("refresh") == "1")
+		// A read path: whatever the cache holds, with no PikPak round trip.
+		items, err := deps.Store.ListShareFavorites(r.Context(), id.UID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "读取收藏失败")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": items, "stats_pending": pending})
+		items = migrateShareFavorites(r.Context(), deps, id.UID, items)
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	})
 
 	registerShareFavoriteAvatar(mux, deps)
@@ -301,8 +308,9 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusInternalServerError, "internal", "保存收藏失败")
 			return
 		}
-		// Best effort: remember what PikPak reported while the share is at
-		// hand. The totals are counted when the list asks for them.
+		// Best effort: remember who shared it while the share is at hand. The
+		// totals wait for the first visit, where the share is walked in the
+		// background.
 		if client, err := deps.Sessions.ClientFor(r.Context(), id.UID); err == nil {
 			metaCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			fav = refreshShareFavoriteStats(metaCtx, deps, id.UID, fav, client, false)

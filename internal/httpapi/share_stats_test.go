@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"fnos-pikpak/internal/store"
 )
@@ -125,68 +126,131 @@ func TestShareTotalsCountsEveryFolderAndPage(t *testing.T) {
 	}
 }
 
-// The list counts a share once and remembers the totals; ?refresh=1 recounts.
-func TestShareFavoritesListRemembersTotalsUntilRefreshed(t *testing.T) {
+// 分享收藏夹 is a read path: it shows what the cache holds and never walks a
+// share, so opening the page costs no PikPak traffic.
+func TestShareFavoritesListOnlyReadsCachedTotals(t *testing.T) {
 	up := newStatsUpstream(t)
 	deps, _ := newAuthTestDeps(t, up.srv.URL)
 	bindTestUser(t, deps.Store, 1000)
 	h := NewMux(deps)
 
-	fav, err := deps.Store.AddShareFavorite(context.Background(), 1000, "VOabc123", "资料合集", "7f3a")
+	fav, err := deps.Store.AddShareFavorite(context.Background(), 1000, "share-list", "资料合集", "7f3a")
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	body := listShareFavorites(t, h, "/api/share-favorites", "1000")
-	first := body[0]
-	if first["owner_name"] != statsOwner {
-		t.Fatalf("owner_name = %v", first["owner_name"])
+	items := listShareFavorites(t, h, "/api/share-favorites", "1000")
+	if items[0]["file_count"] != float64(-1) || items[0]["stats_checked"] != false {
+		t.Fatalf("uncached row = %v", items[0])
 	}
-	if first["owner_avatar"] != up.srv.URL+"/avatar.png" {
-		t.Fatalf("owner_avatar = %v", first["owner_avatar"])
-	}
-	if first["share_created_at"] != "2025-11-22T16:05:25.004+08:00" || first["expire_at"] != float64(1790000000) {
-		t.Fatalf("times = %v / %v", first["share_created_at"], first["expire_at"])
-	}
-	if first["file_count"] != float64(4) || first["total_size"] != float64(36) || first["stats_checked"] != true {
-		t.Fatalf("stats = %v", first)
-	}
-	counted := up.details()
-
-	body = listShareFavorites(t, h, "/api/share-favorites", "1000")
-	if body[0]["file_count"] != float64(4) || up.details() != counted {
-		t.Fatalf("a cached total was recounted: %v", body[0])
+	if up.details() != 0 {
+		t.Fatalf("the list walked the share %d times", up.details())
 	}
 
-	listShareFavorites(t, h, "/api/share-favorites?refresh=1", "1000")
-	if up.details() <= counted {
-		t.Fatalf("refresh did not recount: %d calls", up.details())
+	if err := deps.Store.UpdateShareFavoriteMeta(context.Background(), 1000, fav.ID, store.ShareFavoriteMeta{
+		FileCount: 4, TotalSize: 36, StatsAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("seed stats: %v", err)
 	}
-
-	// The favorite is still the same row, with its code intact.
-	got, err := deps.Store.GetShareFavorite(context.Background(), 1000, fav.ID)
-	if err != nil || got.PassCode != "7f3a" {
-		t.Fatalf("row after stats = %+v err=%v", got, err)
+	items = listShareFavorites(t, h, "/api/share-favorites", "1000")
+	if items[0]["file_count"] != float64(4) || items[0]["total_size"] != float64(36) || items[0]["stats_checked"] != true {
+		t.Fatalf("cached row = %v", items[0])
+	}
+	if up.details() != 0 {
+		t.Fatalf("the list recounted a cached share: %d walks", up.details())
 	}
 }
 
-// A share that cannot be opened is still marked as checked, so the list does
-// not hit PikPak again on every load.
-func TestShareFavoritesMarkAFailedCountAsChecked(t *testing.T) {
+// A share is counted when the user enters it, in the background, and the
+// total is remembered for the next visit to 分享收藏夹.
+func TestOpeningAFavoriteCountsItsTotalsInTheBackground(t *testing.T) {
 	up := newStatsUpstream(t)
 	deps, _ := newAuthTestDeps(t, up.srv.URL)
 	bindTestUser(t, deps.Store, 1000)
 	h := NewMux(deps)
 
-	// No pass code saved and none cached: opening the share fails.
-	if _, err := deps.Store.AddShareFavorite(context.Background(), 1000, "VOabc123", "资料合集", ""); err != nil {
+	fav, err := deps.Store.AddShareFavorite(context.Background(), 1000, "share-open", "资料合集", "7f3a")
+	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	body := listShareFavorites(t, h, "/api/share-favorites", "1000")
-	if body[0]["stats_checked"] != true || body[0]["file_count"] != float64(-1) {
-		t.Fatalf("failed count = %v", body[0])
+	rec, body := getJSON(t, h, "/api/share?favorite_id="+strconv.FormatInt(fav.ID, 10), "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open: %d %v", rec.Code, body)
 	}
-	if _, ok := body[0]["owner_name"]; !ok || body[0]["owner_name"] != "" {
-		t.Fatalf("owner_name = %v", body[0]["owner_name"])
+
+	got := waitForShareStats(t, deps.Store, 1000, fav.ID, 4)
+	if got.FileCount != 4 || got.TotalSize != 36 {
+		t.Fatalf("counted = %d files / %d bytes, want 4 and 36", got.FileCount, got.TotalSize)
+	}
+
+	walks := up.details()
+	items := listShareFavorites(t, h, "/api/share-favorites", "1000")
+	if items[0]["file_count"] != float64(4) || items[0]["total_size"] != float64(36) {
+		t.Fatalf("list after the visit = %v", items[0])
+	}
+	if up.details() != walks {
+		t.Fatalf("the list walked the share again: %d -> %d", walks, up.details())
+	}
+}
+
+// A remembered total is trusted for a day; after that, the next visit counts
+// it again in the background.
+func TestOpeningAFavoriteCountsAgainOnlyAfterADay(t *testing.T) {
+	up := newStatsUpstream(t)
+	deps, _ := newAuthTestDeps(t, up.srv.URL)
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+	ctx := context.Background()
+
+	fresh, err := deps.Store.AddShareFavorite(ctx, 1000, "share-fresh", "资料合集", "7f3a")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := deps.Store.UpdateShareFavoriteMeta(ctx, 1000, fresh.ID, store.ShareFavoriteMeta{
+		FileCount: 9, TotalSize: 90, StatsAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("seed stats: %v", err)
+	}
+	if rec, body := getJSON(t, h, "/api/share?favorite_id="+strconv.FormatInt(fresh.ID, 10), "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("open fresh: %d %v", rec.Code, body)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if up.details() != 0 {
+		t.Fatalf("a fresh total was recounted: %d walks", up.details())
+	}
+	if got, _ := deps.Store.GetShareFavorite(ctx, 1000, fresh.ID); got.FileCount != 9 {
+		t.Fatalf("fresh count changed to %d", got.FileCount)
+	}
+
+	stale, err := deps.Store.AddShareFavorite(ctx, 1000, "share-stale", "资料合集", "7f3a")
+	if err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+	if err := deps.Store.UpdateShareFavoriteMeta(ctx, 1000, stale.ID, store.ShareFavoriteMeta{
+		FileCount: 1, TotalSize: 1, StatsAt: time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("seed stale stats: %v", err)
+	}
+	if rec, body := getJSON(t, h, "/api/share?favorite_id="+strconv.FormatInt(stale.ID, 10), "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("open stale: %d %v", rec.Code, body)
+	}
+	got := waitForShareStats(t, deps.Store, 1000, stale.ID, 4)
+	if got.FileCount != 4 || got.TotalSize != 36 {
+		t.Fatalf("stale recount = %d files / %d bytes", got.FileCount, got.TotalSize)
+	}
+}
+
+func waitForShareStats(t *testing.T, st *store.Store, uid int, id int64, want int64) store.ShareFavorite {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		fav, err := st.GetShareFavorite(context.Background(), uid, id)
+		if err == nil && fav.FileCount == want {
+			return fav
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stats never reached %d: %+v err=%v", want, fav, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

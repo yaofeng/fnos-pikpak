@@ -75,6 +75,12 @@ FROM share_favorites WHERE uid = ? AND share_id = ?`, uid, shareID)
 	return scanShareFavorite(row)
 }
 
+// ShareFavoriteByShareID finds the row a share was saved under, so opening the
+// share can refresh its cached statistics. ErrNotFound when it is not saved.
+func (s *Store) ShareFavoriteByShareID(ctx context.Context, uid int, shareID string) (ShareFavorite, error) {
+	return s.shareFavoriteByShareID(ctx, uid, shareID)
+}
+
 // ListShareFavorites returns the user's favourites, newest first.
 func (s *Store) ListShareFavorites(ctx context.Context, uid int) ([]ShareFavorite, error) {
 	rows, err := s.db.QueryContext(ctx, `
