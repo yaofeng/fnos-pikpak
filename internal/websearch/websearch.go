@@ -6,6 +6,7 @@ package websearch
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,16 +146,20 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 			continue
 		}
 		for _, r := range hits {
-			if rawSeen[r.Link] {
+			link := unwrapLink(r.Link)
+			if _, ok := webAddress(link); !ok {
 				continue
 			}
-			rawSeen[r.Link] = true
+			if rawSeen[link] {
+				continue
+			}
+			rawSeen[link] = true
 			raw++
-			id, isShare := shareIDOf(r.Link)
+			id, isShare := shareIDOf(link)
 			if !isShare && scope != ScopeSite {
 				continue
 			}
-			key := r.Link
+			key := link
 			if isShare {
 				key = id
 			}
@@ -162,7 +167,7 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int, s
 				continue
 			}
 			seen[key] = true
-			out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet, Share: isShare})
+			out = append(out, Result{Title: r.Title, URL: link, Snippet: r.Snippet, Share: isShare})
 			if len(out) >= pageSize {
 				break
 			}
@@ -191,6 +196,94 @@ func shareIDOf(raw string) (string, bool) {
 		return parts[1], true
 	}
 	return "", false
+}
+
+// unwrapLink returns the address a search provider hid behind its own click
+// redirect. Google answers with google.com/url?q=… or, in some regions,
+// google.com/goto?url=<base64 protobuf>; the PikPak address underneath is
+// what the app opens, dedupes and marks. A redirect that cannot be read, or
+// that leads somewhere that is not an http(s) address, stays as it is.
+func unwrapLink(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || !isGoogleHost(strings.ToLower(u.Hostname())) {
+		return raw
+	}
+	switch strings.TrimSuffix(u.Path, "/") {
+	case "/url":
+		for _, key := range []string{"q", "url"} {
+			if dest := u.Query().Get(key); dest != "" {
+				if _, ok := webAddress(dest); ok {
+					return dest
+				}
+			}
+		}
+	case "/goto":
+		if dest := decodeGoto(u.Query().Get("url")); dest != "" {
+			if _, ok := webAddress(dest); ok {
+				return dest
+			}
+		}
+	}
+	return raw
+}
+
+func isGoogleHost(host string) bool {
+	return host == "google.com" ||
+		strings.HasSuffix(host, ".google.com") ||
+		strings.HasPrefix(host, "google.") ||
+		strings.HasPrefix(host, "www.google.")
+}
+
+// decodeGoto reads the destination out of a /goto payload: base64 over a
+// protobuf that stores the address as a plain string.
+func decodeGoto(enc string) string {
+	if enc == "" {
+		return ""
+	}
+	for _, encoding := range []*base64.Encoding{
+		base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding,
+	} {
+		decoded, err := encoding.DecodeString(enc)
+		if err != nil {
+			continue
+		}
+		if dest := firstAddress(string(decoded)); dest != "" {
+			return dest
+		}
+	}
+	return ""
+}
+
+// firstAddress returns the first http(s) address in s, up to the first byte
+// that cannot be part of one.
+func firstAddress(s string) string {
+	start := -1
+	for _, scheme := range []string{"https://", "http://"} {
+		if i := strings.Index(s, scheme); i >= 0 && (start < 0 || i < start) {
+			start = i
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	rest := s[start:]
+	for i := 0; i < len(rest); i++ {
+		if c := rest[i]; c <= ' ' || c >= 0x7f {
+			return rest[:i]
+		}
+	}
+	return rest
+}
+
+// webAddress reports whether raw is an http(s) address the page can open.
+// A provider result is untrusted text; a link with any other scheme could
+// run script in the app when the person clicks it.
+func webAddress(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", false
+	}
+	return raw, true
 }
 
 // searchSite runs one site-scoped query and hands back every organic hit the

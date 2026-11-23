@@ -3,6 +3,7 @@ package websearch
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -184,6 +185,53 @@ func TestSearchKeepsEveryHitWhenTheScopeAllowsIt(t *testing.T) {
 	}
 	if ans.Results[2].Share || ans.Results[2].URL != "https://example.com/x" {
 		t.Fatalf("third result = %+v", ans.Results[2])
+	}
+}
+
+// Google sometimes answers with its own click redirect instead of the page
+// address. A wrapped share is still a share: it has to be unwrapped before
+// the list decides what it is and whether it can be opened.
+func TestSearchUnwrapsAProviderRedirect(t *testing.T) {
+	dest := "https://mypikpak.com/s/VN9"
+	// /goto carries a protobuf whose string field holds the address.
+	payload := append([]byte{0x08, 0x01, 0x12, byte(len(dest))}, []byte(dest)...)
+	wrapped := "https://www.google.com/goto?url=" + base64.RawURLEncoding.EncodeToString(payload)
+	srv, _ := siteAnswers(t, map[string][]map[string]any{
+		"mypikpak.com": {
+			{"title": "分享", "link": wrapped, "snippet": "相关"},
+		},
+	})
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 1 {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+	if ans.Results[0].URL != dest || !ans.Results[0].Share {
+		t.Fatalf("result = %+v", ans.Results[0])
+	}
+}
+
+func TestUnwrapLink(t *testing.T) {
+	dest := "https://mypikpak.com/s/VN9"
+	payload := append([]byte{0x08, 0x01, 0x12, byte(len(dest))}, []byte(dest)...)
+	cases := []struct{ in, want string }{
+		// The older /url redirect names the address in a query parameter.
+		{"https://www.google.com/url?q=https%3A%2F%2Fmypikpak.com%2Fs%2FVN1&sa=U", "https://mypikpak.com/s/VN1"},
+		{"https://www.google.com/goto?url=" + base64.RawURLEncoding.EncodeToString(payload), dest},
+		// A plain address is already the destination.
+		{dest, dest},
+		{"https://www.zhihu.com/question/1", "https://www.zhihu.com/question/1"},
+		// A google page that is not a redirect stays as it is.
+		{"https://www.google.com/search?q=%E5%A4%A7%E6%A8%A1%E5%9E%8B", "https://www.google.com/search?q=%E5%A4%A7%E6%A8%A1%E5%9E%8B"},
+	}
+	for _, c := range cases {
+		if got := unwrapLink(c.in); got != c.want {
+			t.Fatalf("unwrapLink(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
