@@ -29,6 +29,11 @@ genicon:
 	$(GO) run ./tools/genicon
 
 web:
+	# Vite cannot empty outDir (it holds the committed dist/.keep), and its
+	# hashed asset names mean every build would otherwise leave the previous
+	# ones behind — 28 MB of stale JS in a local package. Only assets/ is
+	# Vite's own output; the rest is committed.
+	rm -rf internal/webdist/dist/assets
 	cd web && npm install --no-audit --no-fund && npm run build
 
 # Run the app on this machine instead of reinstalling the fpk on the NAS.

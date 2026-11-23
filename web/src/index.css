@@ -998,44 +998,78 @@ a.btn-icon {
   position: relative;
 }
 
-@media (max-width: 768px) {
+/* Portrait windows and narrow screens: the sidebar becomes a top bar, so the
+   page gets the full width instead of losing 220px to a column. The threshold
+   is width-first because a narrow desktop window is the common case here; a
+   portrait tablet (up to 1100px wide) gets the same treatment. */
+@media (max-width: 900px), (orientation: portrait) and (max-width: 1100px) {
   .app {
     grid-template-columns: 1fr;
-    padding-bottom: 56px;
+    padding-top: 54px;
   }
 
   .sidebar {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
-    top: auto;
-    height: auto;
+    top: 0;
+    bottom: auto;
+    height: 54px;
     flex-direction: row;
     align-items: center;
-    padding: 4px 6px;
+    gap: 8px;
+    padding: 4px 8px;
     border-right: none;
-    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     overflow-x: auto;
+    overflow-y: hidden;
     z-index: 10;
   }
 
-  .brand,
-  .sidebar-foot {
+  .brand {
     display: none;
   }
 
   .nav {
     flex-direction: row;
     gap: 0;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     justify-content: space-between;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
   }
 
   .nav-item {
     padding: 8px 6px;
     font-size: 12px;
     white-space: nowrap;
+    flex: none;
+  }
+
+  /* 设置, the bind link and 调试 stay reachable; the transfer summary and the
+     quota pill would not fit in a row of tabs. */
+  .sidebar-foot {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+    margin: 0;
+    font-size: 12px;
+    flex: none;
+  }
+
+  .sidebar-transfer,
+  .sidebar-quota {
+    display: none;
+  }
+
+  .content {
+    height: calc(100vh - 54px);
   }
 
   .page {
@@ -1755,7 +1789,7 @@ a.btn-icon {
   font-size: 13px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px), (orientation: portrait) and (max-width: 1100px) {
   .status-bar {
     left: 0;
     padding: 0 16px;
