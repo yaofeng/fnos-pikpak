@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -304,9 +306,9 @@ func webAddress(raw string) (string, bool) {
 
 // resolveWrapped turns each hit's address into the one the provider meant.
 // A google.com/url?q= wrapper is decoded locally; a google.com/goto token is
-// encrypted, so the provider's free /resolve endpoint swaps it back. When a
-// resolution fails the wrapper stays, and the caller treats it as a page that
-// is not a share.
+// encrypted, so the address comes from the provider's /resolve endpoint or,
+// failing that, from Google's own redirect. When nothing works the wrapper
+// stays, and the caller treats it as a page that is not a share.
 func (c *Client) resolveWrapped(ctx context.Context, apiKey string, hits []serperResult, cache map[string]string) []string {
 	links := make([]string, len(hits))
 	pending := make(map[string]bool)
@@ -323,17 +325,8 @@ func (c *Client) resolveWrapped(ctx context.Context, apiKey string, hits []serpe
 		}
 		links[i] = link
 	}
-	if len(ask) == 0 {
-		return links
-	}
-	got, err := c.resolveLinks(ctx, apiKey, ask)
-	if err != nil {
-		// A link that cannot be resolved is still listed under the wide
-		// scope; it just cannot be opened as a share.
-		return links
-	}
-	for i, asked := range ask {
-		cache[asked] = got[i]
+	if len(ask) > 0 {
+		c.learnResolved(ctx, apiKey, ask, cache)
 	}
 	for i := range links {
 		if dest, ok := cache[links[i]]; ok {
@@ -341,6 +334,84 @@ func (c *Client) resolveWrapped(ctx context.Context, apiKey string, hits []serpe
 		}
 	}
 	return links
+}
+
+// learnResolved fills cache with the addresses behind wrapped links. The
+// provider's free /resolve is tried first; whatever it leaves wrapped is
+// asked of Google directly, whose redirect names the destination.
+func (c *Client) learnResolved(ctx context.Context, apiKey string, ask []string, cache map[string]string) {
+	if got, err := c.resolveLinks(ctx, apiKey, ask); err == nil {
+		for i, link := range ask {
+			if !isGotoLink(got[i]) {
+				cache[link] = got[i]
+			}
+		}
+	}
+	var left []string
+	for _, link := range ask {
+		if _, ok := cache[link]; !ok {
+			left = append(left, link)
+		}
+	}
+	if len(left) == 0 {
+		return
+	}
+	rctx, cancel := context.WithTimeout(ctx, googleRedirectTimeout)
+	defer cancel()
+	for link, dest := range c.resolveByRedirect(rctx, left) {
+		cache[link] = dest
+	}
+}
+
+// googleRedirectTimeout bounds the direct-redirect fallback: when Google is
+// not reachable from this machine every attempt must fail quickly instead of
+// eating the search's budget.
+const googleRedirectTimeout = 5 * time.Second
+
+// resolveByRedirect asks Google for a wrapper's destination and reads only
+// the Location header: the redirect is never followed, so the backend does
+// not fetch the page itself.
+func (c *Client) resolveByRedirect(ctx context.Context, links []string) map[string]string {
+	base := c.HTTP
+	if base == nil {
+		base = http.DefaultClient
+	}
+	client := *base
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	out := make(map[string]string, len(links))
+	var mu sync.Mutex
+	sem := make(chan struct{}, 6)
+	var wg sync.WaitGroup
+	for _, link := range links {
+		wg.Add(1)
+		go func(link string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+			if err != nil {
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			dest := resp.Header.Get("Location")
+			if _, ok := webAddress(dest); !ok {
+				return
+			}
+			mu.Lock()
+			out[link] = dest
+			mu.Unlock()
+		}(link)
+	}
+	wg.Wait()
+	return out
 }
 
 type resolveResponse struct {

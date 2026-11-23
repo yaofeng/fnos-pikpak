@@ -252,7 +252,11 @@ func TestSearchKeepsTheWrapperWhenResolutionFails(t *testing.T) {
 		}})
 	}))
 	t.Cleanup(srv.Close)
-	c := &Client{Endpoint: srv.URL + "/search", ResolveEndpoint: srv.URL + "/resolve", HTTP: srv.Client()}
+	c := &Client{
+		Endpoint:        srv.URL + "/search",
+		ResolveEndpoint: srv.URL + "/resolve",
+		HTTP:            &http.Client{Transport: offlineGoogle{next: srv.Client().Transport}},
+	}
 
 	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
 	if err != nil {
@@ -269,6 +273,63 @@ func TestSearchKeepsTheWrapperWhenResolutionFails(t *testing.T) {
 	if len(ans.Results) != 1 || ans.Results[0].URL != wrapped || ans.Results[0].Share {
 		t.Fatalf("results = %+v", ans.Results)
 	}
+}
+
+// When the provider's resolve leaves the wrapper alone, Google's own redirect
+// still names the destination; a real /goto answers 302 and nothing else has
+// to be fetched.
+func TestSearchReadsGoogleRedirectWhenTheProviderLeavesTheWrapper(t *testing.T) {
+	wrapped := "https://www.google.com/goto?url=CAESencryptedtoken"
+	dest := "https://mypikpak.com/s/VN9"
+	srv, _ := providerServer(t, []map[string]any{
+		{"title": "分享", "link": wrapped, "snippet": "相关"},
+	}, nil)
+	c := &Client{
+		Endpoint:        srv.URL + "/search",
+		ResolveEndpoint: srv.URL + "/resolve",
+		HTTP: &http.Client{Transport: redirectTransport{
+			next: srv.Client().Transport, from: "www.google.com", to: dest,
+		}},
+	}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1, ScopeShare)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 1 || ans.Results[0].URL != dest || !ans.Results[0].Share {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+}
+
+// redirectTransport answers a request to one host with a redirect and passes
+// everything else through, the way Google's click redirect does.
+type redirectTransport struct {
+	next http.RoundTripper
+	from string
+	to   string
+}
+
+func (t redirectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.EqualFold(r.URL.Hostname(), t.from) {
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Header:     http.Header{"Location": []string{t.to}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    r,
+		}, nil
+	}
+	return t.next.RoundTrip(r)
+}
+
+// offlineGoogle fails every request to a Google host, so a test that leaves a
+// wrapper unresolved does not reach the network.
+type offlineGoogle struct{ next http.RoundTripper }
+
+func (t offlineGoogle) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(strings.ToLower(r.URL.Hostname()), "google.com") {
+		return nil, errors.New("google is unreachable in tests")
+	}
+	return t.next.RoundTrip(r)
 }
 
 // providerServer answers searches with organic results and resolves wrapped
