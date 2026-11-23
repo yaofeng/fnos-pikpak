@@ -90,7 +90,7 @@ function formatSpeed(bytesPerSec: number): string {
 
 function formatBytes(n: number): string {
   if (!n) return '0 B'
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  const units = ['B', 'K', 'M', 'G', 'T']
   let i = 0
   let v = n
   while (v >= 1024 && i < units.length - 1) {

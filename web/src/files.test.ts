@@ -58,8 +58,8 @@ describe('helpers', () => {
   test('formats sizes', () => {
     expect(formatSize(0)).toBe('—')
     expect(formatSize(999)).toBe('999 B')
-    expect(formatSize(1536)).toBe('1.5 KiB')
-    expect(formatSize(20 << 20)).toBe('20.0 MiB')
+    expect(formatSize(1536)).toBe('1.5 K')
+    expect(formatSize(20 << 20)).toBe('20.0 M')
   })
 
   test('detects video by category or mime', () => {

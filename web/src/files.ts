@@ -59,7 +59,7 @@ export function filterFiles(items: FileItem[], q: string, kind: KindFilter): Fil
 
 export function formatSize(n: number): string {
   if (!n) return '—'
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  const units = ['B', 'K', 'M', 'G', 'T']
   let i = 0
   let v = n
   while (v >= 1024 && i < units.length - 1) {

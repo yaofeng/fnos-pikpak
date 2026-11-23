@@ -59,7 +59,7 @@ describe('分享收藏夹 totals come from the cache alone', () => {
   test('a counted share shows its totals', () => {
     const fav = { file_count: 1234, total_size: 1073741824, stats_checked: true }
     expect(favoriteCountText(fav)).toBe('1,234')
-    expect(favoriteSizeText(fav)).toBe('1.0 GiB')
+    expect(favoriteSizeText(fav)).toBe('1.0 G')
     expect(favoriteStatsHint(fav)).toBe('')
   })
 
