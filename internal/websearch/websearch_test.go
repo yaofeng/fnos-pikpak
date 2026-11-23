@@ -51,10 +51,11 @@ func TestSearchAddsTheSiteFilterAndReturnsResults(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	got, err := c.Search(context.Background(), "key-123", "  大模型 ", 1)
+	ans, err := c.Search(context.Background(), "key-123", "  大模型 ", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	// The site filter is the server's business: the person types only the
 	// keyword, and a pasted "site:" prefix never doubles up.
 	if *gotQuery != "site:mypikpak.com 大模型" {
@@ -110,10 +111,11 @@ func TestSearchKeepsEveryPikPakShareHost(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	urls := make([]string, 0, len(got))
 	for _, r := range got {
 		urls = append(urls, r.URL)
@@ -182,10 +184,11 @@ func TestSearchAsksTheSitesOneAtATime(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	if len(queries) != len(shareSites) {
 		t.Fatalf("queries = %v", queries)
 	}
@@ -223,6 +226,33 @@ func siteAnswers(t *testing.T, pages map[string][]map[string]any) (*httptest.Ser
 	return srv, queries
 }
 
+// The raw count is what the provider returned before the shares were picked
+// out of it: a page that drops most of its hits says so.
+func TestSearchReportsHowManyRawHitsTheProviderReturned(t *testing.T) {
+	srv, _ := siteAnswers(t, map[string][]map[string]any{
+		"mypikpak.com": {
+			{"title": "主站", "link": "https://mypikpak.com/s/VN1", "snippet": "相关"},
+			{"title": "论坛", "link": "https://www.zhihu.com/question/1", "snippet": "无关"},
+			{"title": "博客", "link": "https://blog.example.com/p/1", "snippet": "无关"},
+		},
+		"mypikpak.net": {
+			{"title": "备用域名", "link": "https://mypikpak.net/s/VN2", "snippet": "相关"},
+		},
+	})
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(ans.Results) != 2 {
+		t.Fatalf("results = %+v", ans.Results)
+	}
+	if ans.Raw != 4 {
+		t.Fatalf("raw = %d, want 4 (3 from the first host, 1 from the second)", ans.Raw)
+	}
+}
+
 // A sparse page is filled from the hosts after it: Google's index for one
 // share domain often holds only a few hits for a keyword, and a page of
 // three is not a page.
@@ -238,10 +268,11 @@ func TestSearchFillsThePageFromTheNextSitesWhenTheFirstIsSparse(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	if len(got) != 2 || got[0].URL != "https://mypikpak.com/s/VN1" || got[1].URL != "https://mypikpak.net/s/VN2" {
 		t.Fatalf("results = %+v", got)
 	}
@@ -269,10 +300,11 @@ func TestSearchStopsAskingSitesOnceThePageIsFull(t *testing.T) {
 	srv, queries := siteAnswers(t, map[string][]map[string]any{"mypikpak.com": full})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	if len(got) != pageSize {
 		t.Fatalf("results = %d", len(got))
 	}
@@ -290,10 +322,11 @@ func TestSearchShowsAShareOnceAcrossHosts(t *testing.T) {
 	})
 	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
 
-	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	if len(got) != 1 || got[0].URL != "https://mypikpak.com/s/VNSAME" {
 		t.Fatalf("results = %+v", got)
 	}
@@ -310,10 +343,11 @@ func TestSearchSkipsAHostThatCannotBeReached(t *testing.T) {
 		Transport: failingTransport{next: srv.Client().Transport, failOn: "site:mypikpak.net "},
 	}}
 
-	got, err := c.Search(context.Background(), "key-123", "大模型", 1)
+	ans, err := c.Search(context.Background(), "key-123", "大模型", 1)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	got := ans.Results
 	if len(got) != 2 || got[1].URL != "https://pikpak.me/s/VN3" {
 		t.Fatalf("results = %+v", got)
 	}

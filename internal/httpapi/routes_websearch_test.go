@@ -80,6 +80,44 @@ func TestWebSearchUsesTheStoredKeyAndPrefiltersBySite(t *testing.T) {
 	}
 }
 
+func TestWebSearchReportsTheRawCountBeforeFiltering(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Q string `json:"q"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		organic := []map[string]any{}
+		if strings.Contains(body.Q, "site:mypikpak.com ") {
+			organic = []map[string]any{
+				{"title": "分享", "link": "https://mypikpak.com/s/VN1", "snippet": "资料"},
+				{"title": "论坛", "link": "https://www.zhihu.com/question/1", "snippet": "无关"},
+				{"title": "博客", "link": "https://blog.example.com/p/1", "snippet": "无关"},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"organic": organic})
+	}))
+	t.Cleanup(srv.Close)
+	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
+	withSearchKey(t, deps, "key-123")
+	deps.WebSearch = &websearch.Client{Endpoint: srv.URL, HTTP: srv.Client()}
+	bindTestUser(t, deps.Store, 1000)
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/web-search?q=大模型", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", body["items"])
+	}
+	// Three organic entries came back; one was a share page. The page shows
+	// both numbers so a short list can explain itself.
+	if body["raw"] != float64(3) {
+		t.Fatalf("raw = %v", body["raw"])
+	}
+}
+
 func TestWebSearchPassesThePageThrough(t *testing.T) {
 	srv, _, _, gotPage := serperStub(t, []map[string]any{
 		{"title": "第二页", "link": "https://mypikpak.com/s/VN2", "snippet": "资料"},

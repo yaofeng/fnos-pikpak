@@ -22,6 +22,10 @@ export default function Search() {
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(false)
+  // What the provider returned for the first page and how many of those were
+  // share pages: shown when most of a page was dropped for not being a share.
+  const [firstRaw, setFirstRaw] = useState(0)
+  const [firstKept, setFirstKept] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
@@ -76,6 +80,8 @@ export default function Search() {
       setQuery(body.query ?? keyword)
       setPage(1)
       setHasMore(hasMorePages(1, got.length, maxPage))
+      setFirstRaw(body.raw ?? 0)
+      setFirstKept(got.length)
     } catch (err) {
       // A missing or rejected provider key is a setup step, not a failed
       // search: point at 参数设置 instead of shouting in red.
@@ -267,6 +273,11 @@ export default function Search() {
 
           {searched && items.length > 0 && (
             <p className="se-count">已加载 {items.length} 条结果</p>
+          )}
+          {searched && firstKept > 0 && firstRaw > firstKept && (
+            <p className="se-count">
+              搜索引擎返回 {firstRaw} 条原始结果，其中 {firstKept} 条是 PikPak 分享页，其余不是分享页，已忽略。
+            </p>
           )}
           {searched && items.length === 0 && page === 1 && (
             <p className="se-count">

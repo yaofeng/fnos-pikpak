@@ -57,7 +57,7 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), webSearchTimeout)
 		defer cancel()
-		results, err := client.Search(ctx, apiKey, query, page)
+		ans, err := client.Search(ctx, apiKey, query, page)
 		if err != nil {
 			var upstream *websearch.UpstreamError
 			if errors.As(err, &upstream) && (upstream.Status == http.StatusUnauthorized || upstream.Status == http.StatusForbidden) {
@@ -71,6 +71,8 @@ func registerWebSearchRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadGateway, "search_failed", "搜索服务暂时不可用，请稍后重试")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": results, "query": query, "page": page})
+		// raw is what the provider returned before results outside the share
+		// hosts were dropped; the page says so when the list is much shorter.
+		writeJSON(w, http.StatusOK, map[string]any{"items": ans.Results, "query": query, "page": page, "raw": ans.Raw})
 	})
 }

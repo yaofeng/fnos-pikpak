@@ -79,6 +79,16 @@ type serperResponse struct {
 	Organic []serperResult `json:"organic"`
 }
 
+// Answer is one page of results and what the provider returned for it.
+type Answer struct {
+	Results []Result
+	// Raw counts the organic entries the provider returned for this page
+	// across the hosts asked, before results outside the share hosts were
+	// dropped. A short list with a large Raw means the provider answered with
+	// pages that are not shares.
+	Raw int
+}
+
 // Search looks for keyword under Site. Only results hosted on the site are
 // returned; a provider that ignores the site filter therefore cannot put an
 // unrelated page in the list. page is 1-based; callers validate its range.
@@ -89,31 +99,33 @@ type serperResponse struct {
 // reached (mypikpak.me no longer resolves) is skipped; a provider refusal
 // stops the search, since no other host would answer either. The same share
 // is served by every host under one share id, so it is returned once.
-func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) ([]Result, error) {
+func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (Answer, error) {
 	q := normalizeKeyword(keyword)
 	if q == "" {
-		return nil, ErrEmptyQuery
+		return Answer{}, ErrEmptyQuery
 	}
 	if page < 1 {
 		page = 1
 	}
 	out := make([]Result, 0, pageSize)
 	seen := make(map[string]bool, pageSize)
+	raw := 0
 	var unreachable error
 	for _, site := range shareSites {
 		if len(out) >= pageSize {
 			break
 		}
-		results, err := c.searchSite(ctx, apiKey, site, q, page)
+		results, organic, err := c.searchSite(ctx, apiKey, site, q, page)
 		if err != nil {
 			var upstream *UpstreamError
 			if errors.As(err, &upstream) {
-				return nil, err
+				return Answer{}, err
 			}
 			// The host could not be reached; the next one may answer.
 			unreachable = err
 			continue
 		}
+		raw += organic
 		for _, r := range results {
 			key := shareKey(r.URL)
 			if seen[key] {
@@ -127,9 +139,9 @@ func (c *Client) Search(ctx context.Context, apiKey, keyword string, page int) (
 		}
 	}
 	if len(out) == 0 && unreachable != nil {
-		return nil, unreachable
+		return Answer{}, unreachable
 	}
-	return out, nil
+	return Answer{Results: out, Raw: raw}, nil
 }
 
 // shareKey is the share a result points at. Every PikPak host serves a share
@@ -149,7 +161,7 @@ func shareKey(raw string) string {
 
 // searchSite runs one site-scoped query and keeps only results on a PikPak
 // share host.
-func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int) ([]Result, error) {
+func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page int) (results []Result, organic int, err error) {
 	payload, err := json.Marshal(map[string]any{
 		"q":    "site:" + site + " " + q,
 		"gl":   "cn",
@@ -158,7 +170,7 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 		"page": page,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	endpoint := c.Endpoint
 	if endpoint == "" {
@@ -166,7 +178,7 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-KEY", apiKey)
@@ -177,16 +189,16 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("websearch: %w", err)
+		return nil, 0, fmt.Errorf("websearch: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// The status is the whole story; the body and the key stay out of it.
-		return nil, &UpstreamError{Status: resp.StatusCode}
+		return nil, 0, &UpstreamError{Status: resp.StatusCode}
 	}
 	var parsed serperResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("websearch: decode response: %w", err)
+		return nil, 0, fmt.Errorf("websearch: decode response: %w", err)
 	}
 
 	out := make([]Result, 0, len(parsed.Organic))
@@ -196,7 +208,7 @@ func (c *Client) searchSite(ctx context.Context, apiKey, site, q string, page in
 		}
 		out = append(out, Result{Title: r.Title, URL: r.Link, Snippet: r.Snippet})
 	}
-	return out, nil
+	return out, len(parsed.Organic), nil
 }
 
 // normalizeKeyword trims the keyword and drops a leading site: operator. The

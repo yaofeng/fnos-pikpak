@@ -2,7 +2,7 @@
 // page uses. The server owns the query: it adds the site: filter, so nothing
 // here ever builds one.
 export type WebResult = { title: string; url: string; snippet: string }
-export type WebSearchPage = { items: WebResult[]; query: string; page: number }
+export type WebSearchPage = { items: WebResult[]; query: string; page: number; raw?: number }
 
 // crumbFromURL renders a result address the way a search engine does: the
 // host first, then each path segment, without the scheme.
