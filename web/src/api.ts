@@ -1,3 +1,4 @@
+import { filenameFromDisposition } from './backup'
 import { errorText, getLang } from './i18n'
 import { notifyError } from './toast'
 
@@ -28,6 +29,16 @@ export class ApiError extends Error {
   }
 }
 
+// apiFailure turns an error response body into the one error shape the pages
+// catch, keeping the server's own wording as the fallback.
+function apiFailure(res: Response, body: any): ApiError {
+  const code: string = body?.error?.code ?? 'http_error'
+  const raw: string =
+    body?.error?.message ?? (typeof body?.error === 'string' ? body.error : res.statusText)
+  const message = errorText(code, getLang()) ?? raw
+  return new ApiError(res.status, code, message, `${res.status} ${code}: ${raw}`)
+}
+
 async function request<T>(path: string, init?: RequestInit, quiet = false): Promise<T> {
   const res = await fetch(`${basePath}/api/${path.replace(/^\/+/, '')}`, {
     ...init,
@@ -37,15 +48,12 @@ async function request<T>(path: string, init?: RequestInit, quiet = false): Prom
   const text = await res.text()
   const body = text ? JSON.parse(text) : undefined
   if (!res.ok) {
-    const code: string = body?.error?.code ?? 'http_error'
-    const raw: string =
-      body?.error?.message ?? (typeof body?.error === 'string' ? body.error : res.statusText)
-    const message = errorText(code, getLang()) ?? raw
+    const err = apiFailure(res, body)
     // One place raises the visible error, so no page can forget to report it.
     // A quiet read opts out: its callers handle the failure themselves, and a
     // toast for an expected state (a share asking for its pass code) is noise.
-    if (!quiet) notifyError(message, `${res.status} ${code}: ${raw}`)
-    throw new ApiError(res.status, code, message, `${res.status} ${code}: ${raw}`)
+    if (!quiet) notifyError(err.message, err.detail)
+    throw err
   }
   return body as T
 }
@@ -61,5 +69,53 @@ export const apiPut = <T,>(path: string, data: unknown) =>
   request<T>(path, { method: 'PUT', body: JSON.stringify(data ?? {}) })
 export const apiDelete = <T,>(path: string, data?: unknown) =>
   request<T>(path, { method: 'DELETE', body: data === undefined ? undefined : JSON.stringify(data) })
+
+// apiDownload fetches a binary response (the backup file) and reports the name
+// the server suggested, so the page can save it with a download link.
+export async function apiDownload(path: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${basePath}/api/${path.replace(/^\/+/, '')}`, {
+    credentials: 'same-origin',
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    let body: any
+    try {
+      body = text ? JSON.parse(text) : undefined
+    } catch {
+      body = undefined
+    }
+    const err = apiFailure(res, body)
+    notifyError(err.message, err.detail)
+    throw err
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(res.headers.get('Content-Disposition')),
+  }
+}
+
+// apiUploadJSON posts a document that is already JSON text. A backup file can
+// be large, so it is sent as read instead of being parsed and re-encoded.
+export async function apiUploadJSON<T,>(path: string, text: string): Promise<T> {
+  const res = await fetch(`${basePath}/api/${path.replace(/^\/+/, '')}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: text,
+  })
+  const raw = await res.text()
+  let body: any
+  try {
+    body = raw ? JSON.parse(raw) : undefined
+  } catch {
+    body = undefined
+  }
+  if (!res.ok) {
+    const err = apiFailure(res, body)
+    notifyError(err.message, err.detail)
+    throw err
+  }
+  return body as T
+}
 
 export { basePath }

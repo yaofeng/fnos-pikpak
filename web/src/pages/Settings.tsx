@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiGet, apiPost, apiPut } from '../api'
+import { apiDownload, apiGet, apiPost, apiPut, apiUploadJSON } from '../api'
+import { restoreSummary, type RestoreResult } from '../backup'
 import { formatSize } from '../files'
 import { askPath, hostAvailable, pickDirectory } from '../fnosSdk'
 import {
@@ -85,6 +86,9 @@ export default function Settings() {
   const [saved, setSaved] = useState('')
   const [error, setError] = useState('')
   const [confirmUnbind, setConfirmUnbind] = useState(false)
+  const [backupBusy, setBackupBusy] = useState('')
+  const [backupNote, setBackupNote] = useState('')
+  const backupFile = useRef<HTMLInputElement>(null)
   // Baseline = what the server currently holds, so a save only sends edits.
   const baseline = useRef<{ global: SettingValues; user: SettingValues }>({ global: {}, user: {} })
 
@@ -183,6 +187,54 @@ export default function Settings() {
       dir = asked
     }
     editUser('download_dir', dir)
+  }
+
+  async function exportBackup() {
+    setError('')
+    setBackupNote('')
+    setBackupBusy('export')
+    try {
+      const { blob, filename } = await apiDownload('backup')
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      // Revoking immediately can cancel the save in some browsers; give the
+      // download a moment to start.
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setBackupNote(`已导出 ${filename}`)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBackupBusy('')
+    }
+  }
+
+  async function restoreBackupFile(file: File) {
+    setError('')
+    setBackupNote('')
+    setBackupBusy('restore')
+    try {
+      const result = await apiUploadJSON<RestoreResult>('restore', await file.text())
+      setBackupNote(restoreSummary(result))
+      // The restore may have overwritten settings this form is showing.
+      await load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBackupBusy('')
+    }
+  }
+
+  function onBackupFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    // Clear the input so picking the same file again still fires a change.
+    e.target.value = ''
+    if (file) void restoreBackupFile(file)
   }
 
   function editUser(key: string, value: string) {
@@ -360,6 +412,33 @@ export default function Settings() {
             ))}
           </select>
         </label>
+      </section>
+
+      <section className="card">
+        <div className="card-header">
+          <h2>数据备份与恢复</h2>
+        </div>
+        <p className="muted">
+          备份当前飞牛用户的视频收藏、分享收藏和配置参数，导出为一个 JSON 文件。恢复时收藏按条目合并（已存在的跳过，
+          不覆盖本机内容），配置参数直接覆盖。
+        </p>
+        <div className="actions">
+          <button type="button" disabled={backupBusy !== ''} onClick={() => void exportBackup()}>
+            {backupBusy === 'export' ? '导出中…' : '导出备份'}
+          </button>
+          <button type="button" disabled={backupBusy !== ''} onClick={() => backupFile.current?.click()}>
+            {backupBusy === 'restore' ? '恢复中…' : '选择备份文件'}
+          </button>
+          <input
+            ref={backupFile}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={onBackupFilePicked}
+          />
+        </div>
+        <p className="muted small">备份文件包含收藏与配置（含全网搜索 API Key），请妥善保管。</p>
+        {backupNote && <p className="ok muted small">{backupNote}</p>}
       </section>
 
       <section className="card">
