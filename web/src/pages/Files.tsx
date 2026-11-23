@@ -18,6 +18,7 @@ import {
   UploadIcon,
 } from '../components/icons'
 import { askPath, hostAvailable, pickFiles } from '../fnosSdk'
+import { deletePlan, type DeleteMode } from '../deleteFlow'
 import { cacheKeys, dropCachePrefix, readCache, writeCache } from '../listCache'
 import { useFileSelection } from '../useFileSelection'
 import { useMarquee } from '../useMarquee'
@@ -55,6 +56,8 @@ export default function Files() {
 
   const [menu, setMenu] = useState<{ x: number; y: number; file: FileItem | null } | null>(null)
   const [move, setMove] = useState<{ mode: 'move' | 'copy'; ids: string[] } | null>(null)
+  // Ids waiting on the delete dialog, which asks 移入回收站 or 永久删除.
+  const [removeAsk, setRemoveAsk] = useState<string[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [playing, setPlaying] = useState<FileItem | null>(null)
 
@@ -197,13 +200,14 @@ export default function Files() {
     }
   }
 
-  async function trash(ids: string[]) {
+  async function remove(ids: string[], mode: DeleteMode) {
     if (!ids.length) return
-    if (!window.confirm(`将 ${ids.length} 项移入回收站？`)) return
+    setRemoveAsk(null)
     setBusy(true)
     try {
-      const res = await apiPost<{ pending: boolean }>('files/trash', { ids })
-      setNotice(res.pending ? '任务已提交，稍后自动刷新' : '已移入回收站')
+      const plan = deletePlan(mode)
+      const res = await apiPost<{ pending: boolean }>(plan.path, { ids })
+      setNotice(res.pending ? '任务已提交，稍后自动刷新' : plan.notice)
       clearSelection()
       dropCachePrefix('files:')
       await fetchPage('', true)
@@ -380,7 +384,7 @@ export default function Files() {
         <button
           className="btn-icon"
           type="button"
-          onClick={() => void trash(selectedIds)}
+          onClick={() => setRemoveAsk(selectedIds)}
           disabled={busy || selectedIds.length === 0}
         >
           <TrashIcon />
@@ -535,7 +539,7 @@ export default function Files() {
                   下载
                 </button>
               )}
-              <button type="button" className="danger" onClick={() => void trash([menu.file!.id])}>
+              <button type="button" className="danger" onClick={() => void remove([menu.file!.id], 'trash')}>
                 移入回收站
               </button>
             </>
@@ -594,6 +598,32 @@ export default function Files() {
             <button type="button" onClick={() => setMove(null)}>
               取消
             </button>
+          </div>
+        </div>
+      )}
+
+      {removeAsk && (
+        <div className="modal-backdrop" onClick={() => setRemoveAsk(null)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="删除"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3>删除 {removeAsk.length} 项？</h3>
+            <p className="muted small">移入回收站后仍可找回；永久删除会跳过回收站，无法恢复。</p>
+            <div className="actions">
+              <button type="button" className="primary" disabled={busy} onClick={() => void remove(removeAsk, 'trash')}>
+                移入回收站
+              </button>
+              <button type="button" className="danger" disabled={busy} onClick={() => void remove(removeAsk, 'delete')}>
+                永久删除
+              </button>
+              <button type="button" onClick={() => setRemoveAsk(null)}>
+                取消
+              </button>
+            </div>
           </div>
         </div>
       )}
