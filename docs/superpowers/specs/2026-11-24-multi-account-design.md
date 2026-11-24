@@ -131,6 +131,10 @@ SQL 迁移之后、HTTP 服务之前执行（`store.Open` 内）：
 
 `POST /api/auth/device` 发起绑定时生成（`crypto/rand` 8 字节 hex），写进 `auth_flows.account_id`；`pollAuthFlow` 成功时据此建账号行 + 设备 id（`DeriveDeviceID` 的 HMAC 输入改为 `"device:acct:"+accountID`）+ 凭据。同一 uid 下若已有同 `pikpak_sub` 的账号，绑定完成时报错「该 PikPak 账号已绑定」。
 
+**重新授权（针对已有账号行）**：`POST /api/auth/device` 的 body 增加可选 `account_id` 字段。携带时 flow 指向该已有账号行：完成时凭据写回同一行、status 复位 `active`、sub/display/vip 用新令牌刷新；设备 id 保留原值（从已有凭据解密沿用，不用 `DeriveDeviceID` 重算，迁移过的老账号不掉设备指纹）。完成时若授权到的 `pikpak_sub` 与账号行已有 sub 不一致 → flow 置 `error`，提示「授权的账号与原账号不一致，请解绑后重新添加」。不携带 `account_id` 的一律按新账号处理（走同 sub 查重）。`POST /api/auth/rebind` 删除（重新授权由设备码流程覆盖，前端也未使用）。
+
+**status 三态**：`active` / `reauth_required`（令牌失效时由 Session 写）/ `disabled`——`disabled` 为预留值，本期没有任何写入方与 UI；`defaultAccount`、随机选择、合并接口的过滤一律排除它，为将来的「暂停账号」留位。
+
 ### 默认账号
 
 `defaultAccount(uid)` = 该 uid 的账号按 `bound_at` 升序第一个 `status='active'` 的行；没有 active 则取第一个。所有按账号接口在 `?account=` 缺省/非法时：缺省 → 默认账号；提供了但不属于该 uid → 404 `not_found`。
@@ -179,7 +183,7 @@ func randomAccountClient(w, r, deps) (*pikpak.Client, store.PikPakAccount, bool)
 - `GET /api/trash`、`POST /api/trash/empty`（回收站与我的文件一致，按账号）
 - `POST /api/downloads`（下载 = 选中账号；见 §10 的 items 改造）、`POST /api/uploads`（上传 = 选中账号，用户已确认）
 - `GET /api/play/{id}`、`GET /api/thumb/...`（缩略图跟文件页账号）
-- `GET /api/share*` 打开/列表/单文件链接/预览：用**默认账号**（分享页没有切换器）；pass-code 会话键扩为 `(uid, accountID, shareID)`
+- `GET /api/share*` 打开/列表/单文件链接/预览：用**默认账号**（分享页没有切换器）；pass-code 会话键扩为 `(uid, accountID, shareID)`。`ShareSessions` 同时保存 pass-code token 与**明文 pass code**（仅内存、2h TTL）：受保护分享转存/完整播放换账号时，目标账号 X 需要用明文密码调自己的 `GetShare` 换发自己的 pass-code token（收藏路径本就存有密码，不受影响）。将来若实测确认 pass-code token 可跨账号复用，可省掉这步重开作为优化，本期不赌。
 
 ### 合并（遍历该 uid 全部可用账号）
 
@@ -200,9 +204,24 @@ func randomAccountClient(w, r, deps) (*pikpak.Client, store.PikPakAccount, bool)
 | `POST /api/videos/prepare`（完整播放） | 见 §10 |
 | `POST /api/auth/logout` | 变为 `POST /api/auth/logout` + body `{account_id}` 解绑单个账号；解绑时取消该账号的传输任务与 pending 流，删除其任务记录（磁盘文件保留，语义不变） |
 
-## 9. 随机选择策略
+## 9. 随机选择与换号重试
 
-`randomAccountClient`：候选 = 该 uid 的 `status='active'` 账号；`crypto/rand` 均匀取一。候选为空（全部 reauth_required 或未绑定）→ `401 no_active_account`「没有可用的 PikPak 账号，请重新授权或绑定」。不按额度/用量加权（用户已确认）。
+**选择**：`randomAccountClient` 候选 = 该 uid 的 `status='active'` 账号；`crypto/rand` 均匀取一。候选为空（全部 reauth_required 或未绑定）→ `401 no_active_account`。不按额度/用量加权（用户已确认）。
+
+**换号重试（用户已确认）**：单次请求内，把候选账号洗牌成一条尝试序列；随机只是定序列头。当前账号遇到**账号级失败**时换下一个，直到成功或序列耗尽：
+
+| 操作 | 触发换号的失败（账号级） | 不换号、直接报错的失败 |
+|---|---|---|
+| 新建离线任务 | 每日额度用完（code 11 → 429）、上游 5xx/网络错误、429 限流 | 链接格式校验失败（4xx 请求问题） |
+| 分享转存 | 上游 5xx/网络错误、429、转存额度类失败 | `pass_code_required/wrong`、分享失效（分享级问题，换账号没用） |
+| 完整播放（makeRoom→重开分享→RestoreShare→等任务） | 空间腾不出（errSpaceInsufficient）、上游/网络错误、429、等任务超时 | 密码/分享级错误；**restore 任务已落定之后**的失败（找不到新文件、改名失败——只报告，不换号重跑避免重复转存） |
+
+- 洗牌每请求一次：保证覆盖全部账号且不重复尝试。
+- 序列耗尽 → `429 all_accounts_failed`，message 逐账号列出短原因（「账号 A：空间不足；账号 B：每日额度已用完」），前端 toast 原样展示。
+- 单账号用户退化为一次尝试，与现状完全一致。
+- 分享「下载」多文件时每个文件独立走一遍 prepare（含各自的重试序列），一个文件失败不阻断其余文件的报错聚合。
+
+**restore 任务落定的边界**（换号窗口的终点）：`RestoreShare` 返回的任务 id 经 `WaitTaskSettled` 得出成败——成败落定前的失败可换号，之后的失败只报告。
 
 ## 10. 跨账号转存判定与完整播放
 
@@ -222,9 +241,8 @@ func randomAccountClient(w, r, deps) (*pikpak.Client, store.PikPakAccount, bool)
 link := 打开分享所用账号取 GetShareFileLink        ← 预览与元数据不变
 1. 扫描 packCopies（全部账号）找已有副本：
    命中 → 直接用副本所在账号播放（该账号令牌），更新收藏 restored_file_id/restored_account_id
-2. 未命中 → 随机选账号 X：
-   makeRoom(X) → RestoreShare（用 X 重新开分享拿 token）→ 等任务 → 找到新文件
-   → 改名为收藏显示名 → 记录副本 → 用 X 的令牌播放
+2. 未命中 → 按 §9 的洗牌序列逐账号尝试：makeRoom → 用该账号+会话密码重开分享拿 token → RestoreShare → 等任务；账号级失败换下一个
+   → 成功账号上找到新文件、改名为收藏显示名、记录副本、播放（该账号令牌）
 ```
 
 `video_favorites` 新增 `restored_account_id`；`restored_file_id` 语义改为"最近一次副本"（ID 提示仅用于加速查找，正确性靠实时扫描兜底——ID 在 PikPak 可能重发，扫描按 name+size 匹配的逻辑保持）。
@@ -282,7 +300,7 @@ recent: () => 'recent:merged'
 
 - **store**：老库 fixture（credentials/users/jobs 有数据）→ 迁移后账号行、凭据可解密、任务回填正确；data_version 幂等（跑两遍）。
 - **pikpak**：SessionStore 双账号并存、互不串令牌；Drop 单账号不影响另一个；per-account limiter。
-- **httpapi**：`?account=` 归属校验（伪造他账号 id → 404）；缺省回退默认账号；合并接口的多账号 page_token 往返；随机选择（注入固定 rand）排除 reauth 账号；`packCopies` 任一账号命中即复用（不再触发 restore）；uploads/downloads 的 items 改造。
+- **httpapi**：`?account=` 归属校验（伪造他账号 id → 404）；缺省回退默认账号；合并接口的多账号 page_token 往返；换号重试（注入固定洗牌序列：首账号注入额度失败→次账号成功；全部失败→all_accounts_failed 聚合错误）；`packCopies` 任一账号命中即复用（不再触发 restore）；uploads/downloads 的 items 改造；重新授权 sub 不匹配 → flow error；受保护分享换账号转存使用会话内明文密码。
 - **transfer**：任务行 account_id 驱动客户端选择；CancelAccount 只停该账号。
 - **前端**（vitest）：context 默认值与切换重置；缓存键含账号；Tasks 行携带 account_id 的分组请求；queueDownloads 的 items 形状。
 
