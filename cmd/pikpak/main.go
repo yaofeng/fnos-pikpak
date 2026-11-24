@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -100,13 +99,12 @@ func main() {
 		Clients: func(ctx context.Context, uid int) (*pikpak.Client, error) {
 			return sessions.ClientFor(ctx, uid)
 		},
-		MaxGlobal: 2,
 	}
-	if v, err := st.GetSetting(startupCtx, "download_concurrency"); err == nil {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 4 {
-			queue.MaxGlobal = n
-		}
-	}
+	// Both caps come from the same number: the setting counts the transfers a
+	// person expects to see running, and the global cap already keeps several
+	// users from oversubscribing the NAS.
+	value, _ := st.GetSetting(startupCtx, "download_concurrency")
+	queue.MaxGlobal, queue.PerUser = transfer.Concurrency(value, 2)
 	queueCtx, queueCancel := context.WithCancel(context.Background())
 	queue.Start(queueCtx)
 	defer func() {
