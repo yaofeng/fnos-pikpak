@@ -98,17 +98,25 @@ CREATE TABLE auth_flows (id TEXT PRIMARY KEY, uid INTEGER NOT NULL, device_code_
   created_at TEXT NOT NULL);
 CREATE TABLE share_favorites (id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER NOT NULL,
   share_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', pass_code_enc BLOB NOT NULL DEFAULT x'',
-  created_at TEXT NOT NULL, UNIQUE (uid, share_id));
+  created_at TEXT NOT NULL, display_title TEXT NOT NULL DEFAULT '',
+  owner_name TEXT NOT NULL DEFAULT '', owner_avatar TEXT NOT NULL DEFAULT '',
+  share_created_at TEXT NOT NULL DEFAULT '', expire_at INTEGER NOT NULL DEFAULT 0,
+  file_count INTEGER NOT NULL DEFAULT -1, total_size INTEGER NOT NULL DEFAULT 0,
+  stats_at TEXT NOT NULL DEFAULT '', UNIQUE (uid, share_id));
 CREATE TABLE video_favorites (id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER NOT NULL,
   share_id TEXT NOT NULL, file_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
   size INTEGER NOT NULL DEFAULT 0, owner TEXT NOT NULL DEFAULT '',
   share_title TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '',
+  group_label TEXT NOT NULL DEFAULT '', restored_file_id TEXT NOT NULL DEFAULT '',
   pass_code_enc BLOB NOT NULL DEFAULT x'', created_at TEXT NOT NULL,
   UNIQUE (uid, share_id, file_id));
+-- 已应用标记必须数齐当前 migrate.go 的全部既有条目（写本计划时为 16 条；执行前先
+-- `grep -c` 核对实际条数并同步），本次追加的新迁移不在其中，由迁移器自己跑。
 INSERT INTO schema_migrations(version, applied_at) VALUES
  (1,'2026-01-01'),(2,'2026-01-01'),(3,'2026-01-01'),(4,'2026-01-01'),(5,'2026-01-01'),
  (6,'2026-01-01'),(7,'2026-01-01'),(8,'2026-01-01'),(9,'2026-01-01'),(10,'2026-01-01'),
- (11,'2026-01-01'),(12,'2026-01-01');
+ (11,'2026-01-01'),(12,'2026-01-01'),(13,'2026-01-01'),(14,'2026-01-01'),(15,'2026-01-01'),
+ (16,'2026-01-01');
 ```
 
 测试逻辑（`t.TempDir()` 建 db/key 文件：先 `sql.Open("sqlite", …)` 手工执行 fixture SQL，并用 `Encrypt(key, legacyAAD(1001,"access_token"), []byte("at-old"))` 等插入 uid=1001 的凭据 + users 行（display_name="老账号"）+ 一条 download_job；然后 `store.Open(dbPath, keyPath)`）：
@@ -314,7 +322,7 @@ git commit -m "feat(playtoken): bind stream tokens to a pikpak account"
   - `POST /api/auth/device` body 增加可选 `account_id`：有 → flow 落到该行（`GetAccount` 校验归属，无 → 404）；完成时授权到的 sub 与账号行不一致 → flow `error`「授权的账号与原账号不一致，请解绑后重新添加」；一致 → 凭据写回同 accountID、设备 id 沿用原凭据解密值、`PutAccount` 刷新 sub/display/vip 且 status 复位 active（bound_at 不变）
   - 新账号 flow 完成时：`AccountIDBySub(uid, sub)` 命中 → flow `error`「该 PikPak 账号已绑定」；否则建行 + `DeriveDeviceID(accountID)` + `InstallAccount`
   - `Flow.AccountID`（store 本任务加字段与列读写；`PutAuthFlow/GetAuthFlow` 补该列；`POST /api/auth/device` 创建 flow 时写入）
-  - `POST /api/auth/logout` body `{"account_id":"…"}`：`DropAccount`、`DeleteAccount`、`DeleteAccountJobs`（Task 1 已提供？——否，本任务加：`store.DeleteAccountJobs(ctx, uid, accountID)`，删两类任务表该账号行）、`Queue.CancelAccount`、`Accounts.drop(accountID)`、空 account_id → 400 `bad_request`「请指定要解绑的账号」
+  - `POST /api/auth/logout` body `{"account_id":"…"}`：`DropAccount`、`DeleteAccount`、`DeleteAccountJobs`（本任务在 store 新增：`store.DeleteAccountJobs(ctx, uid, accountID)`，删两类任务表该账号行）、`Queue.CancelAccount`、`Accounts.drop(accountID)`；空 account_id → 400 `bad_request`「请指定要解绑的账号」
   - **删除** `GET /api/account`、`POST /api/auth/rebind`
 
 - [ ] **Step 1: 写失败测试**
