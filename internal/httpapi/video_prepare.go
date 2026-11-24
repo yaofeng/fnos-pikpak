@@ -70,7 +70,7 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 		return videoPrepareResult{}, errSessionLoad
 	}
 
-	source, err := resolveVideoSource(ctx, deps, uid, req, client)
+	source, err := resolveVideoSource(ctx, deps, uid, req, client, defaultAccountID(ctx, deps, uid))
 	if err != nil {
 		return videoPrepareResult{}, err
 	}
@@ -235,7 +235,10 @@ func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepare
 	if err != nil {
 		return videoPreviewResult{}, errSessionLoad
 	}
-	source, err := resolveVideoSource(ctx, deps, uid, req, client)
+	// The preview acts as the default account, the same one the share browser
+	// opens with, so its session and stream token carry that account's id.
+	acctID := defaultAccountID(ctx, deps, uid)
+	source, err := resolveVideoSource(ctx, deps, uid, req, client, acctID)
 	if err != nil {
 		return videoPreviewResult{}, err
 	}
@@ -243,8 +246,7 @@ func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepare
 	if err != nil {
 		return videoPreviewResult{}, videoUpstreamMessage(err)
 	}
-	// TODO(多账号): Task 8 接入真实账号
-	token := playtoken.SignShare(deps.PlaySecret, uid, "", source.shareID, source.fileID, playTokenTTL, time.Now())
+	token := playtoken.SignShare(deps.PlaySecret, uid, acctID, source.shareID, source.fileID, playTokenTTL, time.Now())
 	out := videoPreviewResult{
 		StreamURL: "/api/share/stream/" + url.PathEscape(source.shareID) + "/" + url.PathEscape(source.fileID) + "?t=" + token,
 	}
@@ -272,7 +274,10 @@ func videoPlayer(ctx context.Context, deps Deps, uid int) string {
 	return "builtin"
 }
 
-func resolveVideoSource(ctx context.Context, deps Deps, uid int, req videoPrepareRequest, client *pikpak.Client) (videoSource, error) {
+// resolveVideoSource locates the share file a prepare or preview asks for.
+// acctID is the account the caller acts as — the key the share's pass-code
+// session is stored under.
+func resolveVideoSource(ctx context.Context, deps Deps, uid int, req videoPrepareRequest, client *pikpak.Client, acctID string) (videoSource, error) {
 	if req.FavoriteID > 0 {
 		fav, err := deps.Store.GetVideoFavorite(ctx, uid, req.FavoriteID)
 		if errors.Is(err, store.ErrNotFound) {
@@ -285,14 +290,14 @@ func resolveVideoSource(ctx context.Context, deps Deps, uid int, req videoPrepar
 		if err != nil {
 			return videoSource{}, videoUpstreamMessage(err)
 		}
-		deps.ShareSessions.put(uid, fav.ShareID, info.PassCodeToken, time.Now())
+		deps.ShareSessions.put(uid, acctID, fav.ShareID, info.PassCodeToken, fav.PassCode, time.Now())
 		return videoSource{
 			shareID: fav.ShareID, fileID: fav.FileID,
 			token: info.PassCodeToken, owner: info.Owner, title: info.Title,
 			favorite: &fav,
 		}, nil
 	}
-	token, ok := deps.ShareSessions.get(uid, req.ShareID, time.Now())
+	token, _, ok := deps.ShareSessions.get(uid, acctID, req.ShareID, time.Now())
 	if !ok {
 		return videoSource{}, errSessionGone
 	}

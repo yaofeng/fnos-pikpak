@@ -41,7 +41,7 @@ func (deps Deps) shareMedia(attachment bool) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "invalid_token", "播放链接无效")
 			return
 		}
-		passToken, ok := deps.ShareSessions.get(claims.UID, claims.ShareID, time.Now())
+		passToken, _, ok := deps.ShareSessions.get(claims.UID, claims.AccountID, claims.ShareID, time.Now())
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "share_session_missing", "分享会话已过期，请重新打开分享")
 			return

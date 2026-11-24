@@ -14,6 +14,7 @@ import (
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/playtoken"
+	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 )
 
@@ -31,7 +32,10 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, _, ok := accountClient(w, r, deps)
+		// The share browser is a default-account surface: open, browse and
+		// links all act as one identity, so the pass-code session they share
+		// is keyed under that account's id.
+		client, acct, ok := defaultAccountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -50,7 +54,10 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			writeUpstreamError(w, err)
 			return
 		}
-		deps.ShareSessions.put(id.UID, shareID, info.PassCodeToken, time.Now())
+		// The code the request carried — typed into the query or sealed in the
+		// favourite — is remembered in plaintext, so a later restore can
+		// reopen the share as another account.
+		deps.ShareSessions.put(id.UID, acct.ID, shareID, info.PassCodeToken, passCode, time.Now())
 
 		// 分享收藏夹 never counts a share; entering it does, off this request,
 		// when the cached total is missing or older than a day.
@@ -70,7 +77,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			"title":           title,
 			"owner":           info.Owner,
 			"protected":       passCode != "",
-			"items":           annotateShareFiles(r.Context(), deps, client, id.UID, shareID, info.Files),
+			"items":           annotateShareFiles(r.Context(), deps, id.UID, shareID, info.Files),
 			"next_page_token": info.NextPageToken,
 		})
 	})
@@ -78,11 +85,11 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/share/files", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
 		shareID := strings.TrimSpace(r.URL.Query().Get("share_id"))
-		token, ok := shareToken(w, deps, id.UID, shareID)
+		client, acct, ok := defaultAccountClient(w, r, deps)
 		if !ok {
 			return
 		}
-		client, _, ok := accountClient(w, r, deps)
+		token, ok := shareToken(w, deps, id.UID, acct.ID, shareID)
 		if !ok {
 			return
 		}
@@ -94,7 +101,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"items":           annotateShareFiles(r.Context(), deps, client, id.UID, shareID, page.Items),
+			"items":           annotateShareFiles(r.Context(), deps, id.UID, shareID, page.Items),
 			"next_page_token": page.NextPageToken,
 		})
 	})
@@ -107,11 +114,11 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_ids", "缺少文件编号")
 			return
 		}
-		token, ok := shareToken(w, deps, id.UID, shareID)
+		client, acct, ok := defaultAccountClient(w, r, deps)
 		if !ok {
 			return
 		}
-		client, _, ok := accountClient(w, r, deps)
+		token, ok := shareToken(w, deps, id.UID, acct.ID, shareID)
 		if !ok {
 			return
 		}
@@ -121,8 +128,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		now := time.Now()
-		// TODO(多账号): Task 8 接入真实账号
-		t := playtoken.SignShare(deps.PlaySecret, id.UID, "", shareID, fileID, playTokenTTL, now)
+		t := playtoken.SignShare(deps.PlaySecret, id.UID, acct.ID, shareID, fileID, playTokenTTL, now)
 		escShare, escFile := url.PathEscape(shareID), url.PathEscape(fileID)
 		out := map[string]any{
 			"file_id":      fileID,
@@ -154,19 +160,74 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_ids", "一次需要选择 1 到 200 个文件")
 			return
 		}
-		token, ok := shareToken(w, deps, id.UID, shareID)
+		if shareID == "" {
+			writeError(w, http.StatusBadRequest, "bad_share_link", "缺少分享编号")
+			return
+		}
+		// The pass code lives in the default account's session — the one
+		// opening the share seeded. Every account is reopened with it, because
+		// each account needs its own pass-code token to restore.
+		acct, err := deps.resolveAccount(r.Context(), id.UID, "")
+		if err != nil {
+			switch {
+			case errors.Is(err, pikpak.ErrNotBound):
+				writeError(w, http.StatusUnauthorized, "not_bound", "请先绑定 PikPak 账号")
+			default:
+				writeError(w, http.StatusInternalServerError, "internal", "无法读取账号")
+			}
+			return
+		}
+		_, passCode, ok := deps.ShareSessions.get(id.UID, acct.ID, shareID, time.Now())
+		if !ok {
+			writeError(w, http.StatusBadRequest, "share_session_missing", "分享会话已过期，请重新打开分享")
+			return
+		}
+		clients, ok := restoreClients(w, r, deps, acct)
 		if !ok {
 			return
 		}
-		client, _, ok := accountClient(w, r, deps)
-		if !ok {
+		// The restore lands on the first account that takes it, tried in
+		// random order so the load spreads. A failure that is the account's
+		// own (quota, rate limit, outage) rotates to the next; a refusal that
+		// travels with the share — a wrong pass code above all — would fail on
+		// every account the same way, so it stops the loop with the answer
+		// already written.
+		aw := &answeredWriter{ResponseWriter: w}
+		type refusal struct{ name, reason string }
+		var refused []refusal
+		for _, nc := range clients {
+			token, _, ok := openShareFor(aw, r, deps, id.UID, nc.Account, shareID, passCode)
+			if !ok {
+				if aw.wrote {
+					return
+				}
+				refused = append(refused, refusal{name: accountLabel(nc.Account), reason: "打开分享失败"})
+				continue
+			}
+			if _, err := nc.C.RestoreShare(r.Context(), shareID, token, body.FileIDs); err != nil {
+				if !isAccountLevelErr(err) {
+					writeUpstreamError(w, err)
+					return
+				}
+				refused = append(refused, refusal{
+					name:   accountLabel(nc.Account),
+					reason: strings.TrimSpace(probe.Redact(err.Error())),
+				})
+				continue
+			}
+			resp := map[string]any{"ok": true}
+			if nc.Account.ID != "" {
+				resp["account_id"] = nc.Account.ID
+				resp["account_name"] = accountLabel(nc.Account)
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
-		if _, err := client.RestoreShare(r.Context(), shareID, token, body.FileIDs); err != nil {
-			writeUpstreamError(w, err)
-			return
+		parts := make([]string, len(refused))
+		for i, rf := range refused {
+			parts[i] = rf.name + "：" + rf.reason
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeError(w, http.StatusTooManyRequests, "all_accounts_failed", strings.Join(parts, "；"))
 	})
 
 	registerShareFavoriteRoutes(mux, deps)
@@ -213,18 +274,98 @@ func resolveShareTarget(w http.ResponseWriter, r *http.Request, deps Deps, uid i
 	return shareID, "", passCode, true
 }
 
-// shareToken returns the cached pass-code token for an opened share.
-func shareToken(w http.ResponseWriter, deps Deps, uid int, shareID string) (string, bool) {
+// shareToken returns the cached pass-code token of a share opened under one
+// account. Sessions are per account, so every reader must name the account
+// the open wrote.
+func shareToken(w http.ResponseWriter, deps Deps, uid int, accountID, shareID string) (string, bool) {
 	if shareID == "" {
 		writeError(w, http.StatusBadRequest, "bad_share_link", "缺少分享编号")
 		return "", false
 	}
-	token, ok := deps.ShareSessions.get(uid, shareID, time.Now())
+	token, _, ok := deps.ShareSessions.get(uid, accountID, shareID, time.Now())
 	if !ok {
 		writeError(w, http.StatusBadRequest, "share_session_missing", "分享会话已过期，请重新打开分享")
 		return "", false
 	}
 	return token, true
+}
+
+// answeredWriter records whether a rotation step already answered the client.
+// openShareFor answers share-level refusals itself (no account can do better)
+// and leaves account-level failures unwritten, so this is how the restore
+// loop tells one from the other and decides between stopping and rotating.
+type answeredWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (a *answeredWriter) WriteHeader(code int) {
+	a.wrote = true
+	a.ResponseWriter.WriteHeader(code)
+}
+
+func (a *answeredWriter) Write(p []byte) (int, error) {
+	a.wrote = true
+	return a.ResponseWriter.Write(p)
+}
+
+// restoreClients builds the restore rotation: every active account in random
+// order, with its session loaded. A user bound before accounts existed owns
+// exactly the legacy placeholder identity passed as fallback. Unloadable
+// sessions are skipped; with nothing usable the structured refusal is written
+// and ok is false.
+func restoreClients(w http.ResponseWriter, r *http.Request, deps Deps, fallback store.PikPakAccount) ([]namedClient, bool) {
+	id, _ := fnos.IdentityFrom(r.Context())
+	accounts, err := deps.Store.ListAccounts(r.Context(), id.UID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "无法读取账号")
+		return nil, false
+	}
+	rotation := shuffledActives(accounts)
+	if len(accounts) == 0 {
+		rotation = []store.PikPakAccount{fallback}
+	}
+	var out []namedClient
+	for _, acct := range rotation {
+		client, err := deps.Sessions.ClientForAccount(r.Context(), id.UID, acct.ID)
+		if err != nil {
+			continue
+		}
+		out = append(out, namedClient{Account: acct, C: client})
+	}
+	if len(out) == 0 {
+		writeError(w, http.StatusUnauthorized, "no_active_account", "没有可用的 PikPak 账号，请重新授权或绑定")
+		return nil, false
+	}
+	return out, true
+}
+
+// openShareFor opens a share as one account and seeds that account's
+// pass-code session with the code used. Share-level refusals — wrong code,
+// gone share, anything that would repeat on every account — are answered
+// here; account-level failures return unwritten so a rotation loop can try
+// the next account. ok false with nothing written means exactly that.
+func openShareFor(w http.ResponseWriter, r *http.Request, deps Deps, uid int, acct store.PikPakAccount, shareID, passCode string) (string, *pikpak.ShareInfo, bool) {
+	client, err := deps.Sessions.ClientForAccount(r.Context(), uid, acct.ID)
+	if err != nil {
+		return "", nil, false
+	}
+	info, err := client.GetShare(r.Context(), shareID, passCode)
+	if err != nil {
+		switch {
+		case errors.Is(err, pikpak.ErrPassCodeRequired):
+			writeError(w, http.StatusBadRequest, "pass_code_required", "该分享需要访问密码")
+		case errors.Is(err, pikpak.ErrPassCodeWrong):
+			writeError(w, http.StatusBadRequest, "pass_code_wrong", "访问密码不正确")
+		case errors.Is(err, pikpak.ErrShareUnavailable):
+			writeError(w, http.StatusNotFound, "share_unavailable", "分享已失效或已被取消")
+		case !isAccountLevelErr(err):
+			writeUpstreamError(w, err)
+		}
+		return "", nil, false
+	}
+	deps.ShareSessions.put(uid, acct.ID, shareID, info.PassCodeToken, passCode, time.Now())
+	return info.PassCodeToken, &info, true
 }
 
 // migrateShareFavorites rewrites rows saved before links were parsed on add:
@@ -367,12 +508,22 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 	})
 }
 
+// accountLabel names an account in user-facing messages: the display name
+// when the row carries one, else the raw id — a dangling "账号：" would
+// explain nothing.
+func accountLabel(acct store.PikPakAccount) string {
+	if acct.DisplayName != "" {
+		return acct.DisplayName
+	}
+	return acct.ID
+}
+
 // annotateShareFiles adds the two local badges the share browser shows on a
-// video: restored when Pack From Shared already holds a copy with its name and
-// size (the copy 完整播放 would reuse), favorited when it is in 视频收藏夹. The
-// browser shows the star when both are set. A drive that cannot be read simply
-// carries no badges — the listing itself still shows.
-func annotateShareFiles(ctx context.Context, deps Deps, client *pikpak.Client, uid int, shareID string, files []pikpak.File) []map[string]any {
+// video: restored when any account's Pack From Shared already holds a copy
+// with its name and size (the copy 完整播放 would reuse), favorited when it is
+// in 视频收藏夹. The browser shows the star when both are set. Drives that
+// cannot be read simply carry no badges — the listing itself still shows.
+func annotateShareFiles(ctx context.Context, deps Deps, uid int, shareID string, files []pikpak.File) []map[string]any {
 	// A saved video is found by its share file id. PikPak can reissue that id
 	// for the same entry, so name and size — the pair a restored copy is
 	// already matched by — stand in when the id no longer resolves.
@@ -390,21 +541,14 @@ func annotateShareFiles(ctx context.Context, deps Deps, client *pikpak.Client, u
 			}
 		}
 	}
+	copies := packCopies(ctx, deps, uid)
 	restored := map[string]bool{}
-	if root, err := client.ListAllFiles(ctx, ""); err == nil {
-		var pack []pikpak.File
-		if folder, ok := findFolder(root, packFromSharedName); ok {
-			if items, err := client.ListAllFiles(ctx, folder.ID); err == nil {
-				pack = items
-			}
+	for _, f := range files {
+		if f.Kind != "drive#file" {
+			continue
 		}
-		for _, f := range files {
-			if f.Kind != "drive#file" {
-				continue
-			}
-			if _, ok := findSameVideo(pack, f.Name, f.Size); ok {
-				restored[f.ID] = true
-			}
+		if _, _, ok := findCopyAcross(copies, "", f.Name, f.Name, f.Size); ok {
+			restored[f.ID] = true
 		}
 	}
 	out := make([]map[string]any, 0, len(files))

@@ -74,7 +74,10 @@ func shareTotals(ctx context.Context, client *pikpak.Client, shareID, passToken 
 func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav store.ShareFavorite, client *pikpak.Client, count bool) store.ShareFavorite {
 	now := time.Now()
 	meta := store.ShareFavoriteMeta{FileCount: -1, TotalSize: -1}
-	token, cached := deps.ShareSessions.get(uid, fav.ShareID, now)
+	// The walk runs as the default account, so its pass-code session lives
+	// under the default account's id — the key the share browser writes.
+	acctID := defaultAccountID(ctx, deps, uid)
+	token, _, cached := deps.ShareSessions.get(uid, acctID, fav.ShareID, now)
 	needInfo := fav.OwnerName == "" || fav.ShareCreatedAt == ""
 	if !cached || needInfo {
 		code := fav.PassCode
@@ -97,7 +100,7 @@ func refreshShareFavoriteStats(ctx context.Context, deps Deps, uid int, fav stor
 			meta.ShareCreatedAt = info.CreatedAt
 			meta.ExpireAt = info.ExpireAt
 			token = info.PassCodeToken
-			deps.ShareSessions.put(uid, fav.ShareID, token, now)
+			deps.ShareSessions.put(uid, acctID, fav.ShareID, token, code, now)
 		}
 	}
 	// A share without a pass code answers with no token, and its folders are

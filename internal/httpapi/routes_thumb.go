@@ -78,13 +78,13 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 
-		client, _, ok := accountClient(w, r, deps)
+		client, acct, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
 		var link string
 		if shareID != "" {
-			token, ok := thumbShareToken(w, r, deps, client, id.UID, shareID)
+			token, ok := thumbShareToken(w, r, deps, client, id.UID, acct.ID, shareID)
 			if !ok {
 				return
 			}
@@ -120,15 +120,16 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 // thumbShareToken returns the pass-code token for a share file. 视频收藏夹
 // shows share thumbnails without ever opening the share, so when no session
 // is cached a saved video's sealed code reopens it and seeds the session.
-func thumbShareToken(w http.ResponseWriter, r *http.Request, deps Deps, client *pikpak.Client, uid int, shareID string) (string, bool) {
+// Sessions are per account, keyed by the account the request acts as.
+func thumbShareToken(w http.ResponseWriter, r *http.Request, deps Deps, client *pikpak.Client, uid int, accountID, shareID string) (string, bool) {
 	now := time.Now()
-	if token, ok := deps.ShareSessions.get(uid, shareID, now); ok {
+	if token, _, ok := deps.ShareSessions.get(uid, accountID, shareID, now); ok {
 		return token, true
 	}
 	if deps.Store != nil {
 		if code, err := deps.Store.VideoSharePassCode(r.Context(), uid, shareID); err == nil {
 			if info, gerr := client.GetShare(r.Context(), shareID, code); gerr == nil {
-				deps.ShareSessions.put(uid, shareID, info.PassCodeToken, now)
+				deps.ShareSessions.put(uid, accountID, shareID, info.PassCodeToken, code, now)
 				return info.PassCodeToken, true
 			}
 		}
@@ -136,7 +137,7 @@ func thumbShareToken(w http.ResponseWriter, r *http.Request, deps Deps, client *
 	// A public share needs no code at all: opening it with an empty one still
 	// seeds the session, which is what 视频收藏夹 needs for its thumbnails.
 	if info, err := client.GetShare(r.Context(), shareID, ""); err == nil {
-		deps.ShareSessions.put(uid, shareID, info.PassCodeToken, now)
+		deps.ShareSessions.put(uid, accountID, shareID, info.PassCodeToken, "", now)
 		return info.PassCodeToken, true
 	}
 	writeError(w, http.StatusBadRequest, "share_session_missing", "分享会话已过期，请重新打开分享")

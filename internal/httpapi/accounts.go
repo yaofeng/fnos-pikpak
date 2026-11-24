@@ -109,6 +109,25 @@ func accountForParam(w http.ResponseWriter, r *http.Request, deps Deps, param st
 	return client, acct, true
 }
 
+// defaultAccountClient is accountForParam pinned to the caller's default
+// account: the share browser opens, browses and restores as one identity so
+// the pass-code session those routes share is keyed under that account's id.
+func defaultAccountClient(w http.ResponseWriter, r *http.Request, deps Deps) (*pikpak.Client, store.PikPakAccount, bool) {
+	return accountForParam(w, r, deps, "")
+}
+
+// defaultAccountID resolves the account id the bare-uid session lives under,
+// so share pass-code sessions stay keyed the way every route keys them. A
+// user bound before accounts existed resolves to "" — the placeholder
+// identity, like the session layer serves it. Errors degrade to "".
+func defaultAccountID(ctx context.Context, deps Deps, uid int) string {
+	acct, err := deps.resolveAccount(ctx, uid, "")
+	if err != nil {
+		return ""
+	}
+	return acct.ID
+}
+
 // allAccountClients returns a client per active account. Accounts whose
 // session cannot be loaded (credential already gone) are skipped; if that
 // leaves nothing, the caller sees a 401 rather than an empty list that would

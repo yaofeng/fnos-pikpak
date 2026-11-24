@@ -283,7 +283,7 @@ func newVideoEnv(t *testing.T, tweak func(up *videoUpstream)) (Deps, http.Handle
 	bindTestUser(t, st, 1000)
 	deps.ShareSessions = newShareSessions()
 	deps.Videos = newVideoJobs()
-	deps.ShareSessions.put(1000, "VOabc123", "tok-1", time.Now())
+	deps.ShareSessions.put(1000, "", "VOabc123", "tok-1", "", time.Now())
 	return deps, NewMux(deps), up
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -323,5 +324,136 @@ func TestShareFavoritesMigrateStoredLinksToShareIDs(t *testing.T) {
 	}
 	if got.ShareID != "VOabc123" || got.PassCode != "7f3a" {
 		t.Fatalf("migrated row = %+v", got)
+	}
+}
+
+// TestRestoreRotatesAccounts pins the restore rotation: an account-level
+// upstream failure moves the restore to the next account, while a share-level
+// refusal (a wrong pass code travels with the link) ends the request at the
+// first account — no other account is asked for anything.
+func TestRestoreRotatesAccounts(t *testing.T) {
+	var mu sync.Mutex
+	type tally struct{ open, restore int }
+	calls := map[string]*tally{"at-acct-a": {}, "at-acct-b": {}}
+	passGone := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/drive/v1/share":
+			calls[token].open++
+			if passGone {
+				_ = json.NewEncoder(w).Encode(map[string]any{"share_status": "PASS_CODE_ERROR"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"share_status":    "OK",
+				"pass_code_token": "tok-1",
+				"title":           "资料",
+				"files":           []map[string]any{},
+			})
+		case "/drive/v1/files":
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{}})
+		case "/drive/v1/share/restore":
+			calls[token].restore++
+			if token == "at-acct-a" {
+				// An account-level refusal the rotation must move past. The
+				// daily-quota shape is used because a bare 500 would be
+				// retried three times inside the client first (same fake as
+				// the offline-task rotation).
+				w.WriteHeader(http.StatusTooManyRequests)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "file_task_quota_exceeded", "error_code": 11})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"task_id": "t1"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	snapshot := func() map[string]tally {
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string]tally{}
+		for k, v := range calls {
+			out[k] = *v
+		}
+		return out
+	}
+
+	// Opening the share seeds the default account's session, pass code
+	// included; the restore reads that code back to reopen per account.
+	if rec, body := getJSON(t, h, "/api/share?url=VOabc123&pass_code=7f3a", "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("open: %d %v", rec.Code, body)
+	}
+
+	// The shuffle order is random, so the request repeats until the failing
+	// account has actually been tried; every repetition must succeed on
+	// acct-b with exactly one restore there and at most one on acct-a.
+	rotated := false
+	for i := 0; i < 30 && !rotated; i++ {
+		before := snapshot()
+		rec, body := postJSON(t, h, "/api/share/restore", "1000", `{"share_id":"VOabc123","file_ids":["sf2"]}`)
+		after := snapshot()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("restore status = %d body=%v", rec.Code, body)
+		}
+		if body["account_id"] != "acct-b" || body["account_name"] != "账号acct-b" {
+			t.Fatalf("stamp = %v/%v", body["account_id"], body["account_name"])
+		}
+		if d := after["at-acct-b"].restore - before["at-acct-b"].restore; d != 1 {
+			t.Fatalf("healthy account restore calls per request = %d, want 1", d)
+		}
+		d := after["at-acct-a"].restore - before["at-acct-a"].restore
+		if d > 1 {
+			t.Fatalf("failing account restore calls per request = %d, want at most one", d)
+		}
+		rotated = d == 1
+	}
+	if !rotated {
+		t.Fatal("the failing account was never tried; rotation never happened")
+	}
+
+	// With the pass code refused upstream, the first account's refusal is the
+	// answer: exactly one upstream touch per request, and acct-b never
+	// restored anything during this phase.
+	mu.Lock()
+	passGone = true
+	mu.Unlock()
+	aRefused := false
+	for i := 0; i < 30 && !aRefused; i++ {
+		before := snapshot()
+		rec, body := postJSON(t, h, "/api/share/restore", "1000", `{"share_id":"VOabc123","file_ids":["sf2"]}`)
+		after := snapshot()
+		if rec.Code != http.StatusBadRequest || errCode(body) != "pass_code_wrong" {
+			t.Fatalf("refusal = %d %v, want 400 pass_code_wrong", rec.Code, body)
+		}
+		touched := (after["at-acct-a"].open - before["at-acct-a"].open) +
+			(after["at-acct-a"].restore - before["at-acct-a"].restore) +
+			(after["at-acct-b"].open - before["at-acct-b"].open) +
+			(after["at-acct-b"].restore - before["at-acct-b"].restore)
+		if touched != 1 {
+			t.Fatalf("upstream calls per refused request = %d, want exactly 1 (no rotation)", touched)
+		}
+		if after["at-acct-a"].open-before["at-acct-a"].open == 0 {
+			continue // acct-b went first this time; keep drawing
+		}
+		bDelta := (after["at-acct-b"].open - before["at-acct-b"].open) +
+			(after["at-acct-b"].restore - before["at-acct-b"].restore)
+		if bDelta != 0 {
+			t.Fatalf("acct-b was asked %d times past a share-level refusal, want 0", bDelta)
+		}
+		aRefused = true
+	}
+	if !aRefused {
+		t.Fatal("acct-a never went first during the refusal phase")
 	}
 }
