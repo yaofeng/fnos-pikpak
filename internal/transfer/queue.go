@@ -12,8 +12,10 @@ import (
 	"fnos-pikpak/internal/store"
 )
 
-// ClientProvider returns the PikPak client for a uid.
-type ClientProvider func(ctx context.Context, uid int) (*pikpak.Client, error)
+// ClientProvider returns the PikPak client a job transfers against. The
+// account id comes from the job row, so the worker acts as the account the
+// task was created with; an empty id is the legacy default credential.
+type ClientProvider func(ctx context.Context, uid int, accountID string) (*pikpak.Client, error)
 
 // ClientLinks adapts a PikPak client to LinkSource.
 type ClientLinks struct{ C *pikpak.Client }
@@ -29,9 +31,8 @@ func (l ClientLinks) DownloadLink(ctx context.Context, fileID string) (Link, err
 type runState struct {
 	cancel context.CancelFunc
 	uid    int
-	// accountID is the PikPak account the job transfers against. reserve()
-	// leaves it empty for now; per-account enqueueing fills it (and makes
-	// CancelAccount able to target one account) in a later task.
+	// accountID is the PikPak account the job transfers against, taken from
+	// the job row when the slot was reserved. CancelAccount matches on it.
 	accountID string
 }
 
@@ -174,10 +175,11 @@ func (q *Queue) loop(ctx context.Context) {
 
 // pendingJob is one queued transfer of either kind, in creation order.
 type pendingJob struct {
-	uid      int
-	id       string
-	download *store.DownloadJob
-	upload   *store.UploadJob
+	uid       int
+	accountID string
+	id        string
+	download  *store.DownloadJob
+	upload    *store.UploadJob
 }
 
 // schedule fills the free slots fairly: jobs are grouped per user, and users
@@ -201,12 +203,12 @@ func (q *Queue) schedule(ctx context.Context) {
 		if takeDownload {
 			d := downloads[i]
 			i++
-			merged = append(merged, pendingJob{uid: d.UID, id: d.ID, download: &d})
+			merged = append(merged, pendingJob{uid: d.UID, accountID: d.AccountID, id: d.ID, download: &d})
 			continue
 		}
 		u := uploads[j]
 		j++
-		merged = append(merged, pendingJob{uid: u.UID, id: u.ID, upload: &u})
+		merged = append(merged, pendingJob{uid: u.UID, accountID: u.AccountID, id: u.ID, upload: &u})
 	}
 
 	// One FIFO per user. Users take turns: the one served longest ago starts
@@ -233,7 +235,7 @@ func (q *Queue) schedule(ctx context.Context) {
 			for len(list) > 0 {
 				p := list[0]
 				list = list[1:]
-				if !q.reserve(p.id, p.uid) {
+				if !q.reserve(p) {
 					continue
 				}
 				queues[uid] = list
@@ -269,18 +271,20 @@ func (q *Queue) schedule(ctx context.Context) {
 }
 
 // reserve claims a slot for a job. It returns false when the job was already
-// running (a duplicate schedule) or the user already has a transfer.
-func (q *Queue) reserve(id string, uid int) bool {
+// running (a duplicate schedule) or the user already has a transfer. The
+// run state carries the job row's account, which is what makes CancelAccount
+// able to stop exactly that account's runs.
+func (q *Queue) reserve(p pendingJob) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if _, ok := q.running[id]; ok {
+	if _, ok := q.running[p.id]; ok {
 		return false
 	}
-	if q.perUser[uid] >= q.PerUser {
+	if q.perUser[p.uid] >= q.PerUser {
 		return false
 	}
-	q.running[id] = &runState{uid: uid, accountID: ""}
-	q.perUser[uid]++
+	q.running[p.id] = &runState{uid: p.uid, accountID: p.accountID}
+	q.perUser[p.uid]++
 	return true
 }
 
@@ -367,7 +371,7 @@ func (q *Queue) downloader(uid int, job *store.DownloadJob) (*Downloader, error)
 	if q.NewDownloader != nil {
 		return q.NewDownloader(uid)
 	}
-	client, err := q.Clients(context.Background(), uid)
+	client, err := q.Clients(context.Background(), uid, job.AccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +448,7 @@ func (q *Queue) uploader(job store.UploadJob) (*Uploader, error) {
 	if q.NewUploader != nil {
 		return q.NewUploader(job.UID)
 	}
-	client, err := q.Clients(context.Background(), job.UID)
+	client, err := q.Clients(context.Background(), job.UID, job.AccountID)
 	if err != nil {
 		return nil, err
 	}

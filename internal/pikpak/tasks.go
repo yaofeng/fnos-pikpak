@@ -29,6 +29,10 @@ type Task struct {
 	Phase    string `json:"phase"`
 	Progress int    `json:"progress"`
 	Message  string `json:"message,omitempty"`
+	// AccountID/AccountName stamp merged cross-account listings with the
+	// account that owns the task; PikPak never sends them.
+	AccountID   string `json:"account_id,omitempty"`
+	AccountName string `json:"account_name,omitempty"`
 }
 
 // IsOffline reports whether the task is a cloud-download task. PikPak lists

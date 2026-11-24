@@ -96,8 +96,8 @@ func main() {
 		CheckDir: func(ctx context.Context, uid int, dir string) error {
 			return dirGuard(ctx, uid, dir, true)
 		},
-		Clients: func(ctx context.Context, uid int) (*pikpak.Client, error) {
-			return sessions.ClientFor(ctx, uid)
+		Clients: func(ctx context.Context, uid int, accountID string) (*pikpak.Client, error) {
+			return sessions.ClientForAccount(ctx, uid, accountID)
 		},
 	}
 	// Both caps come from the same number: the setting counts the transfers a

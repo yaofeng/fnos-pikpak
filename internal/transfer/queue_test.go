@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -432,6 +433,94 @@ func TestCancelAccountWithEmptyIDStopsOnlyThatUsersJobs(t *testing.T) {
 	})
 	if got, _ := st.GetDownloadJob(context.Background(), 2000, "j2"); got.Status != "running" {
 		t.Fatalf("other user's job = %q", got.Status)
+	}
+}
+
+// The provider must be asked with the account the job row carries, so a
+// worker always transfers against the account that created its task.
+func TestQueueUsesJobAccount(t *testing.T) {
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 2, Tick: 20 * time.Millisecond}
+	var mu sync.Mutex
+	var used []string
+	q.Clients = func(ctx context.Context, uid int, accountID string) (*pikpak.Client, error) {
+		mu.Lock()
+		used = append(used, accountID)
+		mu.Unlock()
+		// A client without a session fails fast; this test is about the
+		// account id the provider was asked with, not the transfer itself.
+		return pikpak.NewClient(pikpak.ClientOptions{BaseDrive: "http://127.0.0.1:1"}), nil
+	}
+	q.Start(ctx)
+
+	dir := t.TempDir()
+	for _, job := range []store.DownloadJob{
+		{ID: "j-a", UID: 1000, AccountID: "acct-a", FileID: "f1", FileName: "a",
+			DestDir: dir, DestPath: filepath.Join(dir, "a"), Size: 10, Status: "queued"},
+		{ID: "j-b", UID: 1000, AccountID: "acct-b", FileID: "f2", FileName: "b",
+			DestDir: dir, DestPath: filepath.Join(dir, "b"), Size: 10, Status: "queued"},
+	} {
+		if err := st.PutDownloadJob(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.Notify()
+
+	waitFor(t, "both jobs to ask for their clients", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(used) == 2
+	})
+	mu.Lock()
+	got := append([]string(nil), used...)
+	mu.Unlock()
+	sort.Strings(got)
+	if got[0] != "acct-a" || got[1] != "acct-b" {
+		t.Fatalf("provider saw %v, want each job's own account", got)
+	}
+}
+
+func TestCancelAccountScoped(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 2, PerUser: 2, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.Start(ctx)
+
+	dir := t.TempDir()
+	for _, job := range []store.DownloadJob{
+		{ID: "j-a", UID: 1000, AccountID: "acct-a", FileID: "f1", FileName: "a",
+			DestDir: dir, DestPath: filepath.Join(dir, "a"), Size: 10, Status: "queued"},
+		{ID: "j-b", UID: 1000, AccountID: "acct-b", FileID: "f2", FileName: "b",
+			DestDir: dir, DestPath: filepath.Join(dir, "b"), Size: 10, Status: "queued"},
+	} {
+		if err := st.PutDownloadJob(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.Notify()
+	waitFor(t, "both downloads to start", func() bool {
+		a, _ := st.GetDownloadJob(context.Background(), 1000, "j-a")
+		b, _ := st.GetDownloadJob(context.Background(), 1000, "j-b")
+		return a.Status == "running" && b.Status == "running"
+	})
+
+	// Logging out one account stops that account's runs and leaves the
+	// others alone.
+	q.CancelAccount(1000, "acct-a")
+	waitFor(t, "the account's job to stop", func() bool {
+		got, _ := st.GetDownloadJob(context.Background(), 1000, "j-a")
+		return got.Status == "canceled"
+	})
+	time.Sleep(100 * time.Millisecond)
+	if got, _ := st.GetDownloadJob(context.Background(), 1000, "j-b"); got.Status != "running" {
+		t.Fatalf("the other account's job = %q, want still running", got.Status)
 	}
 }
 

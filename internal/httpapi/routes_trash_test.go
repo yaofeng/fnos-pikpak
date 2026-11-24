@@ -22,8 +22,9 @@ func TestRecentNormalizesEvents(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	deps, _ := newAuthTestDeps(t, srv.URL)
-	bindTestUser(t, deps.Store, 1000)
+	deps, st := newAuthTestDeps(t, srv.URL)
+	// The merged recent listing iterates real account rows.
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
 	h := NewMux(deps)
 
 	rec, body := getJSON(t, h, "/api/recent", "1000")
@@ -37,8 +38,16 @@ func TestRecentNormalizesEvents(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("items = %v", body["items"])
 	}
-	if body["next_page_token"] != "e2" {
-		t.Fatalf("token = %v", body["next_page_token"])
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["account_id"] != "acct-a" {
+			t.Fatalf("item = %v, want the account stamp", item)
+		}
+	}
+	// The envelope token wraps the upstream one, it is not the raw value.
+	token, _ := body["next_page_token"].(string)
+	if token == "" || token == "e2" {
+		t.Fatalf("next_page_token = %v, want the merged envelope", body["next_page_token"])
 	}
 }
 

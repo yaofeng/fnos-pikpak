@@ -77,8 +77,15 @@ func (deps Deps) resolveAccount(ctx context.Context, uid int, raw string) (store
 // default account when the parameter is absent. On failure the response is
 // already written and ok is false.
 func accountClient(w http.ResponseWriter, r *http.Request, deps Deps) (*pikpak.Client, store.PikPakAccount, bool) {
+	return accountForParam(w, r, deps, r.URL.Query().Get("account"))
+}
+
+// accountForParam is accountClient with the parameter made explicit, so a
+// batch item can carry its own account id and fall back to the query when it
+// does not.
+func accountForParam(w http.ResponseWriter, r *http.Request, deps Deps, param string) (*pikpak.Client, store.PikPakAccount, bool) {
 	id, _ := fnos.IdentityFrom(r.Context())
-	acct, err := deps.resolveAccount(r.Context(), id.UID, r.URL.Query().Get("account"))
+	acct, err := deps.resolveAccount(r.Context(), id.UID, param)
 	if err != nil {
 		switch {
 		case errors.Is(err, pikpak.ErrNotBound):
@@ -170,6 +177,33 @@ func shuffledActives(accounts []store.PikPakAccount) []store.PikPakAccount {
 		actives[i], actives[j.Int64()] = actives[j.Int64()], actives[i]
 	}
 	return actives
+}
+
+// rotatingAccounts returns every usable active account in per-request random
+// order, for operations that one account may refuse at the account level so
+// the next one gets a turn. Accounts whose session cannot be loaded are
+// skipped; with nothing usable the structured refusal is written and ok is
+// false.
+func rotatingAccounts(w http.ResponseWriter, r *http.Request, deps Deps) ([]namedClient, bool) {
+	id, _ := fnos.IdentityFrom(r.Context())
+	accounts, err := deps.Store.ListAccounts(r.Context(), id.UID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "无法读取账号")
+		return nil, false
+	}
+	var out []namedClient
+	for _, acct := range shuffledActives(accounts) {
+		client, err := deps.Sessions.ClientForAccount(r.Context(), id.UID, acct.ID)
+		if err != nil {
+			continue
+		}
+		out = append(out, namedClient{Account: acct, C: client})
+	}
+	if len(out) == 0 {
+		writeError(w, http.StatusUnauthorized, "no_active_account", "没有可用的 PikPak 账号，请重新授权或绑定")
+		return nil, false
+	}
+	return out, true
 }
 
 // registerAccountsRoute serves GET /api/accounts: one row per bound account,

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -81,7 +82,9 @@ func newTasksEnv(t *testing.T, quota bool) *tasksEnv {
 	env.upstream = httptest.NewServer(mux)
 	t.Cleanup(env.upstream.Close)
 	deps, st := newAuthTestDeps(t, env.upstream.URL)
-	bindTestUser(t, st, 1000)
+	// The merged task routes iterate real account rows, so the env binds one
+	// named account rather than a bare credential.
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
 	env.deps = deps
 	return env
 }
@@ -90,7 +93,7 @@ func TestTasksListFiltersPhaseAndForwardsToken(t *testing.T) {
 	env := newTasksEnv(t, false)
 	h := NewMux(env.deps)
 
-	rec, body := getJSON(t, h, "/api/tasks?phase=PHASE_TYPE_RUNNING&page_token=t0", "1000")
+	rec, body := getJSON(t, h, "/api/tasks?phase=PHASE_TYPE_RUNNING", "1000")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -102,10 +105,21 @@ func TestTasksListFiltersPhaseAndForwardsToken(t *testing.T) {
 	if first["id"] != "t1" || first["progress"] != float64(30) {
 		t.Fatalf("item = %v", first)
 	}
-	if body["next_page_token"] != "n1" {
-		t.Fatalf("token = %v", body["next_page_token"])
+	// Every merged row says which account it came from.
+	if first["account_id"] != "acct-a" || first["account_name"] != "账号acct-a" {
+		t.Fatalf("stamp = %v/%v", first["account_id"], first["account_name"])
 	}
-	if env.listQuery["page_token"] != "t0" {
+	// The next-page token is the handler's own envelope; the upstream token
+	// travels inside it and is forwarded on the following request.
+	token, _ := body["next_page_token"].(string)
+	if token == "" || token == "n1" {
+		t.Fatalf("next_page_token = %v, want the merged envelope", body["next_page_token"])
+	}
+	rec, body = getJSON(t, h, "/api/tasks?phase=PHASE_TYPE_RUNNING&page_token="+token, "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second status = %d body=%v", rec.Code, body)
+	}
+	if env.listQuery["page_token"] != "n1" {
 		t.Fatalf("upstream query = %v", env.listQuery)
 	}
 	// PikPak rejects phase filters with invalid_argument, so the handler must
@@ -157,6 +171,10 @@ func TestCreateTaskUsesDownloadFolderType(t *testing.T) {
 	if task["id"] != "t9" {
 		t.Fatalf("task = %v", body)
 	}
+	// The response names the account that took the task.
+	if body["account_id"] != "acct-a" || body["account_name"] != "账号acct-a" {
+		t.Fatalf("stamp = %v/%v", body["account_id"], body["account_name"])
+	}
 	if env.createBody["folder_type"] != "DOWNLOAD" || env.createBody["upload_type"] != "UPLOAD_TYPE_URL" {
 		t.Fatalf("body = %v", env.createBody)
 	}
@@ -187,9 +205,167 @@ func TestCreateTaskDailyLimitIs429(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
+	// With every account exhausted the refusal is the rotation's, and the
+	// message names the account that refused.
 	errObj, _ := body["error"].(map[string]any)
-	if errObj["code"] != "daily_limit_reached" {
+	if errObj["code"] != "all_accounts_failed" {
 		t.Fatalf("error = %v", body)
+	}
+	if msg, _ := errObj["message"].(string); !strings.Contains(msg, "账号acct-a") {
+		t.Fatalf("message = %v, want the account name", errObj["message"])
+	}
+}
+
+func TestCreateTaskRotatesAccounts(t *testing.T) {
+	var mu sync.Mutex
+	calls := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		mu.Lock()
+		calls[token]++
+		mu.Unlock()
+		if token == "at-acct-a" {
+			// The first account is out of offline quota: an account-level
+			// refusal the rotation must move past.
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"file_task_quota_exceeded","error_code":11}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"task":{"id":"t9","phase":"PHASE_TYPE_PENDING","file_name":"x"}}`)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	snapshot := func() map[string]int {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make(map[string]int, len(calls))
+		for k, v := range calls {
+			out[k] = v
+		}
+		return out
+	}
+
+	// The shuffle order is random, so the request repeats until the failing
+	// account has actually been tried; every repetition must serve 201 from
+	// the healthy account with exactly one CreateOffline there and at most
+	// one on the failing one.
+	rotated := false
+	for i := 0; i < 30 && !rotated; i++ {
+		before := snapshot()
+		rec, body := postJSON(t, h, "/api/tasks", "1000", `{"link":"https://example.com/a.bin"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d body=%v", rec.Code, body)
+		}
+		if body["account_id"] != "acct-b" {
+			t.Fatalf("account_id = %v, want the healthy acct-b", body["account_id"])
+		}
+		after := snapshot()
+		if d := after["at-acct-b"] - before["at-acct-b"]; d != 1 {
+			t.Fatalf("healthy upstream calls per request = %d, want 1", d)
+		}
+		d := after["at-acct-a"] - before["at-acct-a"]
+		if d > 1 {
+			t.Fatalf("failing upstream calls per request = %d, want at most one", d)
+		}
+		rotated = d == 1
+	}
+	if !rotated {
+		t.Fatal("the failing account was never tried; rotation never happened")
+	}
+}
+
+func TestCreateTaskAllAccountsFail(t *testing.T) {
+	var mu sync.Mutex
+	calls := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls[r.Header.Get("Authorization")]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"file_task_quota_exceeded","error_code":11}`)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	rec, body := postJSON(t, h, "/api/tasks", "1000", `{"link":"https://example.com/a.bin"}`)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	errObj, _ := body["error"].(map[string]any)
+	if errObj["code"] != "all_accounts_failed" {
+		t.Fatalf("error = %v", body)
+	}
+	msg, _ := errObj["message"].(string)
+	if !strings.Contains(msg, "账号acct-a") || !strings.Contains(msg, "账号acct-b") {
+		t.Fatalf("message = %q, want every account named", msg)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["Bearer at-acct-a"] != 1 || calls["Bearer at-acct-b"] != 1 {
+		t.Fatalf("calls = %v, want one try per account", calls)
+	}
+}
+
+func TestTaskMutationsRequireAccount(t *testing.T) {
+	env := newTasksEnv(t, false)
+	h := NewMux(env.deps)
+
+	// A merged-listing row always carries its account, so a bare mutation has
+	// no account to act as and is refused before touching any upstream.
+	rec, body := postJSON(t, h, "/api/tasks/t1/retry", "1000", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("retry status = %d body=%v", rec.Code, body)
+	}
+	if errCode(body) != "bad_request" {
+		t.Fatalf("retry error = %v, want bad_request", body["error"])
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/tasks?ids=t1", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("delete status = %d body=%s", rec2.Code, rec2.Body)
+	}
+	if errCode(body) != "bad_request" {
+		t.Fatalf("delete error = %v, want bad_request", body["error"])
+	}
+	if env.deleteQuery != nil {
+		t.Fatalf("the delete reached the upstream without an account: %v", env.deleteQuery)
+	}
+
+	// Naming the account sends the mutation to that account's upstream.
+	req = httptest.NewRequest(http.MethodDelete, "/api/tasks?ids=t1,t2&delete_files=true&account=acct-a", nil)
+	req.Header.Set("X-Trim-Userid", "1000")
+	rec2 = httptest.NewRecorder()
+	h.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("delete with account status = %d body=%s", rec2.Code, rec2.Body)
+	}
+	if env.deleteQuery["task_ids"] != "t1,t2" {
+		t.Fatalf("task_ids = %q", env.deleteQuery["task_ids"])
+	}
+	if rec, body := postJSON(t, h, "/api/tasks/t1/retry?account=acct-a", "1000", `{}`); rec.Code != http.StatusOK {
+		t.Fatalf("retry with account status = %d body=%v", rec.Code, body)
 	}
 }
 
@@ -197,7 +373,7 @@ func TestRetryTask(t *testing.T) {
 	env := newTasksEnv(t, false)
 	h := NewMux(env.deps)
 
-	rec, body := postJSON(t, h, "/api/tasks/t1/retry", "1000", `{}`)
+	rec, body := postJSON(t, h, "/api/tasks/t1/retry?account=acct-a", "1000", `{}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -207,7 +383,7 @@ func TestDeleteTasksForwardsIDsAndDeleteFiles(t *testing.T) {
 	env := newTasksEnv(t, false)
 	h := NewMux(env.deps)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/tasks?ids=t1,t2&delete_files=true", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/tasks?ids=t1,t2&delete_files=true&account=acct-a", nil)
 	req.Header.Set("X-Trim-Userid", "1000")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

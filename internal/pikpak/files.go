@@ -127,6 +127,9 @@ type File struct {
 	// Trashed marks a file sitting in the trash. PikPak's plain listing still
 	// returns those, so existence checks must filter them out.
 	Trashed bool `json:"trashed"`
+	// AccountID stamps merged cross-account listings with the account that
+	// served the row; PikPak never sends it.
+	AccountID string `json:"account_id,omitempty"`
 	// ThumbnailLink is a short-lived CDN URL. It stays server-side: the
 	// browser asks /api/thumb instead.
 	ThumbnailLink string `json:"-"`

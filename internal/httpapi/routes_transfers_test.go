@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"fnos-pikpak/internal/store"
@@ -62,7 +63,7 @@ func TestCreateDownloadCreatesQueuedJob(t *testing.T) {
 	dir := t.TempDir()
 
 	rec, body := postJSON(t, h, "/api/downloads", "1000",
-		`{"file_ids":["f1"],"dest_dir":"`+dir+`"}`)
+		`{"items":[{"file_id":"f1"}],"dest_dir":"`+dir+`"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -95,7 +96,7 @@ func TestCreateDownloadPicksUniqueNameWhenFileExists(t *testing.T) {
 	}
 
 	rec, body := postJSON(t, h, "/api/downloads", "1000",
-		`{"file_ids":["f1"],"dest_dir":"`+dir+`"}`)
+		`{"items":[{"file_id":"f1"}],"dest_dir":"`+dir+`"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -111,7 +112,7 @@ func TestCreateDownloadRejectsForeignDirectory(t *testing.T) {
 	h := NewMux(env.deps)
 
 	rec, body := postJSON(t, h, "/api/downloads", "1000",
-		`{"file_ids":["f1"],"dest_dir":"/vol1/other"}`)
+		`{"items":[{"file_id":"f1"}],"dest_dir":"/vol1/other"}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -123,7 +124,7 @@ func TestCreateDownloadWithoutFnOSIs503(t *testing.T) {
 	h := NewMux(env.deps)
 
 	rec, body := postJSON(t, h, "/api/downloads", "1000",
-		`{"file_ids":["f1"],"dest_dir":"/vol1/1001/pikpak"}`)
+		`{"items":[{"file_id":"f1"}],"dest_dir":"/vol1/1001/pikpak"}`)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -250,7 +251,7 @@ func TestCreateDownloadUsesDefaultDir(t *testing.T) {
 	h := NewMux(env.deps)
 
 	// No dest_dir: the file goes to the directory the user configured once.
-	rec, body := postJSON(t, h, "/api/downloads", "1000", `{"file_ids":["f1"]}`)
+	rec, body := postJSON(t, h, "/api/downloads", "1000", `{"items":[{"file_id":"f1"}]}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -268,7 +269,7 @@ func TestCreateDownloadWithoutDefaultDirAsksForOne(t *testing.T) {
 	defer env.close()
 	h := NewMux(env.deps)
 
-	rec, body := postJSON(t, h, "/api/downloads", "1000", `{"file_ids":["f1"]}`)
+	rec, body := postJSON(t, h, "/api/downloads", "1000", `{"items":[{"file_id":"f1"}]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
@@ -366,7 +367,10 @@ func TestBatchDownloadsWithSameNameGetDistinctPaths(t *testing.T) {
 	h := NewMux(deps)
 	dir := t.TempDir()
 
-	raw, _ := json.Marshal(map[string]any{"file_ids": []string{"f1", "f2"}, "dest_dir": dir})
+	raw, _ := json.Marshal(map[string]any{
+		"items":    []map[string]string{{"file_id": "f1"}, {"file_id": "f2"}},
+		"dest_dir": dir,
+	})
 	rec, body := postJSON(t, h, "/api/downloads", "1000", string(raw))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
@@ -380,6 +384,93 @@ func TestBatchDownloadsWithSameNameGetDistinctPaths(t *testing.T) {
 	}
 	if jobs[0].FileName != "same.mkv" || jobs[1].FileName != "same.mkv" {
 		t.Fatalf("names = %+v", jobs)
+	}
+}
+
+func TestDownloadItemsCarryAccounts(t *testing.T) {
+	var mu sync.Mutex
+	detailTokens := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/drive/v1/files/") {
+			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			mu.Lock()
+			detailTokens = append(detailTokens, token)
+			mu.Unlock()
+			name := "a.mkv"
+			if token == "at-acct-b" {
+				name = "b.mkv"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"f1","name":"`+name+`","size":"10","kind":"drive#file","phase":"PHASE_TYPE_COMPLETE"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	deps.DirGuard = allowAll
+	deps.Queue = &transfer.Queue{Store: st}
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+	dir := t.TempDir()
+
+	// Two items, two accounts: each FileDetail goes to its own upstream
+	// identity and each job row is tagged with the account that serves it.
+	raw, _ := json.Marshal(map[string]any{
+		"items": []map[string]string{
+			{"file_id": "f1", "account_id": "acct-a"},
+			{"file_id": "f1", "account_id": "acct-b"},
+		},
+		"dest_dir": dir,
+	})
+	rec, body := postJSON(t, h, "/api/downloads", "1000", string(raw))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	mu.Lock()
+	details := append([]string(nil), detailTokens...)
+	mu.Unlock()
+	if len(details) != 2 || details[0] == details[1] {
+		t.Fatalf("FileDetail calls = %v, want one per account", details)
+	}
+	jobs, err := st.ListDownloadJobs(t.Context(), 1000)
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %+v err = %v", jobs, err)
+	}
+	byAcct := map[string]string{}
+	for _, job := range jobs {
+		byAcct[job.AccountID] = job.FileName
+	}
+	if byAcct["acct-a"] != "a.mkv" || byAcct["acct-b"] != "b.mkv" {
+		t.Fatalf("rows = %v, want one per account with its own file", byAcct)
+	}
+
+	// An item without its own account_id falls back to ?account=.
+	dir2 := t.TempDir()
+	raw, _ = json.Marshal(map[string]any{
+		"items":    []map[string]string{{"file_id": "f1"}},
+		"dest_dir": dir2,
+	})
+	if rec, body := postJSON(t, h, "/api/downloads?account=acct-b", "1000", string(raw)); rec.Code != http.StatusCreated {
+		t.Fatalf("fallback status = %d body=%v", rec.Code, body)
+	}
+	jobs, _ = st.ListDownloadJobs(t.Context(), 1000)
+	if len(jobs) != 3 {
+		t.Fatalf("jobs = %+v, want the third one", jobs)
+	}
+	found := false
+	for _, job := range jobs {
+		if job.DestDir == dir2 && job.AccountID != "acct-b" {
+			t.Fatalf("fallback job = %+v, want acct-b", job)
+		}
+		if job.DestDir == dir2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the fallback job is missing: %+v", jobs)
 	}
 }
 

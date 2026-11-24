@@ -114,15 +114,18 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("POST /api/downloads", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			FileIDs  []string `json:"file_ids"`
-			DestDir  string   `json:"dest_dir"`
-			Conflict string   `json:"conflict"`
+			Items []struct {
+				FileID    string `json:"file_id"`
+				AccountID string `json:"account_id"`
+			} `json:"items"`
+			DestDir  string `json:"dest_dir"`
+			Conflict string `json:"conflict"`
 		}
 		if err := decodeJSON(w, r, &body); err != nil {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
-		if len(body.FileIDs) == 0 || len(body.FileIDs) > maxBatchIDs {
+		if len(body.Items) == 0 || len(body.Items) > maxBatchIDs {
 			writeError(w, http.StatusBadRequest, "bad_ids", "一次需要选择 1 到 200 个文件")
 			return
 		}
@@ -145,10 +148,6 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			writeDirError(w, err)
 			return
 		}
-		client, _, ok := accountClient(w, r, deps)
-		if !ok {
-			return
-		}
 
 		policy := transfer.ConflictPolicy(strings.TrimSpace(body.Conflict))
 		if policy == "" {
@@ -160,8 +159,25 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 		// Names claimed by this batch: two files called the same thing in one
 		// request would otherwise be written to one path.
 		claimed := map[string]bool{}
-		for _, fileID := range body.FileIDs {
-			file, err := client.FileDetail(r.Context(), fileID)
+		// One account can serve several items of a batch; the first item to
+		// name it builds the client the rest reuse. An item without its own
+		// account falls back to ?account=.
+		perAccount := map[string]namedClient{}
+		for _, item := range body.Items {
+			param := item.AccountID
+			if param == "" {
+				param = r.URL.Query().Get("account")
+			}
+			nc, ok := perAccount[param]
+			if !ok {
+				client, acct, ok := accountForParam(w, r, deps, param)
+				if !ok {
+					return
+				}
+				nc = namedClient{Account: acct, C: client}
+				perAccount[param] = nc
+			}
+			file, err := nc.C.FileDetail(r.Context(), item.FileID)
 			if err != nil {
 				writeUpstreamError(w, err)
 				return
@@ -185,7 +201,8 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			claimed[destPath] = true
 
 			job := store.DownloadJob{
-				ID: newJobID(), UID: id.UID, FileID: file.ID, FileName: name,
+				ID: newJobID(), UID: id.UID, AccountID: nc.Account.ID,
+				FileID: file.ID, FileName: name,
 				DestDir: destDir, DestPath: destPath, Size: file.Size, Status: "queued",
 			}
 			if err := deps.Store.PutDownloadJob(r.Context(), job); err != nil {
@@ -252,7 +269,10 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_paths", "一次需要选择 1 到 200 个文件")
 			return
 		}
-		if _, _, ok := accountClient(w, r, deps); !ok {
+		// ?account= picks the account the files upload into; absent, the
+		// user's default account takes them. The rows remember which one.
+		_, acct, ok := accountClient(w, r, deps)
+		if !ok {
 			return
 		}
 
@@ -264,7 +284,7 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 				return
 			}
 			job := store.UploadJob{
-				ID: newJobID(), UID: id.UID, LocalPath: path,
+				ID: newJobID(), UID: id.UID, AccountID: acct.ID, LocalPath: path,
 				ParentID: strings.TrimSpace(body.ParentID), RemoteName: filepath.Base(path),
 				Size: st.Size(), Status: "queued",
 			}

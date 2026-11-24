@@ -29,19 +29,28 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	registerFileOperationRoutes(mux, deps)
 
 	mux.HandleFunc("GET /api/recent", func(w http.ResponseWriter, r *http.Request) {
-		client, _, ok := accountClient(w, r, deps)
+		clients, ok := allAccountClients(w, r, deps)
 		if !ok {
 			return
 		}
-		page, err := client.Events(r.Context(), r.URL.Query().Get("page_token"))
+		tokens, err := decodePageToken(r.URL.Query().Get("page_token"))
 		if err != nil {
-			writeUpstreamError(w, err)
+			writeError(w, http.StatusBadRequest, "bad_page_token", "page_token 不合法")
 			return
 		}
-		writeJSON(w, http.StatusOK, filesResponse{
-			Items:         nonNilFiles(page.Items),
-			NextPageToken: page.NextPageToken,
-		})
+		pages, nexts, failures := fetchFilePages(r.Context(), clients, tokens)
+		items := mergeFilePages(pages, clients)
+		if items == nil {
+			items = []pikpak.File{}
+		}
+		resp := recentResponse{
+			Items:         items,
+			NextPageToken: nextPageToken(clients, nexts, failures),
+		}
+		if len(failures) > 0 {
+			resp.AccountErrors = accountErrorList(clients, failures)
+		}
+		writeJSON(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("GET /api/trash", func(w http.ResponseWriter, r *http.Request) {
