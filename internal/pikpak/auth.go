@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -181,12 +182,14 @@ func mapTokenError(code string) error {
 	}
 }
 
-// Session is one fnOS user's PikPak session. It refreshes the access token at
-// most once across concurrent callers.
+// Session is one fnOS user's PikPak session for one account. It refreshes the
+// access token at most once across concurrent callers. accountID is empty for
+// sessions created before accounts existed (legacy path).
 type Session struct {
-	client *Client
-	st     *store.Store
-	uid    int
+	client    *Client
+	st        *store.Store
+	uid       int
+	accountID string
 
 	mu           sync.Mutex
 	access       string
@@ -197,11 +200,12 @@ type Session struct {
 	disabled     bool
 }
 
-func NewSession(c *Client, st *store.Store, uid int, cred store.Credential) *Session {
+func NewSession(c *Client, st *store.Store, uid int, accountID string, cred store.Credential) *Session {
 	return &Session{
 		client:       c,
 		st:           st,
 		uid:          uid,
+		accountID:    accountID,
 		access:       cred.AccessToken,
 		refreshToken: cred.RefreshToken,
 		expiresAt:    cred.AccessExpiresAt,
@@ -300,6 +304,7 @@ func (s *Session) refreshOnce(ctx context.Context) error {
 		// used; losing the rotation would strand the session.
 		cred := store.Credential{
 			UID:             s.uid,
+			AccountID:       s.accountID,
 			AuthType:        "oauth",
 			ClientID:        s.client.ClientID,
 			AccessToken:     tok.AccessToken,
@@ -319,45 +324,62 @@ func (s *Session) refreshOnce(ctx context.Context) error {
 	return nil
 }
 
-// disable makes the session unusable and prevents any in-flight refresh from
-// writing credentials back after a logout.
-func (s *Session) disable() {
-	s.mu.Lock()
-	s.disabled = true
-	s.mu.Unlock()
-}
-
 // markReauth latches the session as needing reauthorization and records that
-// on the user row, which is where the app shell reads it from.
+// on the owning account row, which is where the shell reads the banner state
+// from. Sessions that predate account rows keep writing the users row.
 func (s *Session) markReauth(ctx context.Context) {
 	s.mu.Lock()
 	s.reauth = true
-	st, uid := s.st, s.uid
+	st, uid, accountID := s.st, s.uid, s.accountID
 	s.mu.Unlock()
 	if st == nil {
 		return
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	if accountID != "" {
+		_ = st.SetAccountStatus(writeCtx, uid, accountID, "reauth_required")
+		return
+	}
 	_ = st.SetUserStatus(writeCtx, uid, "reauth_required")
 }
 
-// SessionStore owns one Session per fnOS uid for the life of the process.
+// sessionKey namespaces the session and limiter maps by (uid, account): one
+// fnOS user can hold several PikPak identities side by side. The "uid:" prefix
+// of the store's placeholder credential key can never collide with the "|" in
+// the middle.
+func sessionKey(uid int, accountID string) string {
+	return strconv.Itoa(uid) + "|" + accountID
+}
+
+// legacyAccountID maps the store's pre-account placeholder key ("uid:<n>",
+// written by bind completion before routes create account rows) back to the
+// legacy empty account id, so sessions — and everything derived from them,
+// like persisted refreshes — carry real account ids or nothing at all.
+func legacyAccountID(accountID string) string {
+	if strings.HasPrefix(accountID, "uid:") {
+		return ""
+	}
+	return accountID
+}
+
+// SessionStore owns one Session per (fnOS uid, PikPak account) for the life of
+// the process.
 type SessionStore struct {
 	st     *store.Store
 	client *Client
 
 	mu       sync.Mutex
-	sessions map[int]*Session
-	limiters map[int]*limiter
+	sessions map[string]*Session
+	limiters map[string]*limiter
 }
 
 func NewSessionStore(st *store.Store, client *Client) *SessionStore {
 	return &SessionStore{
 		st:       st,
 		client:   client,
-		sessions: map[int]*Session{},
-		limiters: map[int]*limiter{},
+		sessions: map[string]*Session{},
+		limiters: map[string]*limiter{},
 	}
 }
 
@@ -367,80 +389,237 @@ func (s *SessionStore) Client() *Client {
 	return s.client
 }
 
+// Get returns the session of the user's default account. Kept as a thin
+// wrapper until every caller knows about accounts; torn down with the rest of
+// the legacy surface.
 func (s *SessionStore) Get(ctx context.Context, uid int) (*Session, error) {
-	// Held across the DB read so a concurrent Drop (same lock) cannot be
-	// undone by a stale session being cached afterwards.
+	return s.GetAccountSession(ctx, uid, "")
+}
+
+// GetAccountSession returns the cached session for (uid, accountID), loading
+// it from the store on first use. An empty accountID resolves the user's
+// default account: the first active row in bind order, else the oldest row.
+// The store lock is held across the DB reads so a concurrent Drop cannot be
+// undone by a stale session being cached afterwards.
+func (s *SessionStore) GetAccountSession(ctx context.Context, uid int, accountID string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess, ok := s.sessions[uid]; ok {
+
+	if accountID == "" {
+		// A session installed without an account id (bind completion before
+		// the routes grow account handling) is the credential the user last
+		// authenticated with — keep serving it, like the pre-account Get did.
+		if sess, ok := s.sessions[sessionKey(uid, "")]; ok {
+			return sess, nil
+		}
+		id, err := s.defaultAccountID(ctx, uid)
+		if err != nil {
+			return nil, err
+		}
+		accountID = id
+	}
+
+	key := sessionKey(uid, accountID)
+	if sess, ok := s.sessions[key]; ok {
 		return sess, nil
+	}
+
+	cred, err := s.accountCredential(ctx, uid, accountID)
+	if err != nil {
+		return nil, err
+	}
+	sess := NewSession(sessionClient(s.client, cred), s.st, uid, accountID, cred)
+	s.sessions[key] = sess
+	return sess, nil
+}
+
+// defaultAccountID picks the account a bare uid resolves to: the first active
+// row in bind order, else the oldest row. A user with no account rows at all
+// is either mid-migration or bound before accounts existed; the stored
+// credential's own account id keeps the legacy wrappers resolving for them.
+func (s *SessionStore) defaultAccountID(ctx context.Context, uid int) (string, error) {
+	accounts, err := s.st.ListAccounts(ctx, uid)
+	if err != nil {
+		return "", err
+	}
+	oldest := ""
+	for _, a := range accounts {
+		if oldest == "" {
+			oldest = a.ID
+		}
+		if a.Status == "active" {
+			return a.ID, nil
+		}
+	}
+	if oldest != "" {
+		return oldest, nil
 	}
 
 	cred, err := s.st.GetCredential(ctx, uid)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, ErrNotBound
+		return "", ErrNotBound
 	}
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	sess := NewSession(sessionClient(s.client, cred), s.st, uid, cred)
-	s.sessions[uid] = sess
-	return sess, nil
+	return legacyAccountID(cred.AccountID), nil
 }
 
-// ClientFor returns a Client bound to the uid's session, ready for
-// authenticated PikPak calls.
+// accountCredential loads the stored credential of one account. The store
+// only exposes a per-uid read, so the row it resolves to must carry this
+// account's own id; anything else means the account has no loadable
+// credential here.
+func (s *SessionStore) accountCredential(ctx context.Context, uid int, accountID string) (store.Credential, error) {
+	cred, err := s.st.GetCredential(ctx, uid)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Credential{}, ErrNotBound
+	}
+	if err != nil {
+		return store.Credential{}, err
+	}
+	if legacyAccountID(cred.AccountID) != accountID {
+		return store.Credential{}, ErrNotBound
+	}
+	return cred, nil
+}
+
+// ClientFor returns a Client bound to the user's default account. Kept as a
+// thin wrapper until every caller knows about accounts.
 func (s *SessionStore) ClientFor(ctx context.Context, uid int) (*Client, error) {
-	sess, err := s.Get(ctx, uid)
+	return s.ClientForAccount(ctx, uid, "")
+}
+
+// ClientForAccount returns a Client bound to one account's session, ready for
+// authenticated PikPak calls. An empty accountID selects the default account.
+func (s *SessionStore) ClientForAccount(ctx context.Context, uid int, accountID string) (*Client, error) {
+	sess, err := s.GetAccountSession(ctx, uid, accountID)
 	if err != nil {
 		return nil, err
 	}
 	c := *s.client
 	c.DeviceID = sess.client.DeviceID
 	c.Session = sess
-	// One bucket per user, reused across every client built for that user.
-	c.limiter = s.limiterFor(uid)
+	// One bucket per account, reused across every client built for it.
+	c.limiter = s.limiterFor(sessionKey(uid, sess.accountID))
 	return &c, nil
 }
 
-func (s *SessionStore) limiterFor(uid int) *limiter {
+func (s *SessionStore) limiterFor(key string) *limiter {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l, ok := s.limiters[uid]
+	l, ok := s.limiters[key]
 	if !ok {
 		l = newLimiter()
-		s.limiters[uid] = l
+		s.limiters[key] = l
 	}
 	return l
 }
 
 // Install caches a session created right after a successful device flow.
+// Kept as a wrapper until bind completion learns about accounts.
 func (s *SessionStore) Install(uid int, cred store.Credential) *Session {
-	sess := NewSession(sessionClient(s.client, cred), s.st, uid, cred)
+	return s.InstallAccount(uid, cred.AccountID, cred)
+}
+
+// InstallAccount caches a session created right after a successful device
+// flow for one account.
+func (s *SessionStore) InstallAccount(uid int, accountID string, cred store.Credential) *Session {
+	sess := NewSession(sessionClient(s.client, cred), s.st, uid, accountID, cred)
 	s.mu.Lock()
-	s.sessions[uid] = sess
+	s.sessions[sessionKey(uid, accountID)] = sess
 	s.mu.Unlock()
 	return sess
 }
 
-// Drop forgets the uid's session and deletes the stored credential. The
-// session is disabled first, so an in-flight refresh cannot write it back, and
-// pending authorization flows are cancelled so a late poller cannot rebind.
+// Drop forgets everything the user has bound: each account's session,
+// credential and pending flows, plus anything stored without an account row.
+// Kept as a wrapper until logout learns about accounts.
 func (s *SessionStore) Drop(ctx context.Context, uid int) error {
+	accounts, err := s.st.ListAccounts(ctx, uid)
+	if err != nil {
+		return err
+	}
+	for _, a := range accounts {
+		if err := s.DropAccount(ctx, uid, a.ID); err != nil {
+			return err
+		}
+	}
+
+	// Credentials and flows without an account row (binds completed before
+	// the routes grew account handling) are cleaned up wholesale. Held across
+	// the store writes so an in-flight refresh cannot interleave and write
+	// the credential back.
 	s.mu.Lock()
-	sess := s.sessions[uid]
-	delete(s.sessions, uid)
-	err := s.st.DeleteCredential(ctx, uid)
+	err = s.st.DeleteCredential(ctx, uid)
 	if err == nil {
-		err = s.st.CancelPendingFlows(ctx, uid)
+		err = s.st.CancelAccountFlows(ctx, uid, "")
+	}
+	prefix := sessionKey(uid, "")
+	var doomed []*Session
+	for key, sess := range s.sessions {
+		if strings.HasPrefix(key, prefix) {
+			doomed = append(doomed, sess)
+			delete(s.sessions, key)
+		}
+	}
+	for _, sess := range doomed {
+		sess.disabled = true
 	}
 	s.mu.Unlock()
-
-	if sess != nil {
-		sess.disable()
-	}
 	return err
+}
+
+// DropAccount forgets one account's session, deletes its stored credential
+// and cancels its still-pending authorization flows, so a late poller cannot
+// rebind the account. The session is disabled before the store writes, so an
+// in-flight refresh cannot resurrect the credential afterwards.
+func (s *SessionStore) DropAccount(ctx context.Context, uid int, accountID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := sessionKey(uid, accountID)
+	sess := s.sessions[key]
+	delete(s.sessions, key)
+	if sess != nil {
+		sess.disabled = true
+	}
+
+	if err := s.dropAccountCredential(ctx, uid, accountID); err != nil {
+		return err
+	}
+	return s.st.CancelAccountFlows(ctx, uid, accountID)
+}
+
+// dropAccountCredential deletes the account's stored credential. The store
+// does not expose a per-account delete yet, so all of the uid's rows only go
+// away when the credential the store resolves belongs to the account being
+// dropped. Once the store grows an account-scoped delete (multi-account bind
+// makes two persisted rows per uid possible), this must switch to it.
+func (s *SessionStore) dropAccountCredential(ctx context.Context, uid int, accountID string) error {
+	cred, err := s.st.GetCredential(ctx, uid)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if legacyAccountID(cred.AccountID) != accountID {
+		// The row the store resolved belongs to another account; leave it.
+		return nil
+	}
+	return s.st.DeleteCredential(ctx, uid)
+}
+
+// HasAny reports whether the user holds any PikPak identity: an account row
+// or a stored credential. Store errors count as "nothing" — callers use this
+// to pick between UI states, not to gate writes.
+func (s *SessionStore) HasAny(ctx context.Context, uid int) bool {
+	accounts, err := s.st.ListAccounts(ctx, uid)
+	if err == nil && len(accounts) > 0 {
+		return true
+	}
+	_, err = s.st.GetCredential(ctx, uid)
+	return err == nil
 }
 
 // sessionClient copies the base client and pins it to the user's device id,

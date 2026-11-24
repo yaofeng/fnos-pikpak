@@ -456,3 +456,255 @@ func TestDropStopsInFlightRefresh(t *testing.T) {
 		t.Fatalf("credential after Drop: err=%v, want ErrNotFound", err)
 	}
 }
+
+func TestSessionStoreTwoAccountsIsolated(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	uid := 1000
+
+	acctA, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	acctB, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	credA := store.Credential{
+		UID: uid, AccountID: acctA, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-a", RefreshToken: "rt-a",
+		DeviceID:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AccessExpiresAt: time.Now().Add(time.Hour),
+	}
+	credB := store.Credential{
+		UID: uid, AccountID: acctB, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-b", RefreshToken: "rt-b",
+		DeviceID:        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		AccessExpiresAt: time.Now().Add(time.Hour),
+	}
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://127.0.0.1:1"}))
+	ss.InstallAccount(uid, acctA, credA)
+	ss.InstallAccount(uid, acctB, credB)
+	// b's credential is persisted too, the way bind completion leaves it.
+	if err := st.PutCredential(ctx, credB); err != nil {
+		t.Fatalf("PutCredential: %v", err)
+	}
+	if !ss.HasAny(ctx, uid) {
+		t.Fatal("HasAny = false, want true")
+	}
+
+	ca, err := ss.ClientForAccount(ctx, uid, acctA)
+	if err != nil {
+		t.Fatalf("ClientForAccount(a): %v", err)
+	}
+	cb, err := ss.ClientForAccount(ctx, uid, acctB)
+	if err != nil {
+		t.Fatalf("ClientForAccount(b): %v", err)
+	}
+	if ca.Session == cb.Session {
+		t.Fatal("two accounts resolved to the same session")
+	}
+	if tok, err := ca.Session.Token(ctx); err != nil || tok != "at-a" {
+		t.Fatalf("account a token = %q, %v", tok, err)
+	}
+	if tok, err := cb.Session.Token(ctx); err != nil || tok != "at-b" {
+		t.Fatalf("account b token = %q, %v", tok, err)
+	}
+	if ca.DeviceID != credA.DeviceID {
+		t.Fatalf("account a device = %q, want %q", ca.DeviceID, credA.DeviceID)
+	}
+	if cb.DeviceID != credB.DeviceID {
+		t.Fatalf("account b device = %q, want %q", cb.DeviceID, credB.DeviceID)
+	}
+
+	// Dropping a must not touch b's session or b's stored credential.
+	if err := ss.DropAccount(ctx, uid, acctA); err != nil {
+		t.Fatalf("DropAccount(a): %v", err)
+	}
+	if _, err := ss.GetAccountSession(ctx, uid, acctA); !errors.Is(err, ErrNotBound) {
+		t.Fatalf("GetAccountSession(a) after drop = %v, want ErrNotBound", err)
+	}
+	cb2, err := ss.ClientForAccount(ctx, uid, acctB)
+	if err != nil {
+		t.Fatalf("ClientForAccount(b) after drop: %v", err)
+	}
+	if tok, err := cb2.Session.Token(ctx); err != nil || tok != "at-b" {
+		t.Fatalf("account b token after drop = %q, %v", tok, err)
+	}
+	got, err := st.GetCredential(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetCredential after drop: %v", err)
+	}
+	if got.AccountID != acctB || got.RefreshToken != "rt-b" {
+		t.Fatalf("surviving credential = %+v, want account b untouched", got)
+	}
+
+	// Dropping the last account leaves nothing behind.
+	if err := ss.DropAccount(ctx, uid, acctB); err != nil {
+		t.Fatalf("DropAccount(b): %v", err)
+	}
+	if _, err := ss.ClientForAccount(ctx, uid, ""); !errors.Is(err, ErrNotBound) {
+		t.Fatalf(`ClientForAccount("") after all drops = %v, want ErrNotBound`, err)
+	}
+	if ss.HasAny(ctx, uid) {
+		t.Fatal("HasAny = true after dropping every account, want false")
+	}
+}
+
+func TestDropAccountRemovesItsCredentialRow(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	uid := 1000
+	acct, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	if err := st.PutCredential(ctx, store.Credential{
+		UID: uid, AccountID: acct, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-1", RefreshToken: "rt-1",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("PutCredential: %v", err)
+	}
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://127.0.0.1:1"}))
+	sess, err := ss.GetAccountSession(ctx, uid, acct)
+	if err != nil {
+		t.Fatalf("GetAccountSession: %v", err)
+	}
+	if sess.accountID != acct {
+		t.Fatalf("session account = %q, want %q", sess.accountID, acct)
+	}
+
+	if err := ss.DropAccount(ctx, uid, acct); err != nil {
+		t.Fatalf("DropAccount: %v", err)
+	}
+	// The dropped session is disabled, so an in-flight refresh cannot write
+	// the credential back.
+	if _, err := sess.Token(ctx); !errors.Is(err, ErrNotBound) {
+		t.Fatalf("dropped session Token = %v, want ErrNotBound", err)
+	}
+	if _, err := st.GetCredential(ctx, uid); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("credential after DropAccount = %v, want ErrNotFound", err)
+	}
+}
+
+func TestClientForEmptyMeansDefault(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://127.0.0.1:1"}))
+	if _, err := ss.ClientForAccount(ctx, 2000, ""); !errors.Is(err, ErrNotBound) {
+		t.Fatalf(`ClientForAccount with no accounts = %v, want ErrNotBound`, err)
+	}
+
+	acctOld, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	acctActive, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	base := time.Now().Add(-time.Minute)
+	for _, a := range []store.PikPakAccount{
+		{ID: acctOld, UID: 2001, DisplayName: "old", Status: "reauth_required", BoundAt: base},
+		{ID: acctActive, UID: 2001, DisplayName: "active", Status: "active", BoundAt: base.Add(time.Second)},
+	} {
+		if err := st.PutAccount(ctx, a); err != nil {
+			t.Fatalf("PutAccount(%s): %v", a.ID, err)
+		}
+	}
+	expiry := time.Now().Add(time.Hour)
+	ss.InstallAccount(2001, acctOld, store.Credential{
+		UID: 2001, AccountID: acctOld, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-reauth", RefreshToken: "rt-reauth",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: expiry,
+	})
+	ss.InstallAccount(2001, acctActive, store.Credential{
+		UID: 2001, AccountID: acctActive, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-active", RefreshToken: "rt-active",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: expiry,
+	})
+
+	// The oldest row is reauth_required, so the default skips to the active one.
+	c, err := ss.ClientForAccount(ctx, 2001, "")
+	if err != nil {
+		t.Fatalf(`ClientForAccount("") default: %v`, err)
+	}
+	if tok, err := c.Session.Token(ctx); err != nil || tok != "at-active" {
+		t.Fatalf("default account token = %q, %v", tok, err)
+	}
+
+	// With no active account left, the oldest row wins.
+	if err := st.SetAccountStatus(ctx, 2001, acctActive, "reauth_required"); err != nil {
+		t.Fatalf("SetAccountStatus: %v", err)
+	}
+	c, err = ss.ClientForAccount(ctx, 2001, "")
+	if err != nil {
+		t.Fatalf(`ClientForAccount("") without active: %v`, err)
+	}
+	if tok, err := c.Session.Token(ctx); err != nil || tok != "at-reauth" {
+		t.Fatalf("fallback default token = %q, %v", tok, err)
+	}
+}
+
+func TestReauthMarksAccountRow(t *testing.T) {
+	var refreshCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&refreshCalls, 1)
+		writeJSONBody(w, http.StatusBadRequest, `{"error":"invalid_grant","error_code":4126,"error_description":"refresh token invalid"}`)
+	}))
+	defer srv.Close()
+
+	st := testStore(t)
+	ctx := context.Background()
+	uid := 1000
+	acct, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	if err := st.PutAccount(ctx, store.PikPakAccount{
+		ID: acct, UID: uid, PikPakSub: "sub-1", DisplayName: "A", Status: "active", BoundAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("PutAccount: %v", err)
+	}
+	if err := st.PutCredential(ctx, store.Credential{
+		UID: uid, AccountID: acct, AuthType: "oauth", ClientID: DefaultClientID,
+		AccessToken: "at-old", RefreshToken: "rt-old",
+		DeviceID:        "0123456789abcdef0123456789abcdef",
+		AccessExpiresAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("PutCredential: %v", err)
+	}
+
+	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
+	sess, err := ss.GetAccountSession(ctx, uid, acct)
+	if err != nil {
+		t.Fatalf("GetAccountSession: %v", err)
+	}
+	if sess.accountID != acct {
+		t.Fatalf("session account = %q, want %q", sess.accountID, acct)
+	}
+
+	if _, err := sess.Token(ctx); !errors.Is(err, ErrReauthRequired) {
+		t.Fatalf("Token err = %v, want ErrReauthRequired", err)
+	}
+	if n := atomic.LoadInt32(&refreshCalls); n != 1 {
+		t.Fatalf("refresh calls = %d, want 1 (no retry after reauth)", n)
+	}
+
+	// The failure must land on the owning account row, which is where the
+	// per-account shell reads the banner state from.
+	a, err := st.GetAccount(ctx, uid, acct)
+	if err != nil {
+		t.Fatalf("GetAccount: %v", err)
+	}
+	if a.Status != "reauth_required" {
+		t.Fatalf("account status = %q, want reauth_required", a.Status)
+	}
+}
