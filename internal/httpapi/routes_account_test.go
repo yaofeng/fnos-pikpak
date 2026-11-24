@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,103 +46,53 @@ func bindTestUser(t *testing.T, st *store.Store, uid int) {
 	}
 }
 
-func TestAccountRequiresBinding(t *testing.T) {
+func TestAccountsRequiresBinding(t *testing.T) {
 	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
 	h := NewMux(deps)
-	rec, body := getJSON(t, h, "/api/account", "1000")
+	rec, body := getJSON(t, h, "/api/accounts", "1000")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%v, want 401", rec.Code, body)
 	}
+	if !strings.Contains(rec.Body.String(), "not_bound") {
+		t.Fatalf("body = %s, want not_bound", rec.Body)
+	}
 }
 
-func TestAccountReturnsQuotaAndVIPTwiceFromOneFetch(t *testing.T) {
+func TestAccountsListsQuotaAndVIPFromOneFetch(t *testing.T) {
 	var aboutCalls, vipCalls int32
 	srv := accountServer(t, &aboutCalls, &vipCalls)
 	defer srv.Close()
 
 	deps, st := newAuthTestDeps(t, srv.URL)
 	deps.Accounts = newAccountCache(time.Minute)
-	bindTestUser(t, st, 1000)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
 	h := NewMux(deps)
 
-	rec, body := getJSON(t, h, "/api/account", "1000")
+	rec, body := getJSON(t, h, "/api/accounts", "1000")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
 	}
-	if body["quota_limit"] != float64(1000) || body["quota_usage"] != float64(250) {
-		t.Fatalf("quota = %v", body)
+	var out struct {
+		Items []map[string]any `json:"items"`
 	}
-	if body["vip_type"] != "platinum" || body["vip_expire"] != "2027-01-01T00:00:00Z" {
-		t.Fatalf("vip = %v", body)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-
-	// A second request inside the TTL is served from the per-user cache.
-	if rec, _ := getJSON(t, h, "/api/account", "1000"); rec.Code != http.StatusOK {
-		t.Fatalf("second status = %d", rec.Code)
+	if len(out.Items) != 1 {
+		t.Fatalf("items = %v", out.Items)
+	}
+	item := out.Items[0]
+	if item["quota_limit"] != float64(1000) || item["quota_usage"] != float64(250) {
+		t.Fatalf("quota = %v", item)
+	}
+	if item["vip_type"] != "platinum" || item["vip_expire"] != "2027-01-01T00:00:00Z" {
+		t.Fatalf("vip = %v", item)
+	}
+	if item["id"] != "acct-a" || item["status"] != "active" || item["error"] != "" {
+		t.Fatalf("item = %v", item)
 	}
 	if got := atomic.LoadInt32(&aboutCalls); got != 1 {
 		t.Fatalf("about calls = %d, want 1", got)
-	}
-	if got := atomic.LoadInt32(&vipCalls); got != 1 {
-		t.Fatalf("vip calls = %d, want 1", got)
-	}
-}
-
-func TestAccountCacheIsPerUser(t *testing.T) {
-	var aboutCalls, vipCalls int32
-	srv := accountServer(t, &aboutCalls, &vipCalls)
-	defer srv.Close()
-
-	deps, st := newAuthTestDeps(t, srv.URL)
-	deps.Accounts = newAccountCache(time.Minute)
-	bindTestUser(t, st, 1000)
-	bindTestUser(t, st, 1001)
-	h := NewMux(deps)
-
-	getJSON(t, h, "/api/account", "1000")
-	getJSON(t, h, "/api/account", "1001")
-	if got := atomic.LoadInt32(&aboutCalls); got != 2 {
-		t.Fatalf("about calls = %d, want 2 (one per user)", got)
-	}
-}
-
-func TestRebindClearsReauthStatus(t *testing.T) {
-	deps, st := newAuthTestDeps(t, "http://127.0.0.1:1")
-	bindTestUser(t, st, 1000)
-	if err := st.PutUser(t.Context(), store.User{UID: 1000, Status: "reauth_required"}); err != nil {
-		t.Fatalf("PutUser: %v", err)
-	}
-	h := NewMux(deps)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/rebind", nil)
-	req.Header.Set("X-Trim-Userid", "1000")
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
-	}
-
-	u, err := st.GetUser(t.Context(), 1000)
-	if err != nil {
-		t.Fatalf("GetUser: %v", err)
-	}
-	if u.Status != "active" {
-		t.Fatalf("status = %q, want active", u.Status)
-	}
-}
-
-func TestRebindRequiresBinding(t *testing.T) {
-	deps, _ := newAuthTestDeps(t, "http://127.0.0.1:1")
-	h := NewMux(deps)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/rebind", nil)
-	req.Header.Set("X-Trim-Userid", "1000")
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 
@@ -188,7 +139,7 @@ func TestCancelFlowOnlyTouchesOwnPendingFlow(t *testing.T) {
 	}
 }
 
-func TestBindingWritesUserRecord(t *testing.T) {
+func TestBindingWritesAccountRecord(t *testing.T) {
 	srv := pikpakAuthServer(t, `{"access_token":"at-1","refresh_token":"rt-1","expires_in":43200,"sub":"sub-9"}`, http.StatusOK)
 	defer srv.Close()
 
@@ -208,11 +159,19 @@ func TestBindingWritesUserRecord(t *testing.T) {
 	}
 	waitFlowStatus(t, h, start.ID, "bound")
 
-	u, err := st.GetUser(t.Context(), 1000)
-	if err != nil {
-		t.Fatalf("GetUser: %v", err)
+	accounts, err := st.ListAccounts(t.Context(), 1000)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("ListAccounts = %+v, %v", accounts, err)
 	}
-	if u.PikPakSub != "sub-9" || u.Status != "active" {
-		t.Fatalf("user = %+v", u)
+	acct := accounts[0]
+	if acct.PikPakSub != "sub-9" || acct.Status != "active" {
+		t.Fatalf("account = %+v", acct)
+	}
+	cred, err := st.GetAccountCredential(t.Context(), 1000, acct.ID)
+	if err != nil {
+		t.Fatalf("GetAccountCredential: %v", err)
+	}
+	if cred.AccessToken != "at-1" || cred.DeviceID != st.DeriveDeviceID(acct.ID) {
+		t.Fatalf("cred = %+v (want the derived device id)", cred)
 	}
 }

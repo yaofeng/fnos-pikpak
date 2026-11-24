@@ -29,6 +29,10 @@ func (l ClientLinks) DownloadLink(ctx context.Context, fileID string) (Link, err
 type runState struct {
 	cancel context.CancelFunc
 	uid    int
+	// accountID is the PikPak account the job transfers against. reserve()
+	// leaves it empty for now; per-account enqueueing fills it (and makes
+	// CancelAccount able to target one account) in a later task.
+	accountID string
 }
 
 // Queue schedules download and upload jobs: per-user FIFO, global concurrency
@@ -111,6 +115,29 @@ func (q *Queue) CancelUser(uid int) {
 	var cancels []context.CancelFunc
 	for _, st := range q.running {
 		if st.uid == uid && st.cancel != nil {
+			cancels = append(cancels, st.cancel)
+		}
+	}
+	q.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
+// CancelAccount stops the running jobs of one account. An empty accountID
+// cancels every job of the uid, including rows that predate per-account
+// tagging; a non-empty one only stops jobs tagged with that account.
+func (q *Queue) CancelAccount(uid int, accountID string) {
+	q.mu.Lock()
+	var cancels []context.CancelFunc
+	for _, st := range q.running {
+		if st.uid != uid {
+			continue
+		}
+		if accountID != "" && st.accountID != accountID {
+			continue
+		}
+		if st.cancel != nil {
 			cancels = append(cancels, st.cancel)
 		}
 	}
@@ -252,7 +279,7 @@ func (q *Queue) reserve(id string, uid int) bool {
 	if q.perUser[uid] >= q.PerUser {
 		return false
 	}
-	q.running[id] = &runState{uid: uid}
+	q.running[id] = &runState{uid: uid, accountID: ""}
 	q.perUser[uid]++
 	return true
 }

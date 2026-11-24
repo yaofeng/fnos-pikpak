@@ -38,8 +38,12 @@ type Credential struct {
 }
 
 type Flow struct {
-	ID          string
-	UID         int
+	ID  string
+	UID int
+	// AccountID is the pikpak_accounts row the flow will bind to. Set when
+	// the flow is created, so a logout of that account can cancel the flow
+	// before its poller finishes.
+	AccountID   string
 	DeviceCode  string
 	UserCode    string
 	VerifyURL   string
@@ -258,13 +262,33 @@ func (s *Store) GetCredential(ctx context.Context, uid int) (Credential, error) 
 	if err != nil {
 		return Credential{}, err
 	}
+	return s.readCredential(ctx, key)
+}
 
+// GetAccountCredential returns one account's stored credential. An empty
+// accountID selects the pre-account placeholder row (see credentialKey).
+// The uid must match the row's owner.
+func (s *Store) GetAccountCredential(ctx context.Context, uid int, accountID string) (Credential, error) {
+	c, err := s.readCredential(ctx, credentialKey(uid, accountID))
+	if err != nil {
+		return Credential{}, err
+	}
+	if c.UID != uid {
+		return Credential{}, ErrNotFound
+	}
+	return c, nil
+}
+
+// readCredential loads and unseals the credentials2 row with the given
+// account key. The key doubles as the encryption AAD, so reading and writing
+// always agree on it.
+func (s *Store) readCredential(ctx context.Context, key string) (Credential, error) {
 	var (
 		c                          Credential
 		access, refresh, device    []byte
 		accessExp, refreshExp, upd string
 	)
-	err = s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 SELECT account_id, uid, auth_type, client_id, access_token_enc, refresh_token_enc,
        access_expires_at, refresh_expires_at, scopes, device_id_enc, updated_at
 FROM credentials2 WHERE account_id = ?`, key).
@@ -311,8 +335,8 @@ func (s *Store) PutAuthFlow(ctx context.Context, f Flow) error {
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO auth_flows(id, uid, device_code_enc, user_code, verify_url, interval_sec, expires_at, status, error, created_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
+INSERT INTO auth_flows(id, uid, account_id, device_code_enc, user_code, verify_url, interval_sec, expires_at, status, error, created_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   device_code_enc=excluded.device_code_enc,
   user_code=excluded.user_code,
@@ -321,7 +345,7 @@ ON CONFLICT(id) DO UPDATE SET
   expires_at=excluded.expires_at,
   status=excluded.status,
   error=excluded.error`,
-		f.ID, f.UID, device, f.UserCode, f.VerifyURL, f.IntervalSec,
+		f.ID, f.UID, f.AccountID, device, f.UserCode, f.VerifyURL, f.IntervalSec,
 		formatTime(f.ExpiresAt), f.Status, f.Error, created.Format(time.RFC3339))
 	return err
 }
@@ -333,9 +357,9 @@ func (s *Store) GetAuthFlow(ctx context.Context, id string) (Flow, error) {
 		exp, cre string
 	)
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, uid, device_code_enc, user_code, verify_url, interval_sec, expires_at, status, error, created_at
+SELECT id, uid, account_id, device_code_enc, user_code, verify_url, interval_sec, expires_at, status, error, created_at
 FROM auth_flows WHERE id = ?`, id).
-		Scan(&f.ID, &f.UID, &device, &f.UserCode, &f.VerifyURL, &f.IntervalSec, &exp, &f.Status, &f.Error, &cre)
+		Scan(&f.ID, &f.UID, &f.AccountID, &device, &f.UserCode, &f.VerifyURL, &f.IntervalSec, &exp, &f.Status, &f.Error, &cre)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Flow{}, ErrNotFound
 	}
@@ -379,12 +403,21 @@ func (s *Store) DeleteCredential(ctx context.Context, uid int) error {
 	return err
 }
 
-// DeriveDeviceID returns a stable, per-user PikPak device id. It is derived
+// DeleteAccountCredential removes one account's stored credential. An empty
+// accountID selects the pre-account placeholder row (see credentialKey).
+// Missing rows are not an error, matching DeleteCredential.
+func (s *Store) DeleteAccountCredential(ctx context.Context, uid int, accountID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM credentials2 WHERE account_id = ? AND uid = ?`, credentialKey(uid, accountID), uid)
+	return err
+}
+
+// DeriveDeviceID returns a stable, per-account PikPak device id. It is derived
 // from the store key so it never needs to be persisted before the first bind
-// and cannot be guessed from a uid alone.
-func (s *Store) DeriveDeviceID(uid int) string {
+// and cannot be guessed from an account id alone.
+func (s *Store) DeriveDeviceID(accountID string) string {
 	mac := hmac.New(sha256.New, s.key)
-	mac.Write([]byte("device:" + strconv.Itoa(uid)))
+	mac.Write([]byte("device:acct:" + accountID))
 	return hex.EncodeToString(mac.Sum(nil))[:32]
 }
 

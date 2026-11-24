@@ -307,6 +307,7 @@ func TestAuthFlowRoundTrip(t *testing.T) {
 	flow := Flow{
 		ID:          "flow1",
 		UID:         1000,
+		AccountID:   "acct-1",
 		DeviceCode:  "device-code",
 		UserCode:    "ABCD",
 		VerifyURL:   "https://mypikpak.com/device",
@@ -320,6 +321,9 @@ func TestAuthFlowRoundTrip(t *testing.T) {
 	got, err := s.GetAuthFlow(ctx, "flow1")
 	if err != nil || got.UserCode != "ABCD" || got.Status != "pending" {
 		t.Fatalf("got %+v err %v", got, err)
+	}
+	if got.AccountID != "acct-1" {
+		t.Fatalf("account id = %q, want acct-1", got.AccountID)
 	}
 
 	flow.Status = "bound"
@@ -351,21 +355,21 @@ func TestDeleteCredential(t *testing.T) {
 
 func TestDeriveDeviceID(t *testing.T) {
 	s, _ := newStore(t)
-	a := s.DeriveDeviceID(1000)
+	a := s.DeriveDeviceID("acct-1000")
 	if len(a) != 32 {
 		t.Fatalf("device id %q has length %d, want 32", a, len(a))
 	}
 	if !isLowerHex(a) {
 		t.Fatalf("device id %q is not lower-case hex", a)
 	}
-	if a != s.DeriveDeviceID(1000) {
-		t.Fatal("device id is not stable for the same uid")
+	if a != s.DeriveDeviceID("acct-1000") {
+		t.Fatal("device id is not stable for the same account")
 	}
-	if a == s.DeriveDeviceID(1001) {
-		t.Fatal("device id is shared across uids")
+	if a == s.DeriveDeviceID("acct-1001") {
+		t.Fatal("device id is shared across accounts")
 	}
 	other, _ := newStore(t)
-	if a == other.DeriveDeviceID(1000) {
+	if a == other.DeriveDeviceID("acct-1000") {
 		t.Fatal("device id must depend on the store key")
 	}
 }
@@ -529,6 +533,39 @@ func TestDeleteUserJobs(t *testing.T) {
 	}
 	if jobs, _ := st.ListUploadJobs(ctx, 1000); len(jobs) != 0 {
 		t.Fatalf("uploads left: %+v", jobs)
+	}
+	if jobs, _ := st.ListDownloadJobs(ctx, 2000); len(jobs) != 1 {
+		t.Fatalf("another user's job was deleted: %+v", jobs)
+	}
+}
+
+func TestDeleteAccountJobs(t *testing.T) {
+	st, _ := newStore(t)
+	ctx := context.Background()
+
+	for _, j := range []DownloadJob{
+		{ID: "d-a", UID: 1000, AccountID: "acct-a", FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
+		{ID: "d-b", UID: 1000, AccountID: "acct-b", FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "queued"},
+		{ID: "d-other", UID: 2000, AccountID: "acct-a", FileID: "f3", FileName: "c", DestDir: "/tmp", DestPath: "/tmp/c", Status: "queued"},
+	} {
+		if err := st.PutDownloadJob(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutUploadJob(ctx, UploadJob{
+		ID: "u-a", UID: 1000, AccountID: "acct-a", LocalPath: "/tmp/a", RemoteName: "a", Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.DeleteAccountJobs(ctx, 1000, "acct-a"); err != nil {
+		t.Fatalf("DeleteAccountJobs: %v", err)
+	}
+	if jobs, _ := st.ListDownloadJobs(ctx, 1000); len(jobs) != 1 || jobs[0].ID != "d-b" {
+		t.Fatalf("downloads after delete = %+v", jobs)
+	}
+	if ups, _ := st.ListUploadJobs(ctx, 1000); len(ups) != 0 {
+		t.Fatalf("uploads after delete = %+v", ups)
 	}
 	if jobs, _ := st.ListDownloadJobs(ctx, 2000); len(jobs) != 1 {
 		t.Fatalf("another user's job was deleted: %+v", jobs)

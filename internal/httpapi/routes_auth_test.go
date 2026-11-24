@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,14 +124,29 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 		t.Fatalf("cred = %+v", cred)
 	}
 
-	_, me := getJSON(t, h, "/api/me", "1000")
-	if me["bound"] != true {
-		t.Fatalf("me = %v", me)
+	// The bind wrote an account row; the shell reports it.
+	rec, me := getJSON(t, h, "/api/me", "1000")
+	if rec.Code != http.StatusOK || me["bound"] != true || me["accounts"] != float64(1) {
+		t.Fatalf("me = %v (%d)", me, rec.Code)
+	}
+	rec, accountsBody := getJSON(t, h, "/api/accounts", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("accounts status = %d", rec.Code)
+	}
+	items, _ := accountsBody["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("accounts = %v", accountsBody)
+	}
+	first, _ := items[0].(map[string]any)
+	acctID, _ := first["id"].(string)
+	if acctID == "" {
+		t.Fatalf("accounts = %v", accountsBody)
 	}
 
-	// Unbinding drops this user's transfer jobs and leaves everyone else's.
+	// Unbinding that account drops its transfer jobs and leaves everyone
+	// else's.
 	for _, job := range []store.DownloadJob{
-		{ID: "d1", UID: 1000, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
+		{ID: "d1", UID: 1000, AccountID: acctID, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
 		{ID: "d2", UID: 2000, FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "queued"},
 	} {
 		if err := st.PutDownloadJob(t.Context(), job); err != nil {
@@ -137,7 +154,8 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 		}
 	}
 
-	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutBody, _ := json.Marshal(map[string]any{"account_id": acctID})
+	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", bytes.NewReader(logoutBody))
 	logout.Header.Set("X-Trim-Userid", "1000")
 	logout.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -155,6 +173,22 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 	}
 	if jobs, _ := st.ListDownloadJobs(t.Context(), 2000); len(jobs) != 1 {
 		t.Fatalf("another user's job was deleted: %+v", jobs)
+	}
+}
+
+func TestLogoutRequiresAccountID(t *testing.T) {
+	srv := pikpakAuthServer(t, `{"access_token":"at-1","refresh_token":"rt-1","expires_in":43200,"sub":"sub-1"}`, http.StatusOK)
+	defer srv.Close()
+
+	deps, _ := newAuthTestDeps(t, srv.URL)
+	h := NewMux(deps)
+
+	rec, _ := postJSON(t, h, "/api/auth/logout", "1000", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400 bad_request", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "bad_request") {
+		t.Fatalf("body = %s", rec.Body)
 	}
 }
 
@@ -265,9 +299,15 @@ func TestLogoutCancelsPendingFlow(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &start)
 
-	// Unbinding drops this user's transfer jobs and leaves everyone else's.
+	// Unbinding that account drops its transfer jobs and leaves everyone
+	// else's. The pending flow targets the account id the bind minted, so a
+	// logout of that account cancels it.
+	flowRec, err := st.GetAuthFlow(t.Context(), start.ID)
+	if err != nil {
+		t.Fatalf("GetAuthFlow: %v", err)
+	}
 	for _, job := range []store.DownloadJob{
-		{ID: "d1", UID: 1000, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
+		{ID: "d1", UID: 1000, AccountID: flowRec.AccountID, FileID: "f1", FileName: "a", DestDir: "/tmp", DestPath: "/tmp/a", Status: "queued"},
 		{ID: "d2", UID: 2000, FileID: "f2", FileName: "b", DestDir: "/tmp", DestPath: "/tmp/b", Status: "queued"},
 	} {
 		if err := st.PutDownloadJob(t.Context(), job); err != nil {
@@ -275,7 +315,8 @@ func TestLogoutCancelsPendingFlow(t *testing.T) {
 		}
 	}
 
-	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutBody, _ := json.Marshal(map[string]any{"account_id": flowRec.AccountID})
+	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", bytes.NewReader(logoutBody))
 	logout.Header.Set("X-Trim-Userid", "1000")
 	logout.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()

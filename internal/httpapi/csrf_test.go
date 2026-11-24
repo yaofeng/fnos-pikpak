@@ -43,7 +43,7 @@ func TestJSONBodyStillAccepted(t *testing.T) {
 	deps.Probes = &probe.Registry{}
 	h := NewMux(deps)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", strings.NewReader(`{"account_id":"x"}`))
 	req.Header.Set("X-Trim-Userid", "1000")
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	rec := httptest.NewRecorder()

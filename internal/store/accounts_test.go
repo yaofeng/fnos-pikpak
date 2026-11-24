@@ -172,6 +172,23 @@ func TestCredentialPerAccount(t *testing.T) {
 		}
 	}
 
+	// The per-account accessors resolve exactly their own row, even with two
+	// credentials per uid — the legacy accessor above is the ambiguous one.
+	gotA, err := s.GetAccountCredential(ctx, 1001, aID)
+	if err != nil || gotA.AccessToken != "tok-a" || gotA.AccountID != aID {
+		t.Fatalf("GetAccountCredential a = %+v, %v", gotA, err)
+	}
+	gotB, err := s.GetAccountCredential(ctx, 1001, bID)
+	if err != nil || gotB.AccessToken != "tok-b" || gotB.DeviceID != cb.DeviceID {
+		t.Fatalf("GetAccountCredential b = %+v, %v", gotB, err)
+	}
+	if _, err := s.GetAccountCredential(ctx, 1001, mustNewAccountID(t)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown account err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetAccountCredential(ctx, 1002, aID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign uid err = %v, want ErrNotFound", err)
+	}
+
 	// The legacy single-credential accessor still resolves the uid's row.
 	cred, err := s.GetCredential(ctx, 1001)
 	if err != nil {
@@ -179,6 +196,38 @@ func TestCredentialPerAccount(t *testing.T) {
 	}
 	if cred.AccessToken != "tok-a" && cred.AccessToken != "tok-b" {
 		t.Fatalf("GetCredential token = %q, want one of the two accounts", cred.AccessToken)
+	}
+
+	// The per-account delete removes only its own row.
+	if err := s.DeleteAccountCredential(ctx, 1001, aID); err != nil {
+		t.Fatalf("DeleteAccountCredential: %v", err)
+	}
+	if _, err := s.GetAccountCredential(ctx, 1001, aID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a after delete err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetAccountCredential(ctx, 1001, bID); err != nil {
+		t.Fatalf("b after a's delete: %v", err)
+	}
+	// Deleting a missing row is not an error.
+	if err := s.DeleteAccountCredential(ctx, 1001, aID); err != nil {
+		t.Fatalf("delete again: %v", err)
+	}
+
+	// The empty account id selects the pre-account placeholder row.
+	legacy := sampleCredential(1003, "tok-old")
+	legacy.AccountID = ""
+	if err := s.PutCredential(ctx, legacy); err != nil {
+		t.Fatalf("put legacy: %v", err)
+	}
+	got, err := s.GetAccountCredential(ctx, 1003, "")
+	if err != nil || got.AccessToken != "tok-old" {
+		t.Fatalf("placeholder read = %+v, %v", got, err)
+	}
+	if err := s.DeleteAccountCredential(ctx, 1003, ""); err != nil {
+		t.Fatalf("placeholder delete: %v", err)
+	}
+	if _, err := s.GetAccountCredential(ctx, 1003, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("placeholder after delete err = %v, want ErrNotFound", err)
 	}
 
 	if err := s.DeleteCredential(ctx, 1001); err != nil {

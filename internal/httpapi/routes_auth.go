@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -25,11 +27,7 @@ const (
 func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		bound := false
-		if _, err := deps.Sessions.Get(r.Context(), id.UID); err == nil {
-			bound = true
-		}
-		writeJSON(w, http.StatusOK, meResponse(r.Context(), deps, id.UID, bound))
+		writeJSON(w, http.StatusOK, meResponse(r.Context(), deps, id.UID))
 	})
 
 	mux.HandleFunc("POST /api/auth/device", func(w http.ResponseWriter, r *http.Request) {
@@ -37,9 +35,52 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
+		var body struct {
+			AccountID string `json:"account_id"`
+		}
+		// The body is optional (an empty one starts a new-account bind), so
+		// only malformed JSON is rejected here.
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON")
+			return
+		}
+
+		// The flow lands on one account: an existing row when account_id
+		// names one (404 when it is not the caller's), a freshly minted id
+		// otherwise. Fixing the id at creation is what lets a logout of that
+		// account cancel this flow before its poller finishes.
+		targetID := body.AccountID
+		deviceID := ""
+		if targetID != "" {
+			acct, err := deps.Store.GetAccount(r.Context(), id.UID, targetID)
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found", "账号不存在")
+				return
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "无法读取账号")
+				return
+			}
+			// Re-authorization keeps the device fingerprint the account
+			// originally bound with.
+			if cred, cerr := deps.Store.GetAccountCredential(r.Context(), id.UID, acct.ID); cerr == nil && cred.DeviceID != "" {
+				deviceID = cred.DeviceID
+			}
+		} else {
+			fresh, err := store.NewAccountID()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "无法创建授权流程")
+				return
+			}
+			targetID = fresh
+		}
+		if deviceID == "" {
+			deviceID = deps.Store.DeriveDeviceID(targetID)
+		}
+
 		client := deps.Sessions.Client()
 		bound := *client
-		bound.DeviceID = deps.Store.DeriveDeviceID(id.UID)
+		bound.DeviceID = deviceID
 
 		flow, err := bound.StartDeviceFlow(r.Context())
 		if err != nil {
@@ -64,6 +105,7 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 		rec := store.Flow{
 			ID:          flowID,
 			UID:         id.UID,
+			AccountID:   targetID,
 			DeviceCode:  flow.DeviceCode,
 			UserCode:    flow.UserCode,
 			VerifyURL:   flow.VerifyURL,
@@ -113,23 +155,39 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
-		if err := deps.Sessions.Drop(r.Context(), id.UID); err != nil {
+		var body struct {
+			AccountID string `json:"account_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON")
+			return
+		}
+		if body.AccountID == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "请指定要解绑的账号")
+			return
+		}
+
+		if err := deps.Sessions.DropAccount(r.Context(), id.UID, body.AccountID); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "解绑失败")
 			return
 		}
-		deps.Accounts.drop(id.UID)
-		// Unbinding throws the account away; its transfer jobs can never run
-		// again, so their workers stop and the records go with them. Files on
-		// disk stay.
-		if deps.Queue != nil {
-			deps.Queue.CancelUser(id.UID)
-		}
 		if deps.Store != nil {
-			if err := deps.Store.DeleteUserJobs(r.Context(), id.UID); err != nil {
+			if err := deps.Store.DeleteAccount(r.Context(), id.UID, body.AccountID); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "解绑失败")
+				return
+			}
+			// Unbinding throws the account away; its transfer jobs can never
+			// run again, so their workers stop and the records go with them.
+			// Files on disk stay.
+			if err := deps.Store.DeleteAccountJobs(r.Context(), id.UID, body.AccountID); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "解绑失败")
 				return
 			}
 		}
+		if deps.Queue != nil {
+			deps.Queue.CancelAccount(id.UID, body.AccountID)
+		}
+		deps.Accounts.drop(body.AccountID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 }
@@ -156,37 +214,15 @@ func pollAuthFlow(deps Deps, client *pikpak.Client, flow store.Flow) {
 		switch {
 		case err == nil:
 			// Logout cancels pending flows; a token that arrives afterwards
-			// must not rebind the account.
+			// must not bind the account.
 			current, ferr := deps.Store.GetAuthFlow(ctx, flow.ID)
 			if ferr != nil || current.Status != flowStatusPending {
 				return
 			}
-			cred := store.Credential{
-				UID:             flow.UID,
-				AuthType:        "oauth",
-				ClientID:        client.ClientID,
-				AccessToken:     tok.AccessToken,
-				RefreshToken:    tok.RefreshToken,
-				DeviceID:        client.DeviceID,
-				AccessExpiresAt: time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second),
-				Scopes:          pikpak.Scope,
-			}
-			if err := deps.Store.PutCredential(ctx, cred); err != nil {
-				finishFlow(deps, flow, flowStatusError, "保存凭据失败")
+			if msg := completeBind(deps, current, client, tok); msg != "" {
+				finishFlow(deps, flow, flowStatusError, msg)
 				return
 			}
-			// The account record powers the app shell (status, display name,
-			// reauth state), so it is written at bind time, not on first use.
-			if err := deps.Store.PutUser(ctx, store.User{
-				UID:       flow.UID,
-				PikPakSub: tok.Sub,
-				Status:    "active",
-			}); err != nil {
-				finishFlow(deps, flow, flowStatusError, "保存账号信息失败")
-				return
-			}
-			deps.Accounts.drop(flow.UID)
-			deps.Sessions.Install(flow.UID, cred)
 			finishFlow(deps, flow, flowStatusBound, "")
 			return
 		case errors.Is(err, pikpak.ErrAuthorizationPending):
@@ -205,6 +241,79 @@ func pollAuthFlow(deps Deps, client *pikpak.Client, flow store.Flow) {
 			return
 		}
 	}
+}
+
+// completeBind stores the authorized token under the flow's account and
+// refreshes the account row, returning the flow error message (empty on
+// success). A flow that targets an existing row must authorize the identity
+// already bound there; a new one must not duplicate an identity this user has
+// bound to another account.
+func completeBind(deps Deps, flow store.Flow, client *pikpak.Client, tok pikpak.Token) string {
+	ctx := context.Background()
+	uid := flow.UID
+	acctID := flow.AccountID
+	if acctID == "" {
+		// Flows created before accounts existed carry no id; bind completion
+		// mints one so the account model stays uniform.
+		id, err := store.NewAccountID()
+		if err != nil {
+			return "保存账号信息失败"
+		}
+		acctID = id
+	}
+
+	existing, err := deps.Store.GetAccount(ctx, uid, acctID)
+	switch {
+	case err == nil:
+		// Re-binding an existing row.
+		if existing.PikPakSub != "" {
+			if tok.Sub != existing.PikPakSub {
+				return "授权的账号与原账号不一致，请解绑后重新添加"
+			}
+		} else if boundID, lerr := deps.Store.AccountIDBySub(ctx, uid, tok.Sub); lerr == nil && boundID != acctID {
+			return "该 PikPak 账号已绑定"
+		}
+		existing.PikPakSub = tok.Sub
+		existing.Status = "active"
+		if err := deps.Store.PutAccount(ctx, existing); err != nil {
+			return "保存账号信息失败"
+		}
+	case errors.Is(err, store.ErrNotFound):
+		// Adding a new account.
+		if _, lerr := deps.Store.AccountIDBySub(ctx, uid, tok.Sub); lerr == nil {
+			return "该 PikPak 账号已绑定"
+		} else if !errors.Is(lerr, store.ErrNotFound) {
+			return "保存账号信息失败"
+		}
+		if err := deps.Store.PutAccount(ctx, store.PikPakAccount{
+			ID:        acctID,
+			UID:       uid,
+			PikPakSub: tok.Sub,
+			Status:    "active",
+		}); err != nil {
+			return "保存账号信息失败"
+		}
+	default:
+		return "保存账号信息失败"
+	}
+
+	cred := store.Credential{
+		UID:             uid,
+		AccountID:       acctID,
+		AuthType:        "oauth",
+		ClientID:        client.ClientID,
+		AccessToken:     tok.AccessToken,
+		RefreshToken:    tok.RefreshToken,
+		DeviceID:        client.DeviceID,
+		AccessExpiresAt: time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second),
+		Scopes:          pikpak.Scope,
+	}
+	if err := deps.Store.PutCredential(ctx, cred); err != nil {
+		return "保存凭据失败"
+	}
+	deps.Accounts.drop(acctID)
+	deps.Sessions.InstallAccount(uid, acctID, cred)
+	return ""
 }
 
 func finishFlow(deps Deps, flow store.Flow, status, msg string) {

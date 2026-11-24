@@ -105,6 +105,24 @@ func (s *Store) DeleteUserJobs(ctx context.Context, uid int) error {
 	return tx.Commit()
 }
 
+// DeleteAccountJobs drops the transfer jobs of one account. Unbinding that
+// account calls it: the jobs' remote identity is gone, so their rows can
+// never run again, while sibling accounts keep theirs.
+func (s *Store) DeleteAccountJobs(ctx context.Context, uid int, accountID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{"download_jobs", "upload_jobs"} {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM `+table+` WHERE uid = ? AND account_id = ?`, uid, accountID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // DBSize reports the size of the SQLite file on disk, for the diagnostics
 // panel. The WAL file is not included because SQLite checkpoints it.
 func (s *Store) DBSize() (int64, error) {

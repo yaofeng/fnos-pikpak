@@ -388,6 +388,53 @@ func TestCancelUserStopsOnlyThatUsersJobs(t *testing.T) {
 	}
 }
 
+// CancelAccount with an empty account id is the uid-wide cancel: jobs carry no
+// account tag until per-account enqueueing lands.
+func TestCancelAccountWithEmptyIDStopsOnlyThatUsersJobs(t *testing.T) {
+	srv := hangingServer(t)
+	st := openQueueStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &Queue{Store: st, MaxGlobal: 2, Tick: 20 * time.Millisecond}
+	q.NewDownloader = func(int) (*Downloader, error) {
+		return &Downloader{Links: staticLink(srv.URL, 10)}, nil
+	}
+	q.Start(ctx)
+
+	for _, job := range []store.DownloadJob{
+		{ID: "j1", UID: 1000, FileID: "f1", FileName: "a", DestDir: t.TempDir(), Size: 10, Status: "queued"},
+		{ID: "j2", UID: 2000, FileID: "f2", FileName: "b", DestDir: t.TempDir(), Size: 10, Status: "queued"},
+	} {
+		job.DestPath = filepath.Join(job.DestDir, job.FileName)
+		if err := st.PutDownloadJob(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.Notify()
+	waitFor(t, "both downloads to start", func() bool {
+		a, _ := st.GetDownloadJob(context.Background(), 1000, "j1")
+		b, _ := st.GetDownloadJob(context.Background(), 2000, "j2")
+		return a.Status == "running" && b.Status == "running"
+	})
+
+	// A named account can match nothing while jobs are untagged, and it must
+	// not stop the user's other work either.
+	q.CancelAccount(1000, "acct-x")
+	time.Sleep(100 * time.Millisecond)
+	if got, _ := st.GetDownloadJob(context.Background(), 1000, "j1"); got.Status != "running" {
+		t.Fatalf("untagged job stopped by a named-account cancel = %q", got.Status)
+	}
+
+	q.CancelAccount(1000, "")
+	waitFor(t, "the unbound user's job to stop", func() bool {
+		got, _ := st.GetDownloadJob(context.Background(), 1000, "j1")
+		return got.Status != "running"
+	})
+	if got, _ := st.GetDownloadJob(context.Background(), 2000, "j2"); got.Status != "running" {
+		t.Fatalf("other user's job = %q", got.Status)
+	}
+}
+
 func TestQueueStartsTheOldestJobWhateverItsKind(t *testing.T) {
 	srv := hangingServer(t)
 	st := openQueueStore(t)

@@ -8,15 +8,13 @@ import (
 	"time"
 
 	"fnos-pikpak/internal/fnos"
-	"fnos-pikpak/internal/pikpak"
-	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 )
 
 const defaultAccountTTL = 60 * time.Second
 
 // accountSnapshot is the quota/VIP summary shown in the app shell. It is
-// cached per user because the upstream calls are slow and the numbers only
+// cached per account because the upstream calls are slow and the numbers only
 // matter at minute granularity.
 type accountSnapshot struct {
 	QuotaLimit int64     `json:"quota_limit"`
@@ -34,106 +32,39 @@ type accountEntry struct {
 type accountCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
-	entries map[int]accountEntry
+	entries map[string]accountEntry
 }
 
 func newAccountCache(ttl time.Duration) *accountCache {
 	if ttl <= 0 {
 		ttl = defaultAccountTTL
 	}
-	return &accountCache{ttl: ttl, entries: map[int]accountEntry{}}
+	return &accountCache{ttl: ttl, entries: map[string]accountEntry{}}
 }
 
-func (c *accountCache) get(uid int) (accountSnapshot, bool) {
+func (c *accountCache) get(accountID string) (accountSnapshot, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[uid]
+	e, ok := c.entries[accountID]
 	if !ok || time.Since(e.fetchedAt) >= c.ttl {
 		return accountSnapshot{}, false
 	}
 	return e.snap, true
 }
 
-func (c *accountCache) put(uid int, s accountSnapshot) {
+func (c *accountCache) put(accountID string, s accountSnapshot) {
 	c.mu.Lock()
-	c.entries[uid] = accountEntry{snap: s, fetchedAt: time.Now()}
+	c.entries[accountID] = accountEntry{snap: s, fetchedAt: time.Now()}
 	c.mu.Unlock()
 }
 
-func (c *accountCache) drop(uid int) {
+func (c *accountCache) drop(accountID string) {
 	c.mu.Lock()
-	delete(c.entries, uid)
+	delete(c.entries, accountID)
 	c.mu.Unlock()
 }
 
 func registerAccountRoutes(mux *http.ServeMux, deps Deps) {
-	mux.HandleFunc("GET /api/account", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := fnos.IdentityFrom(r.Context())
-		if _, err := deps.Sessions.Get(r.Context(), id.UID); errors.Is(err, pikpak.ErrNotBound) {
-			writeError(w, http.StatusUnauthorized, "not_bound", "请先绑定 PikPak 账号")
-			return
-		} else if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "无法加载 PikPak 会话")
-			return
-		}
-
-		if snap, ok := deps.Accounts.get(id.UID); ok {
-			writeJSON(w, http.StatusOK, snap)
-			return
-		}
-
-		client, err := deps.Sessions.ClientFor(r.Context(), id.UID)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
-			return
-		}
-		about, err := client.About(r.Context())
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
-			return
-		}
-		vip, err := client.VIP(r.Context())
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
-			return
-		}
-
-		snap := accountSnapshot{
-			QuotaLimit: about.QuotaLimit,
-			QuotaUsage: about.QuotaUsage,
-			VIPType:    vip.Type,
-			VIPExpire:  vip.Expire,
-			CachedAt:   time.Now().UTC(),
-		}
-		deps.Accounts.put(id.UID, snap)
-		writeJSON(w, http.StatusOK, snap)
-	})
-
-	mux.HandleFunc("POST /api/auth/rebind", func(w http.ResponseWriter, r *http.Request) {
-		if !requireJSONBody(w, r) {
-			return
-		}
-		id, _ := fnos.IdentityFrom(r.Context())
-		if _, err := deps.Sessions.Get(r.Context(), id.UID); errors.Is(err, pikpak.ErrNotBound) {
-			writeError(w, http.StatusNotFound, "not_bound", "当前用户尚未绑定 PikPak 账号")
-			return
-		} else if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "无法加载 PikPak 会话")
-			return
-		}
-
-		err := deps.Store.SetUserStatus(r.Context(), id.UID, "active")
-		if errors.Is(err, store.ErrNotFound) {
-			err = deps.Store.PutUser(r.Context(), store.User{UID: id.UID, Status: "active"})
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "无法更新账号状态")
-			return
-		}
-		deps.Accounts.drop(id.UID)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "active"})
-	})
-
 	mux.HandleFunc("POST /api/auth/flow/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if !requireJSONBody(w, r) {
 			return
@@ -159,20 +90,29 @@ func registerAccountRoutes(mux *http.ServeMux, deps Deps) {
 	})
 }
 
-// meResponse is the app shell's first call: who am I, is the account linked,
-// and what can this session do.
-func meResponse(ctx context.Context, deps Deps, uid int, bound bool) map[string]any {
-	status := "unbound"
-	var user store.User
-	if u, err := deps.Store.GetUser(ctx, uid); err == nil {
-		user = u
-	} else if bound {
-		status = "active"
+// meResponse is the app shell's first call: who am I, is a PikPak account
+// linked, and what can this session do. Every bound account counts; the
+// worst status wins so a single reauth banner is never hidden behind a
+// healthy default account.
+func meResponse(ctx context.Context, deps Deps, uid int) map[string]any {
+	accounts, err := deps.Store.ListAccounts(ctx, uid)
+	if err != nil {
+		accounts = nil
 	}
+	bound := len(accounts) > 0
+	status := "unbound"
+	displayName, vipType := "", ""
 	if bound {
 		status = "active"
-		if user.Status != "" {
-			status = user.Status
+		for _, a := range accounts {
+			if a.Status == "reauth_required" {
+				status = "reauth_required"
+				break
+			}
+		}
+		if def := defaultAccount(accounts); def != nil {
+			displayName = def.DisplayName
+			vipType = def.VIPType
 		}
 	}
 
@@ -181,8 +121,9 @@ func meResponse(ctx context.Context, deps Deps, uid int, bound bool) map[string]
 		"bound":        bound,
 		"status":       status,
 		"debug":        deps.Debug,
-		"display_name": user.DisplayName,
-		"vip_type":     user.VIPType,
+		"display_name": displayName,
+		"vip_type":     vipType,
+		"accounts":     len(accounts),
 		"capabilities": map[string]bool{
 			"can_purge":   true,
 			"can_play":    true,

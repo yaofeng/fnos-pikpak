@@ -476,20 +476,17 @@ func (s *SessionStore) defaultAccountID(ctx context.Context, uid int) (string, e
 	return legacyAccountID(cred.AccountID), nil
 }
 
-// accountCredential loads the stored credential of one account. The store
-// only exposes a per-uid read, so the row it resolves to must carry this
-// account's own id; anything else means the account has no loadable
-// credential here.
+// accountCredential loads the stored credential of one account. An empty
+// accountID selects the pre-account placeholder row (see store.credentialKey).
+// The store resolves the exact per-account row, so two accounts of one user
+// can never read each other's credentials.
 func (s *SessionStore) accountCredential(ctx context.Context, uid int, accountID string) (store.Credential, error) {
-	cred, err := s.st.GetCredential(ctx, uid)
+	cred, err := s.st.GetAccountCredential(ctx, uid, accountID)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Credential{}, ErrNotBound
 	}
 	if err != nil {
 		return store.Credential{}, err
-	}
-	if legacyAccountID(cred.AccountID) != accountID {
-		return store.Credential{}, ErrNotBound
 	}
 	return cred, nil
 }
@@ -602,24 +599,10 @@ func (s *SessionStore) DropAccount(ctx context.Context, uid int, accountID strin
 	return s.st.CancelAccountFlows(ctx, uid, accountID)
 }
 
-// dropAccountCredential deletes the account's stored credential. The store
-// does not expose a per-account delete yet, so all of the uid's rows only go
-// away when the credential the store resolves belongs to the account being
-// dropped. Once the store grows an account-scoped delete (multi-account bind
-// makes two persisted rows per uid possible), this must switch to it.
+// dropAccountCredential deletes the account's stored credential, exactly one
+// row: the sibling accounts of the same user keep theirs.
 func (s *SessionStore) dropAccountCredential(ctx context.Context, uid int, accountID string) error {
-	cred, err := s.st.GetCredential(ctx, uid)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if legacyAccountID(cred.AccountID) != accountID {
-		// The row the store resolved belongs to another account; leave it.
-		return nil
-	}
-	return s.st.DeleteCredential(ctx, uid)
+	return s.st.DeleteAccountCredential(ctx, uid, accountID)
 }
 
 // HasAny reports whether the user holds any PikPak identity: an account row
