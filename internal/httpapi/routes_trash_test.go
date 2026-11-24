@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -125,6 +126,69 @@ func TestEmptyTrashReportsPendingTask(t *testing.T) {
 	rec, body := postJSON(t, h, "/api/trash/empty", "1000", `{}`)
 	if rec.Code != http.StatusOK || body["pending"] != true {
 		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+}
+
+func TestTrashAndOpsFollowAccount(t *testing.T) {
+	// GET /api/trash、POST /api/trash/empty、POST /api/files/trash、POST /api/folders
+	// 带 account= 时打到对应上游：fake server 按 bearer token 记录每个上游身份
+	// 收到的请求。
+	var mu sync.Mutex
+	seen := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.Header.Get("Authorization")+" "+r.Method+" "+r.URL.Path]++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/drive/v1/files/trash:empty"):
+			_, _ = io.WriteString(w, `{"task_id":""}`)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/drive/v1/files:"):
+			_, _ = io.WriteString(w, `{"task_id":""}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/drive/v1/files":
+			_, _ = io.WriteString(w, `{"file":{"id":"new1","name":"n","kind":"drive#folder"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/files":
+			_, _ = io.WriteString(w, `{"files":[]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	if rec, body := getJSON(t, h, "/api/trash?account=acct-b", "1000"); rec.Code != http.StatusOK {
+		t.Fatalf("trash status = %d body=%v", rec.Code, body)
+	}
+	if rec, body := postJSON(t, h, "/api/trash/empty?account=acct-b", "1000", `{}`); rec.Code != http.StatusOK {
+		t.Fatalf("trash/empty status = %d body=%v", rec.Code, body)
+	}
+	if rec, body := postJSON(t, h, "/api/files/trash?account=acct-b", "1000", `{"ids":["f1"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("files/trash status = %d body=%v", rec.Code, body)
+	}
+	if rec, body := postJSON(t, h, "/api/folders?account=acct-b", "1000", `{"parent_id":"p1","name":"n"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("folders status = %d body=%v", rec.Code, body)
+	}
+
+	want := map[string]bool{
+		"Bearer at-acct-b GET /drive/v1/files":               true,
+		"Bearer at-acct-b PATCH /drive/v1/files/trash:empty": true,
+		"Bearer at-acct-b POST /drive/v1/files:batchTrash":   true,
+		"Bearer at-acct-b POST /drive/v1/files":              true,
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for key := range seen {
+		if !want[key] {
+			t.Fatalf("unexpected upstream call %s (seen=%v)", key, seen)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("upstream calls missing: %v (seen=%v)", want, seen)
 	}
 }
 

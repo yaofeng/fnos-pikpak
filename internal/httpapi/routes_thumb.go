@@ -78,7 +78,7 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}

@@ -18,7 +18,7 @@ const playTokenTTL = 6 * time.Hour
 func registerPlayRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/play/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}

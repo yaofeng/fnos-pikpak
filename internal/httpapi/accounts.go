@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,7 +41,9 @@ func defaultAccount(accounts []store.PikPakAccount) *store.PikPakAccount {
 // resolveAccount maps the ?account= parameter to the caller's account row.
 // An empty parameter selects the default account; a named one must be the
 // caller's own (store.ErrNotFound otherwise, which the callers turn into a
-// 404).
+// 404). A user bound before accounts existed owns a credential but no rows;
+// like the session layer, the default lookup falls back to that credential
+// under the legacy empty account id instead of demanding a re-bind.
 func (deps Deps) resolveAccount(ctx context.Context, uid int, raw string) (store.PikPakAccount, error) {
 	if raw != "" {
 		return deps.Store.GetAccount(ctx, uid, raw)
@@ -50,10 +53,24 @@ func (deps Deps) resolveAccount(ctx context.Context, uid int, raw string) (store
 		return store.PikPakAccount{}, err
 	}
 	def := defaultAccount(accounts)
-	if def == nil {
+	if def != nil {
+		return *def, nil
+	}
+	cred, err := deps.Store.GetCredential(ctx, uid)
+	if errors.Is(err, store.ErrNotFound) {
 		return store.PikPakAccount{}, pikpak.ErrNotBound
 	}
-	return *def, nil
+	if err != nil {
+		return store.PikPakAccount{}, err
+	}
+	// The session layer serves the placeholder credential ("uid:<n>" key,
+	// see pikpak.legacyAccountID) under the empty account id; ask for exactly
+	// that so both layers resolve the same session.
+	id := ""
+	if !strings.HasPrefix(cred.AccountID, "uid:") {
+		id = cred.AccountID
+	}
+	return store.PikPakAccount{ID: id, UID: uid, Status: "active"}, nil
 }
 
 // accountClient returns a client bound to the ?account= account, or to the

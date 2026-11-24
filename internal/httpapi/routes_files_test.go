@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"fnos-pikpak/internal/pikpak"
@@ -29,6 +30,87 @@ func filesTestServer(t *testing.T, capture *map[string]string, status int, reply
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, reply)
 	}))
+}
+
+func TestFilesRouteFollowsAccountParam(t *testing.T) {
+	// 两个账号、两个 fake 上游返回不同文件名集合：一个监听地址按 bearer token
+	// 分成两个上游身份，各自回答自己的文件集合。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Header.Get("Authorization") {
+		case "Bearer at-acct-a":
+			_, _ = io.WriteString(w, `{"files":[{"id":"fa1","name":"a.mkv","kind":"drive#file","size":"1"}]}`)
+		case "Bearer at-acct-b":
+			_, _ = io.WriteString(w, `{"files":[{"id":"fb1","name":"b.mkv","kind":"drive#file","size":"2"}]}`)
+		default:
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	firstName := func(rec *httptest.ResponseRecorder, body map[string]any) string {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%v", rec.Code, body)
+		}
+		items, _ := body["items"].([]any)
+		if len(items) != 1 {
+			t.Fatalf("items = %v", body["items"])
+		}
+		file, _ := items[0].(map[string]any)
+		return file["name"].(string)
+	}
+
+	// GET /api/files?account=a → 集合 A；account=b → 集合 B；缺省 → 集合 A
+	rec, body := getJSON(t, h, "/api/files?account=acct-a", "1000")
+	if got := firstName(rec, body); got != "a.mkv" {
+		t.Fatalf("account=acct-a served %q, want a.mkv", got)
+	}
+	rec, body = getJSON(t, h, "/api/files?account=acct-b", "1000")
+	if got := firstName(rec, body); got != "b.mkv" {
+		t.Fatalf("account=acct-b served %q, want b.mkv", got)
+	}
+	rec, body = getJSON(t, h, "/api/files", "1000")
+	if got := firstName(rec, body); got != "a.mkv" {
+		t.Fatalf("param-less served %q, want the default account's a.mkv", got)
+	}
+}
+
+func TestAccountParamRejectsForeignID(t *testing.T) {
+	// 一个监听地址同时扮演两个上游：uid 1001 请求另一个 uid 的账号 id 时，
+	// 两个上游都必须零调用。
+	var upstreamCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"files":[]}`)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 2000, "acct-foreign", "sub-foreign", "active")
+	bindAccount(t, st, 1001, "acct-mine", "sub-mine", "active")
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/files?account=acct-foreign", "1001")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%v, want 404 not_found", rec.Code, body)
+	}
+	if errCode(body) != "not_found" {
+		t.Fatalf("code = %v, want not_found", errCode(body))
+	}
+	if got := atomic.LoadInt32(&upstreamCalls); got != 0 {
+		t.Fatalf("a foreign account id reached the upstream %d times, want 0", got)
+	}
 }
 
 func TestFilesRequireBinding(t *testing.T) {

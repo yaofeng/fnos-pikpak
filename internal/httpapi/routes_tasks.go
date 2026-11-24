@@ -9,7 +9,7 @@ import (
 
 func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/tasks", func(w http.ResponseWriter, r *http.Request) {
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -51,7 +51,7 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "empty_link", "请填写下载链接或磁力链接")
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -67,7 +67,7 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 		if !requireJSONBody(w, r) {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -84,7 +84,7 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_ids", "缺少任务 ID")
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -100,7 +100,7 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 		if !requireJSONBody(w, r) {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}

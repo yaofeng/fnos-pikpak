@@ -145,7 +145,7 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			writeDirError(w, err)
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -252,7 +252,7 @@ func registerTransferRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_paths", "一次需要选择 1 到 200 个文件")
 			return
 		}
-		if _, ok := boundClient(w, r, deps); !ok {
+		if _, _, ok := accountClient(w, r, deps); !ok {
 			return
 		}
 

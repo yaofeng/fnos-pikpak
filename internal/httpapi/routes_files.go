@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
 )
@@ -30,7 +29,7 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	registerFileOperationRoutes(mux, deps)
 
 	mux.HandleFunc("GET /api/recent", func(w http.ResponseWriter, r *http.Request) {
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -46,7 +45,7 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("GET /api/trash", func(w http.ResponseWriter, r *http.Request) {
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -72,7 +71,7 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 		if !requireJSONBody(w, r) {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -90,7 +89,7 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("GET /api/files", func(w http.ResponseWriter, r *http.Request) {
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -151,22 +150,7 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	})
 }
 
-// boundClient returns the user's PikPak client, writing 401 when the account
-// is not linked. A failed session load is a 500, not a silent empty list.
-func boundClient(w http.ResponseWriter, r *http.Request, deps Deps) (*pikpak.Client, bool) {
-	id, _ := fnos.IdentityFrom(r.Context())
-	client, err := deps.Sessions.ClientFor(r.Context(), id.UID)
-	if errors.Is(err, pikpak.ErrNotBound) {
-		writeError(w, http.StatusUnauthorized, "not_bound", "请先绑定 PikPak 账号")
-		return nil, false
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "无法加载 PikPak 会话")
-		return nil, false
-	}
-	return client, true
-}
-
+// writeUpstreamError maps a PikPak failure onto the HTTP error envelope.
 func writeUpstreamError(w http.ResponseWriter, err error) {
 	// An expired grant is not an upstream fault: the user has to rebind, and
 	// the client tells them so instead of showing a generic 502.

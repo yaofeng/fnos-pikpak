@@ -73,7 +73,7 @@ func registerFileOperationRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_name", "文件夹名称不能为空")
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -97,7 +97,7 @@ func registerFileOperationRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_name", "名称不能为空")
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -119,7 +119,7 @@ func registerFileOperationRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -134,7 +134,7 @@ func registerFileOperationRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -152,7 +152,7 @@ func registerBatch(mux *http.ServeMux, deps Deps, op string, needTarget bool) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}

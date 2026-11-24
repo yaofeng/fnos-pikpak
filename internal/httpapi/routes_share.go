@@ -31,7 +31,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -82,7 +82,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -111,7 +111,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -158,7 +158,7 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		if !ok {
 			return
 		}
-		client, ok := boundClient(w, r, deps)
+		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
