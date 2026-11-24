@@ -10,15 +10,21 @@ import (
 
 var secret = []byte("0123456789abcdef0123456789abcdef")
 
+// signedToken 手拼一个 token：与 Sign 相同的编码方式，便于构造旧格式或
+// 换了 secret 的载荷。
+func signedToken(secret []byte, payload string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload)
+}
+
 func TestSignVerifyRoundTrip(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "file-abc", 6*time.Hour, now)
+	token := Sign(secret, 1000, "acct-1", "file-abc", 6*time.Hour, now)
 
 	claims, err := Verify(secret, token, now)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if claims.UID != 1000 || claims.FileID != "file-abc" {
+	if claims.UID != 1000 || claims.AccountID != "acct-1" || claims.FileID != "file-abc" {
 		t.Fatalf("claims = %+v", claims)
 	}
 	if got, want := claims.ExpiresAt, now.Add(6*time.Hour); !got.Equal(want) {
@@ -26,9 +32,17 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsWrongSignature(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	token := signedToken([]byte("another-secret-another-secret-32"), "1000|acct-1|f1|9999999999")
+	if _, err := Verify(secret, token, now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestVerifyRejectsWrongSecret(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "f1", time.Hour, now)
+	token := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
 	if _, err := Verify([]byte("another-secret-another-secret-32"), token, now); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v", err)
 	}
@@ -36,12 +50,12 @@ func TestVerifyRejectsWrongSecret(t *testing.T) {
 
 func TestVerifyRejectsTamperedPayload(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "f1", time.Hour, now)
+	token := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
 	_, sig, _ := strings.Cut(token, ".")
 
 	for _, payload := range []string{
-		"2000|f1|" + now.Add(time.Hour).Format("") + "9999999999",
-		"1000|f2|9999999999",
+		"2000|acct-1|f1|9999999999",
+		"1000|acct-1|f2|9999999999",
 	} {
 		forged := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
 		if _, err := Verify(secret, forged, now); !errors.Is(err, ErrInvalid) {
@@ -50,9 +64,22 @@ func TestVerifyRejectsTamperedPayload(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsLegacyFormats(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	for _, payload := range []string{
+		"1001|file|9999999999",
+		"s|1001|share|file|9999999999",
+	} {
+		token := signedToken(secret, payload)
+		if _, err := Verify(secret, token, now); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("legacy payload %q: err = %v", payload, err)
+		}
+	}
+}
+
 func TestVerifyRejectsExpired(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "f1", time.Hour, now)
+	token := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
 	if _, err := Verify(secret, token, now.Add(2*time.Hour)); !errors.Is(err, ErrExpired) {
 		t.Fatalf("err = %v", err)
 	}
@@ -81,21 +108,21 @@ func TestDeriveSecretIsStableAndSeparate(t *testing.T) {
 
 func TestSignShareVerifyRoundTrip(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := SignShare(secret, 1000, "VOabc123", "sf1", 6*time.Hour, now)
+	token := SignShare(secret, 1000, "acct-1", "VOabc123", "sf1", 6*time.Hour, now)
 
 	claims, err := Verify(secret, token, now)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if claims.UID != 1000 || claims.ShareID != "VOabc123" || claims.FileID != "sf1" {
+	if claims.UID != 1000 || claims.AccountID != "acct-1" || claims.ShareID != "VOabc123" || claims.FileID != "sf1" {
 		t.Fatalf("claims = %+v", claims)
 	}
 }
 
 func TestDriveAndShareTokensDoNotSubstituteForEachOther(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	drive := Sign(secret, 1000, "f1", time.Hour, now)
-	share := SignShare(secret, 1000, "VOabc123", "f1", time.Hour, now)
+	drive := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	share := SignShare(secret, 1000, "acct-1", "VOabc123", "f1", time.Hour, now)
 
 	dc, err := Verify(secret, drive, now)
 	if err != nil || dc.ShareID != "" {

@@ -31,7 +31,8 @@ func registerPlayRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "not_a_file", "文件夹不能播放")
 			return
 		}
-		token := playtoken.Sign(deps.PlaySecret, id.UID, file.ID, playTokenTTL, time.Now())
+		// TODO(多账号): Task 8 接入真实账号
+		token := playtoken.Sign(deps.PlaySecret, id.UID, "", file.ID, playTokenTTL, time.Now())
 		writeJSON(w, http.StatusOK, map[string]any{
 			"file_id":    file.ID,
 			"name":       file.Name,

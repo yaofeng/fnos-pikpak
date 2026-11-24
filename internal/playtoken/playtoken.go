@@ -19,9 +19,12 @@ var (
 
 // Claims is what a stream URL carries: who may read, which file, until when.
 // ShareID is set only for a file inside a share; an empty ShareID means the
-// file belongs to the user's own drive.
+// file belongs to the user's own drive. AccountID names the pikpak account
+// the file lives on, so a token minted for one account can never be spent
+// through another account's session.
 type Claims struct {
 	UID       int
+	AccountID string
 	FileID    string
 	ShareID   string
 	ExpiresAt time.Time
@@ -36,16 +39,17 @@ func DeriveSecret(master []byte) []byte {
 }
 
 // Sign returns base64url(payload) "." base64url(HMAC-SHA256(secret, payload))
-// where payload is "uid|file|unix_expiry".
-func Sign(secret []byte, uid int, fileID string, ttl time.Duration, now time.Time) string {
-	payload := strconv.Itoa(uid) + "|" + fileID + "|" + strconv.FormatInt(now.Add(ttl).Unix(), 10)
+// where payload is "uid|acct|file|unix_expiry".
+func Sign(secret []byte, uid int, accountID, fileID string, ttl time.Duration, now time.Time) string {
+	payload := strconv.Itoa(uid) + "|" + accountID + "|" + fileID + "|" +
+		strconv.FormatInt(now.Add(ttl).Unix(), 10)
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload)
 }
 
 // SignShare signs a file inside a share. The payload starts with "s" so it can
 // never be confused with a drive-file token.
-func SignShare(secret []byte, uid int, shareID, fileID string, ttl time.Duration, now time.Time) string {
-	payload := "s|" + strconv.Itoa(uid) + "|" + shareID + "|" + fileID + "|" +
+func SignShare(secret []byte, uid int, accountID, shareID, fileID string, ttl time.Duration, now time.Time) string {
+	payload := "s|" + strconv.Itoa(uid) + "|" + accountID + "|" + shareID + "|" + fileID + "|" +
 		strconv.FormatInt(now.Add(ttl).Unix(), 10)
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload)
 }
@@ -79,20 +83,23 @@ func Verify(secret []byte, token string, now time.Time) (Claims, error) {
 		return Claims{}, ErrInvalid
 	}
 
+	// 段数即格式：4 段是 drive 令牌，"s" 开头的 6 段是 share 令牌；旧格式
+	// （3 段 drive / 5 段 share，无账号段）在这里直接拒绝，签发方升级后
+	// 旧令牌一律失效。
 	parts := strings.Split(string(raw), "|")
-	var shareID, fileID, expText string
+	var uidIdx int
+	var accountID, shareID, fileID, expText string
 	switch {
-	case len(parts) == 3:
-		fileID, expText = parts[1], parts[2]
-	case len(parts) == 5 && parts[0] == "s":
-		shareID, fileID, expText = parts[2], parts[3], parts[4]
+	case len(parts) == 4:
+		uidIdx = 0
+		accountID, fileID, expText = parts[1], parts[2], parts[3]
+	case len(parts) == 6 && parts[0] == "s":
+		uidIdx = 1
+		accountID, shareID, fileID, expText = parts[2], parts[3], parts[4], parts[5]
 	default:
 		return Claims{}, ErrInvalid
 	}
-	uid, err := strconv.Atoi(parts[0])
-	if len(parts) == 5 {
-		uid, err = strconv.Atoi(parts[1])
-	}
+	uid, err := strconv.Atoi(parts[uidIdx])
 	if err != nil || uid <= 0 {
 		return Claims{}, ErrInvalid
 	}
@@ -103,5 +110,11 @@ func Verify(secret []byte, token string, now time.Time) (Claims, error) {
 	if now.Unix() >= exp {
 		return Claims{}, ErrExpired
 	}
-	return Claims{UID: uid, FileID: fileID, ShareID: shareID, ExpiresAt: time.Unix(exp, 0)}, nil
+	return Claims{
+		UID:       uid,
+		AccountID: accountID,
+		FileID:    fileID,
+		ShareID:   shareID,
+		ExpiresAt: time.Unix(exp, 0),
+	}, nil
 }

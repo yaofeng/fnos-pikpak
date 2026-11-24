@@ -67,7 +67,7 @@ func newStreamEnv(t *testing.T, expiredFirst bool) *streamEnv {
 
 func (e *streamEnv) request(t *testing.T, method string, header map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	token := playtoken.Sign(e.deps.PlaySecret, 1000, "f1", time.Hour, time.Now())
+	token := playtoken.Sign(e.deps.PlaySecret, 1000, "", "f1", time.Hour, time.Now())
 	req := httptest.NewRequest(method, "/api/stream/f1?t="+token, nil)
 	for k, v := range header {
 		req.Header.Set(k, v)

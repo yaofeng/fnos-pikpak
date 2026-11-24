@@ -121,7 +121,8 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		now := time.Now()
-		t := playtoken.SignShare(deps.PlaySecret, id.UID, shareID, fileID, playTokenTTL, now)
+		// TODO(多账号): Task 8 接入真实账号
+		t := playtoken.SignShare(deps.PlaySecret, id.UID, "", shareID, fileID, playTokenTTL, now)
 		escShare, escFile := url.PathEscape(shareID), url.PathEscape(fileID)
 		out := map[string]any{
 			"file_id":      fileID,

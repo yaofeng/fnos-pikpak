@@ -157,7 +157,7 @@ func TestShareFileIssuesSignedStreamAndDownloadURLs(t *testing.T) {
 	}
 
 	// A drive-file token must not open a share stream.
-	driveToken := playtoken.Sign(deps.PlaySecret, 1000, "sf2", time.Hour, time.Now())
+	driveToken := playtoken.Sign(deps.PlaySecret, 1000, "", "sf2", time.Hour, time.Now())
 	resp, err = http.Get(ts.URL + "/api/share/stream/VOabc123/sf2?t=" + driveToken)
 	if err != nil {
 		t.Fatalf("cross token: %v", err)

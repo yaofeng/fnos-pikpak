@@ -243,7 +243,8 @@ func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepare
 	if err != nil {
 		return videoPreviewResult{}, videoUpstreamMessage(err)
 	}
-	token := playtoken.SignShare(deps.PlaySecret, uid, source.shareID, source.fileID, playTokenTTL, time.Now())
+	// TODO(多账号): Task 8 接入真实账号
+	token := playtoken.SignShare(deps.PlaySecret, uid, "", source.shareID, source.fileID, playTokenTTL, time.Now())
 	out := videoPreviewResult{
 		StreamURL: "/api/share/stream/" + url.PathEscape(source.shareID) + "/" + url.PathEscape(source.fileID) + "?t=" + token,
 	}
@@ -506,7 +507,8 @@ func waitTask(ctx context.Context, client *pikpak.Client, taskID string) error {
 }
 
 func signVideoResult(deps Deps, uid int, file pikpak.File) videoPrepareResult {
-	token := playtoken.Sign(deps.PlaySecret, uid, file.ID, playTokenTTL, time.Now())
+	// TODO(多账号): Task 8 接入真实账号
+	token := playtoken.Sign(deps.PlaySecret, uid, "", file.ID, playTokenTTL, time.Now())
 	return videoPrepareResult{
 		FileID:    file.ID,
 		Name:      file.Name,
