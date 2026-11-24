@@ -40,6 +40,12 @@ type tasksResponse struct {
 	AccountErrors []accountError `json:"account_errors,omitempty"`
 }
 
+// pageDone marks an account whose listing already ended (or failed) inside a
+// merged page token. Without it the account would fall back to its first page
+// on every later request and its rows would repeat until the longest account
+// ran out.
+const pageDone = "="
+
 // encodePageToken packs per-account upstream page tokens into one opaque
 // string the browser can echo back. Empty input encodes to "", which lets the
 // response omit the field once every account is exhausted.
@@ -151,7 +157,9 @@ func isAccountLevelErr(err error) bool {
 
 // fetchFilePages pulls one events page per account in parallel. A failed
 // account leaves an empty page and a failure entry; it must not keep the
-// other accounts from loading.
+// other accounts from loading. An account whose token says its listing
+// already ended is left alone — asking it again would re-serve its first
+// page and duplicate its rows.
 func fetchFilePages(ctx context.Context, clients []namedClient, tokens map[string]string) (pages [][]pikpak.File, nexts []string, failures []error) {
 	pages = make([][]pikpak.File, len(clients))
 	nexts = make([]string, len(clients))
@@ -161,6 +169,9 @@ func fetchFilePages(ctx context.Context, clients []namedClient, tokens map[strin
 		wg.Add(1)
 		go func(i int, nc namedClient) {
 			defer wg.Done()
+			if tokens[nc.Account.ID] == pageDone {
+				return
+			}
 			page, err := nc.C.Events(ctx, tokens[nc.Account.ID])
 			if err != nil {
 				failures[i] = err
@@ -184,6 +195,9 @@ func fetchTaskPages(ctx context.Context, clients []namedClient, tokens map[strin
 		wg.Add(1)
 		go func(i int, nc namedClient) {
 			defer wg.Done()
+			if tokens[nc.Account.ID] == pageDone {
+				return
+			}
 			page, err := nc.C.ListTasks(ctx, tokens[nc.Account.ID])
 			if err != nil {
 				failures[i] = err
@@ -197,16 +211,27 @@ func fetchTaskPages(ctx context.Context, clients []namedClient, tokens map[strin
 	return pages, nexts, failures
 }
 
-// nextPageToken re-packs the accounts that still have pages. Exhausted and
-// failed accounts drop out; an empty result omits the field, ending the
+// nextPageToken re-packs every account: those with another page carry its
+// upstream token, exhausted and failed ones carry the pageDone sentinel so
+// they are not restarted (and their rows not repeated) on the next request.
+// An empty result — no account has pages left — omits the field and ends the
 // merged listing.
 func nextPageToken(clients []namedClient, nexts []string, failures []error) string {
 	m := map[string]string{}
+	remaining := false
 	for i, nc := range clients {
+		if nc.Account.ID == "" {
+			continue
+		}
 		if failures[i] != nil || nexts[i] == "" {
+			m[nc.Account.ID] = pageDone
 			continue
 		}
 		m[nc.Account.ID] = nexts[i]
+		remaining = true
+	}
+	if !remaining {
+		return ""
 	}
 	return encodePageToken(m)
 }
