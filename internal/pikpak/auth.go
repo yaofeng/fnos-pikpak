@@ -324,6 +324,17 @@ func (s *Session) refreshOnce(ctx context.Context) error {
 	return nil
 }
 
+// disable makes the session unusable and prevents any in-flight refresh from
+// writing credentials back after a logout. The flag is checked under sess.mu
+// (Token, refreshOnce), so it must be written under it too; callers hold
+// SessionStore.mu first — nothing ever takes SessionStore.mu while holding
+// sess.mu, which fixes the lock order SessionStore.mu → sess.mu.
+func (s *Session) disable() {
+	s.mu.Lock()
+	s.disabled = true
+	s.mu.Unlock()
+}
+
 // markReauth latches the session as needing reauthorization and records that
 // on the owning account row, which is where the shell reads the banner state
 // from. Sessions that predate account rows keep writing the users row.
@@ -546,14 +557,11 @@ func (s *SessionStore) Drop(ctx context.Context, uid int) error {
 	}
 
 	// Credentials and flows without an account row (binds completed before
-	// the routes grew account handling) are cleaned up wholesale. Held across
-	// the store writes so an in-flight refresh cannot interleave and write
-	// the credential back.
+	// the routes grew account handling) are cleaned up wholesale. Sessions
+	// are disabled before the store writes — under sess.mu via disable, the
+	// same ordering as DropAccount — so an in-flight refresh cannot
+	// interleave and write the credential back.
 	s.mu.Lock()
-	err = s.st.DeleteCredential(ctx, uid)
-	if err == nil {
-		err = s.st.CancelAccountFlows(ctx, uid, "")
-	}
 	prefix := sessionKey(uid, "")
 	var doomed []*Session
 	for key, sess := range s.sessions {
@@ -563,7 +571,11 @@ func (s *SessionStore) Drop(ctx context.Context, uid int) error {
 		}
 	}
 	for _, sess := range doomed {
-		sess.disabled = true
+		sess.disable()
+	}
+	err = s.st.DeleteCredential(ctx, uid)
+	if err == nil {
+		err = s.st.CancelAccountFlows(ctx, uid, "")
 	}
 	s.mu.Unlock()
 	return err
@@ -581,7 +593,7 @@ func (s *SessionStore) DropAccount(ctx context.Context, uid int, accountID strin
 	sess := s.sessions[key]
 	delete(s.sessions, key)
 	if sess != nil {
-		sess.disabled = true
+		sess.disable()
 	}
 
 	if err := s.dropAccountCredential(ctx, uid, accountID); err != nil {
