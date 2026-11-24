@@ -19,10 +19,14 @@ import (
 
 var ErrNotFound = errors.New("store: not found")
 
-// Credential is the per-user PikPak session. Token fields are plaintext in
-// memory and encrypted at rest.
+// Credential is one PikPak session. Token fields are plaintext in memory and
+// encrypted at rest.
 type Credential struct {
-	UID              int
+	UID int
+	// AccountID is the pikpak_accounts row the credential belongs to. Empty
+	// means the caller has not been taught about accounts yet; the row is
+	// then stored under a per-uid placeholder key (see credentialKey).
+	AccountID        string
 	AuthType         string
 	ClientID         string
 	AccessToken      string
@@ -91,6 +95,10 @@ func Open(dbPath, keyPath string) (*Store, error) {
 
 	s := &Store{db: db, key: key, path: dbPath}
 	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.migrateData(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -190,25 +198,38 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// credentialKey is the credentials2 primary key for a credential: the account
+// id once the caller knows it, otherwise a per-uid placeholder. The
+// placeholder keeps callers that predate multi-account support working — each
+// uid still gets its own isolated row instead of every uid colliding on the
+// empty id.
+func credentialKey(uid int, accountID string) string {
+	if accountID == "" {
+		return "uid:" + strconv.Itoa(uid)
+	}
+	return accountID
+}
+
 func (s *Store) PutCredential(ctx context.Context, c Credential) error {
-	access, err := Encrypt(s.key, aadFor(c.UID, "access_token"), []byte(c.AccessToken))
+	key := credentialKey(c.UID, c.AccountID)
+	access, err := Encrypt(s.key, acctAAD(key, "access_token"), []byte(c.AccessToken))
 	if err != nil {
 		return err
 	}
-	refresh, err := Encrypt(s.key, aadFor(c.UID, "refresh_token"), []byte(c.RefreshToken))
+	refresh, err := Encrypt(s.key, acctAAD(key, "refresh_token"), []byte(c.RefreshToken))
 	if err != nil {
 		return err
 	}
-	device, err := Encrypt(s.key, aadFor(c.UID, "device_id"), []byte(c.DeviceID))
+	device, err := Encrypt(s.key, acctAAD(key, "device_id"), []byte(c.DeviceID))
 	if err != nil {
 		return err
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO credentials(uid, auth_type, client_id, access_token_enc, refresh_token_enc,
+INSERT INTO credentials2(account_id, uid, auth_type, client_id, access_token_enc, refresh_token_enc,
   access_expires_at, refresh_expires_at, scopes, device_id_enc, updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(uid) DO UPDATE SET
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(account_id) DO UPDATE SET
   auth_type=excluded.auth_type,
   client_id=excluded.client_id,
   access_token_enc=excluded.access_token_enc,
@@ -218,23 +239,36 @@ ON CONFLICT(uid) DO UPDATE SET
   scopes=excluded.scopes,
   device_id_enc=excluded.device_id_enc,
   updated_at=excluded.updated_at`,
-		c.UID, c.AuthType, c.ClientID, access, refresh,
+		key, c.UID, c.AuthType, c.ClientID, access, refresh,
 		formatTime(c.AccessExpiresAt), formatTime(c.RefreshExpiresAt), c.Scopes, device,
 		time.Now().Format(time.RFC3339))
 	return err
 }
 
+// GetCredential returns the uid's current credential. It predates
+// multi-account support: callers that know their account id should read the
+// credential through the account instead.
 func (s *Store) GetCredential(ctx context.Context, uid int) (Credential, error) {
+	var key string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT account_id FROM credentials2 WHERE uid = ? LIMIT 1`, uid).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Credential{}, ErrNotFound
+	}
+	if err != nil {
+		return Credential{}, err
+	}
+
 	var (
 		c                          Credential
 		access, refresh, device    []byte
 		accessExp, refreshExp, upd string
 	)
-	err := s.db.QueryRowContext(ctx, `
-SELECT uid, auth_type, client_id, access_token_enc, refresh_token_enc,
+	err = s.db.QueryRowContext(ctx, `
+SELECT account_id, uid, auth_type, client_id, access_token_enc, refresh_token_enc,
        access_expires_at, refresh_expires_at, scopes, device_id_enc, updated_at
-FROM credentials WHERE uid = ?`, uid).
-		Scan(&c.UID, &c.AuthType, &c.ClientID, &access, &refresh,
+FROM credentials2 WHERE account_id = ?`, key).
+		Scan(&c.AccountID, &c.UID, &c.AuthType, &c.ClientID, &access, &refresh,
 			&accessExp, &refreshExp, &c.Scopes, &device, &upd)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Credential{}, ErrNotFound
@@ -243,19 +277,19 @@ FROM credentials WHERE uid = ?`, uid).
 		return Credential{}, err
 	}
 
-	pt, err := Decrypt(s.key, aadFor(uid, "access_token"), access)
+	pt, err := Decrypt(s.key, acctAAD(key, "access_token"), access)
 	if err != nil {
 		return Credential{}, err
 	}
 	c.AccessToken = string(pt)
 
-	pt, err = Decrypt(s.key, aadFor(uid, "refresh_token"), refresh)
+	pt, err = Decrypt(s.key, acctAAD(key, "refresh_token"), refresh)
 	if err != nil {
 		return Credential{}, err
 	}
 	c.RefreshToken = string(pt)
 
-	pt, err = Decrypt(s.key, aadFor(uid, "device_id"), device)
+	pt, err = Decrypt(s.key, acctAAD(key, "device_id"), device)
 	if err != nil {
 		return Credential{}, err
 	}
@@ -337,10 +371,11 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-// DeleteCredential unbinds a user's PikPak session. Missing rows are not an
-// error: the caller's intent (no credential) already holds.
+// DeleteCredential unbinds a user's PikPak sessions: every credentials2 row of
+// the uid goes, however many accounts it has. Missing rows are not an error:
+// the caller's intent (no credential) already holds.
 func (s *Store) DeleteCredential(ctx context.Context, uid int) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM credentials WHERE uid = ?`, uid)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM credentials2 WHERE uid = ?`, uid)
 	return err
 }
 

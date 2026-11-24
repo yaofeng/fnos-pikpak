@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
-	"strconv"
 )
 
 // Encrypt seals plaintext with AES-256-GCM. AAD is bound to the row and field
@@ -48,6 +47,8 @@ func Decrypt(key, aad, ciphertext []byte) ([]byte, error) {
 	return gcm.Open(nil, nonce, body, aad)
 }
 
-func aadFor(uid int, field string) []byte {
-	return []byte(strconv.Itoa(uid) + ":" + field)
+// acctAAD binds a ciphertext to one PikPak account row and field, so a token
+// cannot be moved to another account or column.
+func acctAAD(accountID, field string) []byte {
+	return []byte("acct:" + accountID + ":" + field)
 }

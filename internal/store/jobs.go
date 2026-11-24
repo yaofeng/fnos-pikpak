@@ -14,6 +14,7 @@ import (
 type DownloadJob struct {
 	ID           string    `json:"id"`
 	UID          int       `json:"-"`
+	AccountID    string    `json:"account_id"`
 	FileID       string    `json:"file_id"`
 	FileName     string    `json:"file_name"`
 	DestDir      string    `json:"dest_dir"`
@@ -31,9 +32,9 @@ type DownloadJob struct {
 func (s *Store) PutDownloadJob(ctx context.Context, j DownloadJob) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO download_jobs(id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+INSERT INTO download_jobs(id, uid, account_id, file_id, file_name, dest_dir, dest_path, size, downloaded,
   status, error_code, error_message, link_expire_at, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   file_name=excluded.file_name,
   dest_dir=excluded.dest_dir,
@@ -45,7 +46,7 @@ ON CONFLICT(id) DO UPDATE SET
   error_message=excluded.error_message,
   link_expire_at=excluded.link_expire_at,
   updated_at=excluded.updated_at`,
-		j.ID, j.UID, j.FileID, j.FileName, j.DestDir, j.DestPath, j.Size, j.Downloaded,
+		j.ID, j.UID, j.AccountID, j.FileID, j.FileName, j.DestDir, j.DestPath, j.Size, j.Downloaded,
 		j.Status, j.ErrorCode, j.ErrorMessage, j.LinkExpireAt, now, now)
 	return err
 }
@@ -87,10 +88,10 @@ func (s *Store) GetDownloadJob(ctx context.Context, uid int, id string) (Downloa
 		created, updated string
 	)
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+SELECT id, uid, account_id, file_id, file_name, dest_dir, dest_path, size, downloaded,
        status, error_code, error_message, link_expire_at, created_at, updated_at
 FROM download_jobs WHERE uid = ? AND id = ?`, uid, id).
-		Scan(&j.ID, &j.UID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath, &j.Size, &j.Downloaded,
+		Scan(&j.ID, &j.UID, &j.AccountID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath, &j.Size, &j.Downloaded,
 			&j.Status, &j.ErrorCode, &j.ErrorMessage, &j.LinkExpireAt, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DownloadJob{}, ErrNotFound
@@ -107,7 +108,7 @@ FROM download_jobs WHERE uid = ? AND id = ?`, uid, id).
 // filters to those states.
 func (s *Store) ListDownloadJobs(ctx context.Context, uid int, statuses ...string) ([]DownloadJob, error) {
 	query := `
-SELECT id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+SELECT id, uid, account_id, file_id, file_name, dest_dir, dest_path, size, downloaded,
        status, error_code, error_message, link_expire_at, created_at, updated_at
 FROM download_jobs WHERE uid = ?`
 	args := []any{uid}
@@ -133,7 +134,7 @@ FROM download_jobs WHERE uid = ?`
 			j                DownloadJob
 			created, updated string
 		)
-		if err := rows.Scan(&j.ID, &j.UID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath,
+		if err := rows.Scan(&j.ID, &j.UID, &j.AccountID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath,
 			&j.Size, &j.Downloaded, &j.Status, &j.ErrorCode, &j.ErrorMessage, &j.LinkExpireAt,
 			&created, &updated); err != nil {
 			return nil, err
@@ -164,6 +165,7 @@ UPDATE download_jobs SET status = 'queued', updated_at = ? WHERE status = 'runni
 type UploadJob struct {
 	ID           string    `json:"id"`
 	UID          int       `json:"-"`
+	AccountID    string    `json:"account_id"`
 	LocalPath    string    `json:"local_path"`
 	ParentID     string    `json:"parent_id"`
 	RemoteName   string    `json:"remote_name"`
@@ -179,9 +181,9 @@ type UploadJob struct {
 func (s *Store) PutUploadJob(ctx context.Context, j UploadJob) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO upload_jobs(id, uid, local_path, parent_id, remote_name, size, uploaded,
+INSERT INTO upload_jobs(id, uid, account_id, local_path, parent_id, remote_name, size, uploaded,
   status, error_code, error_message, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   local_path=excluded.local_path,
   parent_id=excluded.parent_id,
@@ -192,7 +194,7 @@ ON CONFLICT(id) DO UPDATE SET
   error_code=excluded.error_code,
   error_message=excluded.error_message,
   updated_at=excluded.updated_at`,
-		j.ID, j.UID, j.LocalPath, j.ParentID, j.RemoteName, j.Size, j.Uploaded,
+		j.ID, j.UID, j.AccountID, j.LocalPath, j.ParentID, j.RemoteName, j.Size, j.Uploaded,
 		j.Status, j.ErrorCode, j.ErrorMessage, now, now)
 	return err
 }
@@ -232,10 +234,10 @@ func (s *Store) GetUploadJob(ctx context.Context, uid int, id string) (UploadJob
 		created, updated string
 	)
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, uid, local_path, parent_id, remote_name, size, uploaded,
+SELECT id, uid, account_id, local_path, parent_id, remote_name, size, uploaded,
        status, error_code, error_message, created_at, updated_at
 FROM upload_jobs WHERE uid = ? AND id = ?`, uid, id).
-		Scan(&j.ID, &j.UID, &j.LocalPath, &j.ParentID, &j.RemoteName, &j.Size, &j.Uploaded,
+		Scan(&j.ID, &j.UID, &j.AccountID, &j.LocalPath, &j.ParentID, &j.RemoteName, &j.Size, &j.Uploaded,
 			&j.Status, &j.ErrorCode, &j.ErrorMessage, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return UploadJob{}, ErrNotFound
@@ -250,7 +252,7 @@ FROM upload_jobs WHERE uid = ? AND id = ?`, uid, id).
 
 func (s *Store) ListUploadJobs(ctx context.Context, uid int, statuses ...string) ([]UploadJob, error) {
 	query := `
-SELECT id, uid, local_path, parent_id, remote_name, size, uploaded,
+SELECT id, uid, account_id, local_path, parent_id, remote_name, size, uploaded,
        status, error_code, error_message, created_at, updated_at
 FROM upload_jobs WHERE uid = ?`
 	args := []any{uid}
@@ -276,7 +278,7 @@ FROM upload_jobs WHERE uid = ?`
 			j                UploadJob
 			created, updated string
 		)
-		if err := rows.Scan(&j.ID, &j.UID, &j.LocalPath, &j.ParentID, &j.RemoteName,
+		if err := rows.Scan(&j.ID, &j.UID, &j.AccountID, &j.LocalPath, &j.ParentID, &j.RemoteName,
 			&j.Size, &j.Uploaded, &j.Status, &j.ErrorCode, &j.ErrorMessage,
 			&created, &updated); err != nil {
 			return nil, err
@@ -304,7 +306,7 @@ UPDATE upload_jobs SET status = 'queued', updated_at = ? WHERE status = 'running
 // the transfer scheduler can fill its global slots fairly.
 func (s *Store) QueuedDownloadJobs(ctx context.Context, limit int) ([]DownloadJob, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, uid, file_id, file_name, dest_dir, dest_path, size, downloaded,
+SELECT id, uid, account_id, file_id, file_name, dest_dir, dest_path, size, downloaded,
        status, error_code, error_message, link_expire_at, created_at, updated_at
 FROM download_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, limit)
 	if err != nil {
@@ -317,7 +319,7 @@ FROM download_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, lim
 			j                DownloadJob
 			created, updated string
 		)
-		if err := rows.Scan(&j.ID, &j.UID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath,
+		if err := rows.Scan(&j.ID, &j.UID, &j.AccountID, &j.FileID, &j.FileName, &j.DestDir, &j.DestPath,
 			&j.Size, &j.Downloaded, &j.Status, &j.ErrorCode, &j.ErrorMessage, &j.LinkExpireAt,
 			&created, &updated); err != nil {
 			return nil, err
@@ -331,7 +333,7 @@ FROM download_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, lim
 
 func (s *Store) QueuedUploadJobs(ctx context.Context, limit int) ([]UploadJob, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, uid, local_path, parent_id, remote_name, size, uploaded,
+SELECT id, uid, account_id, local_path, parent_id, remote_name, size, uploaded,
        status, error_code, error_message, created_at, updated_at
 FROM upload_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, limit)
 	if err != nil {
@@ -344,7 +346,7 @@ FROM upload_jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT ?`, limit
 			j                UploadJob
 			created, updated string
 		)
-		if err := rows.Scan(&j.ID, &j.UID, &j.LocalPath, &j.ParentID, &j.RemoteName,
+		if err := rows.Scan(&j.ID, &j.UID, &j.AccountID, &j.LocalPath, &j.ParentID, &j.RemoteName,
 			&j.Size, &j.Uploaded, &j.Status, &j.ErrorCode, &j.ErrorMessage,
 			&created, &updated); err != nil {
 			return nil, err

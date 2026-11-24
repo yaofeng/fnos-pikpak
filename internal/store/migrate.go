@@ -159,4 +159,41 @@ ALTER TABLE share_favorites ADD COLUMN total_size INTEGER NOT NULL DEFAULT 0;
 	`
 ALTER TABLE share_favorites ADD COLUMN stats_at TEXT NOT NULL DEFAULT '';
 `,
+	`
+-- Multi-account: one fnOS user may bind several PikPak accounts. The old
+-- single-row tables keep their data until migrateData carries it over.
+CREATE TABLE pikpak_accounts (
+  id           TEXT PRIMARY KEY,          -- 16 hex 随机，绑定流程发起时生成，永久不变
+  uid          INTEGER NOT NULL,
+  pikpak_sub   TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  avatar       TEXT NOT NULL DEFAULT '',
+  vip_type     TEXT NOT NULL DEFAULT '',
+  vip_expire   TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'active',   -- active | reauth_required | disabled
+  bound_at     TEXT NOT NULL DEFAULT '',
+  updated_at   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_pikpak_accounts_uid ON pikpak_accounts(uid, bound_at);
+
+-- 凭据表按账号重建（PK 从 uid 换成 account_id，uid 保留用于归属校验）
+CREATE TABLE credentials2 (
+  account_id         TEXT PRIMARY KEY,
+  uid                INTEGER NOT NULL,
+  auth_type          TEXT NOT NULL DEFAULT 'oauth',
+  client_id          TEXT NOT NULL,
+  access_token_enc   BLOB NOT NULL,
+  refresh_token_enc  BLOB NOT NULL,
+  access_expires_at  TEXT NOT NULL,
+  refresh_expires_at TEXT NOT NULL DEFAULT '',
+  scopes             TEXT NOT NULL DEFAULT '',
+  device_id_enc      BLOB NOT NULL,
+  updated_at         TEXT NOT NULL
+);
+
+ALTER TABLE download_jobs ADD COLUMN account_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE upload_jobs   ADD COLUMN account_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE auth_flows    ADD COLUMN account_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE video_favorites ADD COLUMN restored_account_id TEXT NOT NULL DEFAULT '';
+`,
 }

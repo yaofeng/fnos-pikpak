@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -37,8 +38,11 @@ type ShareFavorite struct {
 	encPass  []byte
 }
 
+// sharePassAAD stays bound to the fnOS uid: favourites are per-user, the
+// multi-account data migration does not re-encrypt them, so the stored pass
+// codes must keep their original AAD bytes to stay readable.
 func sharePassAAD(uid int, shareID string) []byte {
-	return aadFor(uid, "share_pass_code:"+shareID)
+	return []byte(strconv.Itoa(uid) + ":share_pass_code:" + shareID)
 }
 
 // AddShareFavorite saves or updates the favourite for one share. An empty pass

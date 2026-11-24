@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,8 +36,11 @@ type VideoFavorite struct {
 	encPass  []byte
 }
 
+// videoPassAAD stays bound to the fnOS uid: favourites are per-user, the
+// multi-account data migration does not re-encrypt them, so the stored pass
+// codes must keep their original AAD bytes to stay readable.
 func videoPassAAD(uid int, shareID string) []byte {
-	return aadFor(uid, "video_pass_code:"+shareID)
+	return []byte(strconv.Itoa(uid) + ":video_pass_code:" + shareID)
 }
 
 // AddVideoFavorite saves or updates one video. An empty pass code leaves the
