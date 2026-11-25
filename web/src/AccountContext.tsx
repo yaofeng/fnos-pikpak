@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { apiGetQuiet } from './api'
-import { resolveCurrentId, type AccountInfo } from './accounts'
+import { resolveCurrentId, resolveScope, type AccountInfo } from './accounts'
 
 export type AccountContextValue = {
   accounts: AccountInfo[]
@@ -51,12 +51,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   }, [reload])
 
   const byId = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts])
-  // scope = wantedId || 'all': '' and 'all' are both the merged view, a
-  // concrete id is that account. currentId keeps its legacy meaning — the
-  // resolved concrete account for consumers that still need one — so 'all'
-  // must not reach resolveCurrentId: it is not a real id and would fall back
-  // to the first account as if a specific one had been picked.
-  const scope = wantedId || 'all'
+  // scope = resolveScope(accounts, wantedId): exactly one bound account pins
+  // the scope to it (the 2.0.0 pathway unchanged — no merged stamps, no
+  // @suffix, creation ops enabled), a valid selection means that account, and
+  // 'all' / a dead id / nothing chosen / nothing bound all mean the merged
+  // view. currentId keeps its legacy meaning — the resolved concrete account
+  // for consumers that still need one — so 'all' must not reach
+  // resolveCurrentId: it is not a real id and would fall back to the first
+  // account as if a specific one had been picked.
+  const scope = resolveScope(accounts, wantedId)
   const currentId = resolveCurrentId(accounts, wantedId !== 'all' ? wantedId : '')
   const current = byId.get(currentId)
 

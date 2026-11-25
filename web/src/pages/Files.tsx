@@ -231,6 +231,10 @@ export default function Files() {
   }
 
   async function createFolder() {
+    // Same guard shape as applyMove: merged view has no target account for a
+    // new folder and the toolbar entry is disabled there — this backstop
+    // keeps a stray invocation from writing to whatever the scope falls back to.
+    if (merged) return
     const name = window.prompt(t('files.folder_name_prompt'))
     if (!name?.trim()) return
     setBusy(true)
@@ -348,6 +352,10 @@ export default function Files() {
   }
 
   async function uploadFiles() {
+    // Same guard shape as applyMove: the toolbar entry is disabled in merged
+    // view — this backstop keeps a stray invocation from uploading to a
+    // guessed account.
+    if (merged) return
     let paths: string[] = []
     if (hostAvailable()) {
       paths = await pickFiles(t('files.pick_upload_files'))

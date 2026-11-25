@@ -51,6 +51,20 @@ export function vipTypeLabel(vipType: string, lang?: Lang): string {
   return `VIP·${vipType}`
 }
 
+// resolveScope derives the account scope every content page drives its
+// requests with. Exactly one bound account pins the scope to it — that is the
+// 2.0.0 pathway byte-identically (account=<id> requests, no merged stamps, no
+// @suffix, creation ops enabled), and no control offers a merge choice to a
+// single-account user, so the merged view must not be their default. With two
+// or more, a selection applies only while it still names a bound account (a
+// dead id after an unbind must not drive 404s); everything else — the explicit
+// 'all' choice, nothing chosen yet, nothing bound — is the merged view.
+export function resolveScope(items: AccountInfo[], wantedId: string): string {
+  if (items.length === 1) return items[0].id
+  if (wantedId && items.some((item) => item.id === wantedId)) return wantedId
+  return 'all'
+}
+
 // resolveCurrentId keeps the in-memory selection honest: once the account it
 // names is unbound (or nothing was selected yet), the first remaining account
 // becomes current — the same default the backend resolves a bare uid to.

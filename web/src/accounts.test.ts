@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountLabel, resolveCurrentId, validateDisplayName, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
+import { accountLabel, resolveCurrentId, resolveScope, validateDisplayName, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
 
 const base: AccountInfo = {
   id: 'a',
@@ -67,6 +67,41 @@ describe('resolveCurrentId', () => {
     // AccountContext 的 scope 推导是组件内一行；可测的是它的组成材料：
     // 'all' 不得被 resolveCurrentId 兜底吞掉——它永远不该流进来。
     expect(resolveCurrentId(items, 'all')).toBe('a')
+  })
+})
+
+describe('resolveScope', () => {
+  const a = { ...base }
+  const b = { ...base, id: 'b' }
+
+  it('单账号锁定为该账号，与选择无关', () => {
+    // 单账号用户必须走 2.0.0 的 account=<id> 通道：无合并戳、无 @后缀、
+    // 禁用矩阵永不生效。
+    expect(resolveScope([a], '')).toBe('a')
+    expect(resolveScope([a], 'all')).toBe('a')
+    expect(resolveScope([a], 'ghost')).toBe('a')
+  })
+
+  it('多账号时有效选择生效', () => {
+    expect(resolveScope([a, b], 'b')).toBe('b')
+    expect(resolveScope([a, b], 'a')).toBe('a')
+  })
+
+  it("多账号显式 'all' 保持合并视图", () => {
+    expect(resolveScope([a, b], 'all')).toBe('all')
+  })
+
+  it('多账号时失效 id（账号被解绑）回落合并视图', () => {
+    expect(resolveScope([a, b], 'ghost')).toBe('all')
+  })
+
+  it('多账号未选择为合并视图', () => {
+    expect(resolveScope([a, b], '')).toBe('all')
+  })
+
+  it('未绑定任何账号为合并视图', () => {
+    expect(resolveScope([], '')).toBe('all')
+    expect(resolveScope([], 'all')).toBe('all')
   })
 })
 
