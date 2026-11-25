@@ -447,3 +447,232 @@ func TestTasksRequireBinding(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
+
+func TestTasksRouteSingleAccountParam(t *testing.T) {
+	// Two accounts, one offline task each; the fake answers per bearer so the
+	// merged listing would concatenate both rows.
+	var mu sync.Mutex
+	lists := map[string][]map[string]any{
+		"at-acct-a": {{"id": "ta", "phase": "PHASE_TYPE_RUNNING", "progress": 10, "file_name": "a.mkv", "file_size": "1"}},
+		"at-acct-b": {{"id": "tb", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "b.mkv", "file_size": "2"}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/tasks" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		mu.Lock()
+		tasks := lists[token]
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"tasks": tasks})
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	// The page's account dropdown is the listing's scope: a named account
+	// yields exactly that account's rows.
+	rec, body := getJSON(t, h, "/api/tasks?account=acct-b", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("scoped listing returned %d rows: %v", len(items), body["items"])
+	}
+	row, _ := items[0].(map[string]any)
+	if row["id"] != "tb" || row["account_id"] != "acct-b" {
+		t.Fatalf("row = %v, want acct-b's task", row)
+	}
+
+	// Without the parameter both accounts still concatenate (regression).
+	rec, body = getJSON(t, h, "/api/tasks", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merged status = %d body=%v", rec.Code, body)
+	}
+	items, _ = body["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("merged listing returned %d rows: %v", len(items), body["items"])
+	}
+}
+
+func TestTasksCreatePinnedToAccountParam(t *testing.T) {
+	// acct-a is out of daily quota (an account-level refusal), acct-b is
+	// healthy: whatever lands on acct-b betrays a rotation.
+	var mu sync.Mutex
+	calls := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		mu.Lock()
+		calls[token]++
+		mu.Unlock()
+		if token == "at-acct-a" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"file_task_quota_exceeded","error_code":11}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"task":{"id":"t9","phase":"PHASE_TYPE_PENDING","file_name":"x"}}`)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	snapshot := func() map[string]int {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make(map[string]int, len(calls))
+		for k, v := range calls {
+			out[k] = v
+		}
+		return out
+	}
+
+	// Naming the account pins the create to it: acct-b's upstream must never
+	// see the task, and the pinned account's own quota refusal surfaces as
+	// that account's error, not the rotation's.
+	rec, body := postJSON(t, h, "/api/tasks?account=acct-a", "1000", `{"link":"https://example.com/a.bin"}`)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	errObj, _ := body["error"].(map[string]any)
+	if errObj["code"] != "daily_limit_reached" {
+		t.Fatalf("error = %v, want the pinned account's own refusal", body["error"])
+	}
+	got := snapshot()
+	if got["at-acct-b"] != 0 {
+		t.Fatalf("calls = %v, want acct-b untouched by a pinned create", got)
+	}
+	if got["at-acct-a"] < 1 {
+		t.Fatalf("calls = %v, want the pinned account tried", got)
+	}
+
+	// Without the parameter the rotation still reaches at least one upstream
+	// (regression; the shuffle makes the exact account random).
+	before := snapshot()
+	rec, body = postJSON(t, h, "/api/tasks", "1000", `{"link":"https://example.com/a.bin"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("rotation status = %d body=%v", rec.Code, body)
+	}
+	after := snapshot()
+	if after["at-acct-a"]+after["at-acct-b"]-before["at-acct-a"]-before["at-acct-b"] < 1 {
+		t.Fatalf("no upstream tried the bare create: before=%v after=%v", before, after)
+	}
+}
+
+func TestTasksClearScopedToAccountParam(t *testing.T) {
+	// Each account keeps its own task list, so a clear on one cannot shrink
+	// the other's; the finished task of each is what ClearFinishedTasks drops.
+	var mu sync.Mutex
+	live := map[string][]map[string]any{
+		"at-acct-a": {
+			{"id": "ta", "phase": "PHASE_TYPE_RUNNING", "progress": 10, "file_name": "a.mkv", "file_size": "1"},
+			{"id": "ta2", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "a2.mkv", "file_size": "2"},
+		},
+		"at-acct-b": {
+			{"id": "tb", "phase": "PHASE_TYPE_RUNNING", "progress": 10, "file_name": "b.mkv", "file_size": "3"},
+			{"id": "tb2", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "b2.mkv", "file_size": "4"},
+		},
+	}
+	// The clear flow lists first and deletes only the finished tasks, so each
+	// call kind is counted per bearer: an account whose finished tasks are
+	// already gone still re-lists, which is how its upstream stays observable.
+	listed := map[string]int{}
+	deleted := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/tasks":
+			mu.Lock()
+			tasks := append([]map[string]any(nil), live[token]...)
+			listed[token]++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"tasks": tasks})
+		case r.Method == http.MethodDelete && r.URL.Path == "/drive/v1/tasks":
+			drop := map[string]bool{}
+			for _, id := range strings.Split(r.URL.Query().Get("task_ids"), ",") {
+				drop[id] = true
+			}
+			mu.Lock()
+			deleted[token]++
+			kept := live[token][:0]
+			for _, task := range live[token] {
+				if !drop[task["id"].(string)] {
+					kept = append(kept, task)
+				}
+			}
+			live[token] = kept
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	snapshot := func() (map[string]int, map[string]int) {
+		mu.Lock()
+		defer mu.Unlock()
+		lists := make(map[string]int, len(listed))
+		for k, v := range listed {
+			lists[k] = v
+		}
+		dels := make(map[string]int, len(deleted))
+		for k, v := range deleted {
+			dels[k] = v
+		}
+		return lists, dels
+	}
+
+	// A named scope runs the clear flow on that account only: acct-b lists
+	// and loses its finished task, acct-a's upstream stays untouched.
+	rec, body := postJSON(t, h, "/api/tasks/clear?account=acct-b", "1000", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	if body["ok"] != true || body["deleted"] != float64(1) {
+		t.Fatalf("resp = %v, want only acct-b's finished task", body)
+	}
+	lists, dels := snapshot()
+	if lists["at-acct-b"] < 1 || lists["at-acct-a"] != 0 || dels["at-acct-b"] != 1 || dels["at-acct-a"] != 0 {
+		t.Fatalf("scoped clear: lists=%v dels=%v, want acct-b only", lists, dels)
+	}
+
+	// Without the parameter the clear flow runs on every active account
+	// (regression). Only acct-a still owns a finished task, so the count
+	// stays 1 — but both upstreams must be entered again.
+	beforeLists, beforeDels := snapshot()
+	rec, body = postJSON(t, h, "/api/tasks/clear", "1000", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("all-clear status = %d body=%v", rec.Code, body)
+	}
+	if body["deleted"] != float64(1) {
+		t.Fatalf("deleted = %v, want acct-a's remaining finished task", body["deleted"])
+	}
+	lists, dels = snapshot()
+	if lists["at-acct-a"]-beforeLists["at-acct-a"] < 1 || lists["at-acct-b"]-beforeLists["at-acct-b"] < 1 {
+		t.Fatalf("all-clear lists=%v before=%v, want both accounts re-listed", lists, beforeLists)
+	}
+	if dels["at-acct-a"]-beforeDels["at-acct-a"] != 1 || dels["at-acct-b"]-beforeDels["at-acct-b"] != 0 {
+		t.Fatalf("all-clear dels=%v before=%v, want acct-a's task dropped and acct-b left alone", dels, beforeDels)
+	}
+}

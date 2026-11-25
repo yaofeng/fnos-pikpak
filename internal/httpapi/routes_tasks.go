@@ -11,7 +11,7 @@ import (
 
 func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/tasks", func(w http.ResponseWriter, r *http.Request) {
-		clients, ok := allAccountClients(w, r, deps)
+		clients, ok := taskScopeClients(w, r, deps)
 		if !ok {
 			return
 		}
@@ -60,6 +60,31 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 		link := strings.TrimSpace(body.Link)
 		if link == "" {
 			writeError(w, http.StatusBadRequest, "empty_link", "请填写下载链接或磁力链接")
+			return
+		}
+		// A named account pins the create to it. The rotation exists to spread
+		// the daily quota across accounts, which only makes sense when the
+		// page scope is "all": filtered to one account, landing the task on
+		// another would contradict the page's own dropdown. So the pinned
+		// branch skips rotatingAccounts, and an account-level refusal (quota,
+		// rate limit, outage) surfaces as that account's own error the way a
+		// single-account create has always reported it.
+		if param := r.URL.Query().Get("account"); param != "" && param != "all" {
+			client, acct, ok := accountClient(w, r, deps)
+			if !ok {
+				return
+			}
+			task, err := client.CreateOffline(r.Context(), link, strings.TrimSpace(body.ParentID))
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
+			resp := map[string]any{"task": task}
+			if acct.ID != "" {
+				resp["account_id"] = acct.ID
+				resp["account_name"] = acct.DisplayName
+			}
+			writeJSON(w, http.StatusCreated, resp)
 			return
 		}
 		clients, ok := rotatingAccounts(w, r, deps)
@@ -137,12 +162,13 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 		if !requireJSONBody(w, r) {
 			return
 		}
-		clients, ok := allAccountClients(w, r, deps)
+		clients, ok := taskScopeClients(w, r, deps)
 		if !ok {
 			return
 		}
-		// Every finished task of every active account goes; the counts add up
-		// across accounts.
+		// Finished tasks of every account in scope go; the counts add up
+		// across accounts. A named ?account= shrinks the scope to that one
+		// account, absent or "all" clears every active account as before.
 		deleted := 0
 		for _, nc := range clients {
 			n, err := nc.C.ClearFinishedTasks(r.Context())
@@ -154,6 +180,22 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 	})
+}
+
+// taskScopeClients resolves the ?account= scope the offline-task routes
+// share. A concrete account id pins the slice to that one account — the
+// offline-task page's account dropdown is the scope of every operation it
+// drives (list, create, clear) — while absent or "all" keeps every active
+// account merged. On failure the response is already written and ok is false.
+func taskScopeClients(w http.ResponseWriter, r *http.Request, deps Deps) ([]namedClient, bool) {
+	if param := r.URL.Query().Get("account"); param != "" && param != "all" {
+		client, acct, ok := accountClient(w, r, deps)
+		if !ok {
+			return nil, false
+		}
+		return []namedClient{{Account: acct, C: client}}, true
+	}
+	return allAccountClients(w, r, deps)
 }
 
 // taskAccount resolves the account a task row names. Merged listings stamp
