@@ -41,20 +41,32 @@ export default function Tasks() {
   // The scope the current listing came from; the switch effect below uses
   // the delta to own the render in which the scope changed.
   const prevScope = useRef(scope)
+  // In-flight response guard: the listing a load started may be stale by the
+  // time its response lands (a poll tick or the refresh button superseded it,
+  // or the scope moved on), and its rows must not then cover the newer ones.
+  const reqId = useRef(0)
 
   const load = useCallback(async () => {
+    // A reload pinned to a scope the page has already left — the stale
+    // closure a create/clear finished under — would only fetch the rows the
+    // switch effect just cleared: skip it outright rather than fetch and drop.
+    if (prevScope.current !== scope) return
+    const id = ++reqId.current
     setLoading(true)
     try {
       const page = await apiGet<{ items?: OfflineTask[]; account_errors?: AccountError[] }>(
         withScope('tasks', scope),
       )
+      // A newer load superseded this one; the winner owns the error and
+      // loading state too, so a dropped response touches neither.
+      if (id !== reqId.current) return
       setItems(page.items ?? [])
       setAccountErrors(page.account_errors ?? [])
       setError('')
     } catch (e) {
-      setError((e as Error).message)
+      if (id === reqId.current) setError((e as Error).message)
     } finally {
-      setLoading(false)
+      if (id === reqId.current) setLoading(false)
     }
   }, [scope])
 
