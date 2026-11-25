@@ -13,13 +13,16 @@ type Props = {
   onDropOn?: (folderId: string) => void
   // badge puts the local status before the icon, where a list keeps the eye.
   badge?: (f: FileItem) => { icon: ReactNode; title: string; kind: 'restored' | 'star' } | null
+  // accountOf names the account a merged row came from, shown as muted small
+  // text on the name row. Merged pages pass it; single-account views omit it.
+  accountOf?: (f: FileItem) => string
 }
 
 // FileTable renders the list view with the Finder's selection: a row is
 // selected by clicking it, there are no checkboxes. Every interaction is
 // optional, so the 最近 and 回收站 pages can show the same table read-only or
 // with their own actions.
-export default function FileTable({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, badge }: Props) {
+export default function FileTable({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, badge, accountOf }: Props) {
   return (
     <table className="file-table">
       <thead>
@@ -80,6 +83,7 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
                     <FileIcon file={f} />
                   </span>
                   <span className="name-text">{f.name}</span>
+                  {accountOf && <span className="muted small">{accountOf(f)}</span>}
                 </span>
               </td>
               <td className="col-size muted">{isFolder(f) ? '—' : formatSize(f.size)}</td>

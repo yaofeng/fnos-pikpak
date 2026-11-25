@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import StatusBar from '../components/StatusBar'
 import { apiDelete, apiGet, apiPatch, apiPost, basePath } from '../api'
 import { dateText } from '../dates'
-import { downloadErrorMessage, queueDownloads } from '../downloads'
+import { downloadErrorMessage, queueDownloads, type DownloadItem } from '../downloads'
 import Player from '../components/Player'
 import FileGrid from '../components/FileGrid'
 import { CheckIcon, FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIcon } from '../components/icons'
@@ -142,17 +142,18 @@ export default function VideoFavorites() {
     setError('')
     setNotice(`正在转存 ${list.length} 个视频以便下载…`)
     try {
-      const fileIDs: string[] = []
+      // Each prepare job reports the account its restored copy lives on;
+      // queue the download for exactly that account, so the job never
+      // reaches for a default account the copy is not on.
+      const copies: DownloadItem[] = []
       for (const f of list) {
         const started = await apiPost<{ job_id: string }>('videos/prepare', { video_favorite_id: f.id })
         const job = await waitForVideoJob(started.job_id, {
           get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
         })
-        if (job.file_id) fileIDs.push(job.file_id)
+        if (job.file_id) copies.push({ file_id: job.file_id, account_id: job.account_id ?? '' })
       }
-      // An empty account_id resolves to the caller's default account on the
-      // server — the same identity these copies have always downloaded under.
-      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: '' }))))
+      setNotice(await queueDownloads(copies))
       clear()
       void load()
     } catch (err) {

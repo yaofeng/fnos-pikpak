@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCurrentId, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
+import { accountLabel, resolveCurrentId, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
 
 const base: AccountInfo = {
   id: 'a',
@@ -74,5 +74,26 @@ describe('vipTypeLabel', () => {
 
   it('未知档位保留上游词并加 VIP 前缀', () => {
     expect(vipTypeLabel('diamond')).toBe('VIP·diamond')
+  })
+})
+
+describe('accountLabel', () => {
+  const byId = new Map([['a', { ...base, id: 'a', display_name: '主号' }]])
+
+  it('响应自带的账号名优先', () => {
+    expect(accountLabel(byId, 'a', '响应名')).toBe('响应名')
+  })
+
+  it('已知账号显示 display_name', () => {
+    expect(accountLabel(byId, 'a')).toBe('主号')
+  })
+
+  it('未知 id 显示前 6 位', () => {
+    expect(accountLabel(byId, 'abcdef123456')).toBe('abcdef')
+  })
+
+  it('空 id 的旧行显示默认账号', () => {
+    expect(accountLabel(byId, '')).toBe('默认账号')
+    expect(accountLabel(byId, undefined)).toBe('默认账号')
   })
 })

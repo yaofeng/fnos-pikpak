@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../api'
+import { accountLabel } from '../accounts'
+import { useAccounts } from '../AccountContext'
 import { formatSize } from '../files'
 import {
   canRetry,
+  groupByAccount,
   isTaskActive,
   taskPercent,
   taskStatusText,
@@ -10,13 +13,17 @@ import {
   type OfflineTask,
 } from '../tasks'
 
+type AccountError = { account_id: string; account_name?: string; error: string }
+
 const POLL_MS = 3000
 
 export default function Tasks() {
+  const { byId } = useAccounts()
   const [items, setItems] = useState<OfflineTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [accountErrors, setAccountErrors] = useState<AccountError[]>([])
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState('')
   const [deleteFiles, setDeleteFiles] = useState(false)
@@ -24,8 +31,9 @@ export default function Tasks() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const page = await apiGet<{ items: OfflineTask[] }>('tasks')
+      const page = await apiGet<{ items?: OfflineTask[]; account_errors?: AccountError[] }>('tasks')
       setItems(page.items ?? [])
+      setAccountErrors(page.account_errors ?? [])
       setError('')
     } catch (e) {
       setError((e as Error).message)
@@ -65,9 +73,14 @@ export default function Tasks() {
     setBusy('create')
     setError('')
     try {
-      await apiPost('tasks', { link: text, parent_id: '' })
+      // The server picks the account for us (random rotation among the
+      // healthy ones), so the success notice names whoever accepted it.
+      const res = await apiPost<{ account_id?: string; account_name?: string }>('tasks', {
+        link: text,
+        parent_id: '',
+      })
       setLink('')
-      setNotice('已创建离线任务')
+      setNotice(`已通过账号 ${accountLabel(byId, res.account_id, res.account_name)} 创建离线任务`)
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -79,7 +92,9 @@ export default function Tasks() {
   async function retry(task: OfflineTask) {
     setBusy(`${task.id}:retry`)
     try {
-      await apiPost(`tasks/${task.id}/retry`, {})
+      // The merged listing knows which account owns the task; retrying it
+      // anywhere else would be a 404 on that account.
+      await apiPost(`tasks/${task.id}/retry?account=${encodeURIComponent(task.account_id ?? '')}`, {})
       setNotice('已提交重试')
       await load()
     } catch (e) {
@@ -94,7 +109,15 @@ export default function Tasks() {
     if (!window.confirm(`删除任务「${taskTitle(task)}」${extra}？`)) return
     setBusy(`${task.id}:delete`)
     try {
-      await apiDelete(`tasks?ids=${encodeURIComponent(task.id)}&delete_files=${deleteFiles ? 'true' : 'false'}`)
+      // groupByAccount keeps one request per owning account, each naming its
+      // own ?account=; a single task is the one-group case.
+      for (const group of groupByAccount([task])) {
+        await apiDelete(
+          `tasks?ids=${encodeURIComponent(group.ids.join(','))}` +
+            `&delete_files=${deleteFiles ? 'true' : 'false'}` +
+            `&account=${encodeURIComponent(group.account_id)}`,
+        )
+      }
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -158,6 +181,16 @@ export default function Tasks() {
       </label>
 
       {error && <p className="error">{error}</p>}
+      {/* One line per account whose task page could not load: its rows are
+          simply missing, so the failure has to say itself. */}
+      {accountErrors.length > 0 && (
+        <p className="muted small">
+          部分账号的任务没有加载：
+          {accountErrors
+            .map((e) => `账号 ${accountLabel(byId, e.account_id, e.account_name)}：${e.error}`)
+            .join('；')}
+        </p>
+      )}
       {notice && <p className="ok small">{notice}</p>}
 
       {items.length === 0 && !loading && <p className="muted">还没有离线任务。粘贴链接即可创建。</p>}
@@ -182,7 +215,10 @@ export default function Tasks() {
               <span>
                 {taskPercent(task)}%{task.file_size ? ` · ${formatSize(task.file_size)}` : ''}
               </span>
-              <span>{task.type === 'offline' ? '离线下载' : task.type || ''}</span>
+              <span>
+                {accountLabel(byId, task.account_id)}
+                {task.type ? ` · ${task.type === 'offline' ? '离线下载' : task.type}` : ''}
+              </span>
             </div>
 
             <div className="transfer-actions">

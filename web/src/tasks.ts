@@ -8,6 +8,9 @@ export type OfflineTask = {
   phase: string
   progress: number
   message?: string
+  // account_id stamps merged cross-account listings with the account that
+  // owns the task; empty on rows saved before accounts existed.
+  account_id?: string
 }
 
 const PHASE_PENDING = 'PHASE_TYPE_PENDING'
@@ -47,4 +50,27 @@ export function canRetry(task: OfflineTask): boolean {
   // Only a failed download can be retried; retrying a completed one would just
   // queue a duplicate download.
   return task.phase === PHASE_ERROR
+}
+
+// groupByAccount folds merged task rows into one id list per owning account,
+// keeping the accounts in first-seen order and the ids within a group in list
+// order without duplicates, so a batch delete can loop one request per
+// account, each naming its own ?account=. The row type stays loose (an id and
+// an optional account id) because merged listings are its only real caller.
+export function groupByAccount<T extends { id: string; account_id?: string }>(
+  tasks: T[],
+): { account_id: string; ids: string[] }[] {
+  const groups: { account_id: string; ids: string[] }[] = []
+  const byAccount = new Map<string, { account_id: string; ids: string[] }>()
+  for (const task of tasks) {
+    const account = task.account_id ?? ''
+    let group = byAccount.get(account)
+    if (!group) {
+      group = { account_id: account, ids: [] }
+      byAccount.set(account, group)
+      groups.push(group)
+    }
+    if (!group.ids.includes(task.id)) group.ids.push(task.id)
+  }
+  return groups
 }

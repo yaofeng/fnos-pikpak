@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiGetQuiet, apiPost, basePath, ApiError } from '../api'
-import { downloadErrorMessage, queueDownloads } from '../downloads'
+import { accountLabel } from '../accounts'
+import { useAccounts } from '../AccountContext'
+import { downloadErrorMessage, queueDownloads, type DownloadItem } from '../downloads'
 import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
@@ -90,6 +92,7 @@ export default function ShareBrowser({
   // favourites home. Search tabs have no such home, so they omit it.
   onHome?: () => void
 }) {
+  const { byId } = useAccounts()
   const [shareId, setShareId] = useState('')
   const [title, setTitle] = useState(initialTitle ?? '分享')
   const [owner, setOwner] = useState('')
@@ -268,11 +271,18 @@ export default function ShareBrowser({
     setError('')
     setNotice('')
     try {
-      await apiPost('share/restore', { share_id: shareId, file_ids: list.map((f) => f.id) })
+      // The server rotates the restore across accounts; the response names
+      // the account that took the copies. A per-account refusal travels in
+      // the ApiError detail, which the Toaster renders by itself.
+      const res = await apiPost<{ ok?: boolean; account_id?: string; account_name?: string }>(
+        'share/restore',
+        { share_id: shareId, file_ids: list.map((f) => f.id) },
+      )
+      const account = accountLabel(byId, res.account_id, res.account_name)
       setNotice(
         list.length === 1
-          ? `「${list[0].name}」已转存到我的文件根目录`
-          : `${list.length} 项已转存到我的文件根目录`,
+          ? `「${list[0].name}」已转存到账号 ${account}`
+          : `${list.length} 项已转存到账号 ${account}`,
       )
       clearSelection()
     } catch (err) {
@@ -356,7 +366,10 @@ export default function ShareBrowser({
     setError('')
     setNotice(`正在转存 ${videos.length} 个视频以便下载…`)
     try {
-      const fileIDs: string[] = []
+      // Each copy lands on whichever account accepted the restore, and the
+      // prepare job reports that account: queue the download for exactly it,
+      // so the job never reaches for a default account the copy is not on.
+      const copies: DownloadItem[] = []
       for (const f of videos) {
         const started = await apiPost<{ job_id: string }>('videos/prepare', {
           share_id: shareId,
@@ -365,11 +378,9 @@ export default function ShareBrowser({
         const job = await waitForVideoJob(started.job_id, {
           get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
         })
-        if (job.file_id) fileIDs.push(job.file_id)
+        if (job.file_id) copies.push({ file_id: job.file_id, account_id: job.account_id ?? '' })
       }
-      // An empty account_id resolves to the caller's default account on the
-      // server — the same identity these copies have always downloaded under.
-      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: '' }))))
+      setNotice(await queueDownloads(copies))
       clearSelection()
     } catch (err) {
       setError(downloadErrorMessage(err))

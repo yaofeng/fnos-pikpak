@@ -25,6 +25,9 @@ export type TransferJob = {
   error_message?: string
   created_at?: string
   updated_at?: string
+  // account_id names the PikPak account the job downloads or uploads under;
+  // empty on rows queued before accounts existed.
+  account_id?: string
 }
 
 export type Sample = { bytes: number; at: number }

@@ -14,6 +14,9 @@ export type VideoJob = {
   stream_url?: string
   // Set only when 播放器 = IINA: the original CDN link for the external player.
   direct_url?: string
+  // account_id names the account the restored copy lives on, so a download
+  // queued from it lands in the same account's drive.
+  account_id?: string
 }
 
 type WaitOptions = {

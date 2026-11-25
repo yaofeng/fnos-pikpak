@@ -16,12 +16,15 @@ type Props = {
   // badge draws a local status in the tile's bottom-left corner: a check for
   // 已转存, a star for a video in 视频收藏夹. The caller decides which one wins.
   badge?: (f: FileItem) => { icon: ReactNode; title: string; kind: 'restored' | 'star' } | null
+  // accountOf names the account a merged row came from, shown as muted small
+  // text under the tile name. Merged pages pass it; single-account views omit.
+  accountOf?: (f: FileItem) => string
 }
 
 // FileGrid is the icon view of the Finder: no card around each item, the name
 // highlighted when selected, and a single click selecting instead of a
 // checkbox.
-export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, thumbSrc, badge }: Props) {
+export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, thumbSrc, badge, accountOf }: Props) {
   const [failed, setFailed] = useState<Set<string>>(() => new Set())
   return (
     <div className="file-grid" role="listbox" aria-multiselectable="true">
@@ -78,6 +81,7 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
             <span className="tile-name" title={f.name}>
               {f.name}
             </span>
+            {accountOf && <span className="muted small">{accountOf(f)}</span>}
           </div>
         </div>
         )

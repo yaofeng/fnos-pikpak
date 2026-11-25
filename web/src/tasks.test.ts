@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { canRetry, isTaskActive, taskPercent, taskStatusText, taskTitle } from './tasks'
+import { describe, expect, it, test } from 'vitest'
+import { canRetry, groupByAccount, isTaskActive, taskPercent, taskStatusText, taskTitle } from './tasks'
 
 function task(extra: Record<string, unknown> = {}) {
   return { id: 't1', phase: 'PHASE_TYPE_RUNNING', progress: 40, ...extra } as never
@@ -61,5 +61,17 @@ describe('canRetry', () => {
     expect(canRetry(task({ phase: 'PHASE_TYPE_COMPLETE' }))).toBe(false)
     expect(canRetry(task({ phase: 'PHASE_TYPE_RUNNING' }))).toBe(false)
     expect(canRetry(task({ phase: 'PHASE_TYPE_PENDING' }))).toBe(false)
+  })
+})
+
+describe('groupByAccount', () => {
+  it('groupByAccount 保序分组', () => {
+    expect(groupByAccount([
+      { id: '1', account_id: 'a' }, { id: '2', account_id: 'b' }, { id: '3', account_id: 'a' },
+    ])).toEqual([{ account_id: 'a', ids: ['1', '3'] }, { account_id: 'b', ids: ['2'] }])
+  })
+
+  it('缺 account_id 的旧行归入空组', () => {
+    expect(groupByAccount([{ id: '9' }])).toEqual([{ account_id: '', ids: ['9'] }])
   })
 })

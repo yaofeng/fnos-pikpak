@@ -61,3 +61,18 @@ export function resolveCurrentId(items: AccountInfo[], currentId: string): strin
   if (currentId && items.some((item) => item.id === currentId)) return currentId
   return items[0]?.id ?? ''
 }
+
+// accountLabel names the account one merged row or mutation response refers
+// to, the same way everywhere: a name that arrived with the response wins,
+// then the bound account's display name, then the id's first six characters
+// for an id no bound row knows, and 「默认账号」 for the legacy rows that
+// carry no id at all.
+export function accountLabel(
+  byId: Map<string, AccountInfo> | undefined,
+  id: string | undefined,
+  name?: string,
+): string {
+  if (name) return name
+  if (!id) return '默认账号'
+  return byId?.get(id)?.display_name || id.slice(0, 6)
+}

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../api'
+import { accountLabel } from '../accounts'
+import { useAccounts } from '../AccountContext'
 import { formatSize } from '../files'
 import { hostAvailable, openFolder } from '../fnosSdk'
 import {
@@ -23,6 +25,7 @@ type Kind = 'downloads' | 'uploads'
 const POLL_MS = 2000
 
 export default function Transfers() {
+  const { byId } = useAccounts()
   const [tab, setTab] = useState<Kind>('downloads')
   const [downloads, setDownloads] = useState<TransferJob[]>([])
   const [uploads, setUploads] = useState<TransferJob[]>([])
@@ -87,6 +90,8 @@ export default function Transfers() {
   async function control(kind: Kind, job: TransferJob, action: 'pause' | 'resume' | 'cancel') {
     setBusy(`${job.id}:${action}`)
     try {
+      // No ?account= here on purpose: the server resolves the account from
+      // the job row itself.
       await apiPost(`${kind}/${job.id}/${action}`, {})
       await load(kind)
     } catch (e) {
@@ -101,6 +106,7 @@ export default function Transfers() {
     const deleteFile = finishedDownload && window.confirm(`同时删除已下载的文件「${jobName(job)}」？\n取消则只移除任务记录。`)
     setBusy(`${job.id}:delete`)
     try {
+      // Same as control: the job row carries its account, the request names none.
       await apiDelete(`${kind}/${job.id}?delete_file=${deleteFile ? 'true' : 'false'}`)
       samples.current.delete(job.id)
       await load(kind)
@@ -164,7 +170,7 @@ export default function Transfers() {
 
               <div className="transfer-line small muted">
                 <span>
-                  {pct}% · {formatSize(transferred(job))}
+                  {accountLabel(byId, job.account_id)} · {pct}% · {formatSize(transferred(job))}
                   {job.size ? ` / ${formatSize(job.size)}` : ''}
                 </span>
                 <span>
