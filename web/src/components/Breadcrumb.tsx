@@ -1,3 +1,5 @@
+import { getLang, makeT } from '../i18n'
+
 type Crumb = { id: string; name: string }
 
 type Props = {
@@ -7,6 +9,7 @@ type Props = {
 }
 
 export default function Breadcrumb({ stack, onNavigate, onDropOn }: Props) {
+  const t = makeT(getLang())
   return (
     <nav className="breadcrumb">
       <button
@@ -19,7 +22,7 @@ export default function Breadcrumb({ stack, onNavigate, onDropOn }: Props) {
           onDropOn(null)
         }}
       >
-        我的文件
+        {t('nav.files')}
       </button>
       {stack.map((c, i) => (
         <span key={c.id} className="crumb-wrap">

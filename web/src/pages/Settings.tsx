@@ -133,27 +133,32 @@ export default function Settings() {
     }
     setSaving('save')
     try {
+      // The note follows the language this save just persisted — the same save
+      // can flip the UI language, and the closure's t still speaks the old one
+      // because App re-renders (and re-syncs setLang) only after this tick.
+      let savedLang = lang
       const notes: string[] = []
       if (Object.keys(userPatch).length > 0) {
         const next = await apiPut<SettingValues>('user-settings', userPatch)
         setUserSettings(next)
         baseline.current.user = next
-        if (next.language) {
+        if (next.language === 'en' || next.language === 'zh-CN') {
+          savedLang = next.language
           window.dispatchEvent(new CustomEvent('pikpak:language', { detail: next.language }))
         }
         if (next.tile_size) {
           window.dispatchEvent(new CustomEvent('pikpak:tile-size', { detail: next.tile_size }))
         }
-        notes.push(t('settings.saved'))
+        notes.push(makeT(savedLang)('settings.saved'))
       }
       if (Object.keys(globalPatch).length > 0) {
         const next = await apiPut<SettingValues>('settings', globalPatch)
         setGlobalSettings(next)
         baseline.current.global = next
-        notes.push(t('settings.saved'))
-        if ('download_concurrency' in globalPatch) notes.push(t('settings.concurrency_restart'))
+        notes.push(makeT(savedLang)('settings.saved'))
+        if ('download_concurrency' in globalPatch) notes.push(makeT(savedLang)('settings.concurrency_restart'))
       }
-      setSaved(notes.join(lang === 'en' ? '; ' : '；'))
+      setSaved(notes.join(savedLang === 'en' ? '; ' : '；'))
     } catch (e) {
       setError((e as Error).message)
     } finally {
