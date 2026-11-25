@@ -1,4 +1,5 @@
 import type { AccountInfo } from '../accounts'
+import { vipTypeLabel } from '../accounts'
 import { formatSize } from '../files'
 
 type Props = {
@@ -13,7 +14,8 @@ type Props = {
 // opening it is what triggers the re-authorization prompt.
 function accountLabel(a: AccountInfo): string {
   const parts = [a.display_name || a.id.slice(0, 6)]
-  if (a.vip_type) parts.push(a.vip_type)
+  const vip = vipTypeLabel(a.vip_type)
+  if (vip) parts.push(vip)
   parts.push(`${formatSize(a.quota_usage)} / ${formatSize(a.quota_limit)}`)
   if (a.status === 'reauth_required') parts.push('需重新授权')
   return parts.join(' · ')

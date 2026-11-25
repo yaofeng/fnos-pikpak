@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCurrentId, sumQuota, worstStatus, type AccountInfo } from './accounts'
+import { resolveCurrentId, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
 
 const base: AccountInfo = {
   id: 'a',
@@ -58,5 +58,21 @@ describe('resolveCurrentId', () => {
 
   it('没有 currentId 时默认第一个', () => {
     expect(resolveCurrentId([{ ...base, id: 'c' }], '')).toBe('c')
+  })
+})
+
+describe('vipTypeLabel', () => {
+  it('已知档位译为中文', () => {
+    expect(vipTypeLabel('platinum')).toBe('白金会员')
+    expect(vipTypeLabel('gold')).toBe('黄金会员')
+  })
+
+  it('非会员不带 VIP 标记', () => {
+    expect(vipTypeLabel('NON-member')).toBe('')
+    expect(vipTypeLabel('')).toBe('')
+  })
+
+  it('未知档位保留上游词并加 VIP 前缀', () => {
+    expect(vipTypeLabel('diamond')).toBe('VIP·diamond')
   })
 })

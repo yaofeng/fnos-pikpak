@@ -76,6 +76,9 @@ export default function Files() {
   const itemsRef = useRef<FileItem[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
   const dragged = useRef<FileItem | null>(null)
+  // The account the current listing came from; the switch effect below uses
+  // the delta to own the render in which the account changed.
+  const prevAccount = useRef(accountId)
 
   const shown = sortFiles(filterFiles(items, q, kind), sortKey, sortDir)
   // Selection is by list position, like the Finder: click selects one,
@@ -112,7 +115,8 @@ export default function Files() {
         writeCache<CachedList>(cacheKeys.files(accountId, folderId, kind), { items: nextItems, token: nextToken })
       } catch (e) {
         if (id === reqId.current) setError((e as Error).message)
-        if (reset) setItems([])
+        // A stale request must not blank what a newer one already rendered.
+        if (id === reqId.current && reset) setItems([])
       } finally {
         if (id === reqId.current) setLoading(false)
       }
@@ -121,6 +125,10 @@ export default function Files() {
   )
 
   useEffect(() => {
+    // The switch effect below owns the render in which the account changed:
+    // it refetches from the root, so the pre-switch folder request is skipped
+    // rather than sent (a foreign parent id would only 404).
+    if (prevAccount.current !== accountId) return
     clearSelection()
     // Coming back to a folder shows the listing it had; 刷新 and the mutation
     // paths replace it. Keys carry the account, so a cached listing can never
@@ -175,9 +183,8 @@ export default function Files() {
 
   // Switching accounts changes whose files everything is: drop every page's
   // cache, go back to the drive root with nothing selected, and refetch. The
-  // reqId guard drops whatever response the pre-switch folder request lands,
-  // and a folder id foreign to this account 404s into that same drop.
-  const prevAccount = useRef(accountId)
+  // folder effect skips this same render (prevAccount delta), so only this
+  // root request goes out; the reqId guard still drops anything stale.
   useEffect(() => {
     if (prevAccount.current === accountId) return
     prevAccount.current = accountId
@@ -595,7 +602,7 @@ export default function Files() {
         </div>
       )}
 
-      {playing && <Player fileId={playing.id} name={playing.name} onClose={() => setPlaying(null)} />}
+      {playing && <Player fileId={playing.id} name={playing.name} account={accountId} onClose={() => setPlaying(null)} />}
 
       {move && (
         <div className="modal-backdrop" onClick={() => setMove(null)}>

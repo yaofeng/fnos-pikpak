@@ -36,6 +36,24 @@ export function worstStatus(items: AccountInfo[]): string {
   return items.some((item) => item.status === 'reauth_required') ? 'reauth_required' : 'active'
 }
 
+// vipLabels translates the upstream vip_type words into the zh labels the UI
+// shows; a non-member gets no VIP mark at all.
+const vipLabels: Record<string, string> = {
+  platinum: '白金会员',
+  gold: '黄金会员',
+  'NON-member': '',
+}
+
+// vipTypeLabel maps one account's upstream vip_type to user-visible copy.
+// Tiers the backend has never seen keep their upstream word under a VIP
+// prefix, so an unknown tier still reads as a tier rather than as gibberish.
+export function vipTypeLabel(vipType: string): string {
+  if (!vipType) return ''
+  const known = vipLabels[vipType]
+  if (known !== undefined) return known
+  return `VIP·${vipType}`
+}
+
 // resolveCurrentId keeps the in-memory selection honest: once the account it
 // names is unbound (or nothing was selected yet), the first remaining account
 // becomes current — the same default the backend resolves a bare uid to.

@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'vitest'
-import { formatClock, guessMime, videoExtensions } from './player'
+import { formatClock, guessMime, playPath, videoExtensions } from './player'
+
+describe('playPath', () => {
+  test('不带账号时保持原路径', () => {
+    expect(playPath('f1')).toBe('play/f1')
+    expect(playPath('f1', '')).toBe('play/f1')
+  })
+
+  test('带账号时追加 account 参数', () => {
+    expect(playPath('f1', 'a2')).toBe('play/f1?account=a2')
+    expect(playPath('f1', 'a b')).toBe('play/f1?account=a%20b')
+  })
+})
 
 describe('guessMime', () => {
   test('keeps a specific upstream mime', () => {

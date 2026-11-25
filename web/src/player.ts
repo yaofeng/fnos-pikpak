@@ -26,6 +26,13 @@ export function videoExtensions(): string[] {
   return Object.keys(mimeByExtension)
 }
 
+// playPath addresses the play-info route for a drive file. An account id
+// scopes the route to that account's drive — without it the server resolves
+// the default account, which is right only for the default account's files.
+export function playPath(fileID: string, account?: string): string {
+  return account ? `play/${fileID}?account=${encodeURIComponent(account)}` : `play/${fileID}`
+}
+
 // formatClock renders seconds as m:ss / h:mm:ss for the player footer.
 export function formatClock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'

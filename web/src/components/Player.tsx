@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiGet, basePath } from '../api'
-import { formatClock, guessMime } from '../player'
+import { formatClock, guessMime, playPath } from '../player'
 
 type PlayInfo = {
   file_id: string
@@ -18,6 +18,7 @@ export default function Player({
   onClose,
   infoPath,
   streamURL,
+  account,
 }: {
   fileId: string
   name: string
@@ -28,6 +29,9 @@ export default function Player({
   // streamURL plays a URL the caller already signed (完整播放), skipping the
   // info request entirely.
   streamURL?: string
+  // account scopes the default info route to one bound account. Shares pass
+  // infoPath instead, so they simply leave it out.
+  account?: string
 }) {
   const [info, setInfo] = useState<PlayInfo | null>(null)
   const [error, setError] = useState('')
@@ -48,7 +52,7 @@ export default function Player({
         alive = false
       }
     }
-    apiGet<PlayInfo>(infoPath ?? `play/${fileId}`)
+    apiGet<PlayInfo>(infoPath ?? playPath(fileId, account))
       .then((got) => {
         if (alive) setInfo(got)
       })
@@ -58,7 +62,7 @@ export default function Player({
     return () => {
       alive = false
     }
-  }, [fileId, infoPath, streamURL, name])
+  }, [fileId, infoPath, streamURL, name, account])
 
   const mime = info ? guessMime(info.name, info.mime) : ''
   const src = info ? `${basePath}${info.stream_url}` : ''
