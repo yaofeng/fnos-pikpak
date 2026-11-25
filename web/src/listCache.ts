@@ -23,9 +23,11 @@ export function resetCache() {
 }
 
 // cacheKey builds the keys the pages use, in one place so invalidation can be
-// written against the same shape.
+// written against the same shape. Every key leads with the account id: two
+// accounts' listings must never share an entry, because a read through the
+// other account's key is the one way stale rows could cross accounts.
 export const cacheKeys = {
-  files: (folderId: string, kind: string) => `files:${folderId}|${kind}`,
-  recent: () => 'recent',
-  trash: () => 'trash',
+  files: (acct: string, folderId: string, kind: string) => `files:${acct}:${folderId}|${kind}`,
+  recent: () => 'recent:merged',
+  trash: (acct: string) => `trash:${acct}`,
 }

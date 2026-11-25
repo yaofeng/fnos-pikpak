@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import StatusBar from '../components/StatusBar'
 import { apiGet, apiPatch, apiPost, basePath } from '../api'
 import { downloadErrorMessage, queueDownloads } from '../downloads'
+import { useAccounts } from '../AccountContext'
+import AccountSwitcher from '../components/AccountSwitcher'
 import Breadcrumb from '../components/Breadcrumb'
 import FileGrid from '../components/FileGrid'
 import FileTable from '../components/FileTable'
@@ -21,7 +23,7 @@ import {
 } from '../components/icons'
 import { askPath, hostAvailable, pickFiles } from '../fnosSdk'
 import { deletePlan, type DeleteMode } from '../deleteFlow'
-import { cacheKeys, dropCachePrefix, readCache, writeCache } from '../listCache'
+import { cacheKeys, dropCachePrefix, readCache, resetCache, writeCache } from '../listCache'
 import { useFileSelection } from '../useFileSelection'
 import { useMarquee } from '../useMarquee'
 import {
@@ -40,7 +42,14 @@ type Page = { items: FileItem[]; next_page_token: string }
 type Crumb = { id: string; name: string }
 type CachedList = { items: FileItem[]; token: string }
 
+// withAccount scopes a request path to one account: the server resolves an
+// empty id to the caller's default, so unbound-in-flight pages just omit it.
+function withAccount(path: string, accountId: string): string {
+  return accountId ? `${path}?account=${encodeURIComponent(accountId)}` : path
+}
+
 export default function Files() {
+  const { accounts, currentId: accountId, setCurrent } = useAccounts()
   const [stack, setStack] = useState<Crumb[]>([])
   const folderId = stack.length ? stack[stack.length - 1].id : ''
 
@@ -68,6 +77,21 @@ export default function Files() {
   const sentinel = useRef<HTMLDivElement | null>(null)
   const dragged = useRef<FileItem | null>(null)
 
+  const shown = sortFiles(filterFiles(items, q, kind), sortKey, sortDir)
+  // Selection is by list position, like the Finder: click selects one,
+  // Command/Control adds or removes, Shift takes the range, and a drag on the
+  // background rubber-bands over whatever it touches. Declared before the
+  // effects below so they can clear it in their dependency arrays.
+  const {
+    ids: selectedIds,
+    selected,
+    select,
+    hitTest,
+    selectAll,
+    clear: clearSelection,
+  } = useFileSelection(shown.map((f) => f.id))
+  const { box: bodyRef, rect: marqueeRect, onMouseDown: startMarquee } = useMarquee({ onHits: hitTest })
+
   const fetchPage = useCallback(
     async (pageToken: string, reset: boolean) => {
       const id = ++reqId.current
@@ -76,6 +100,7 @@ export default function Files() {
       const params = new URLSearchParams({ parent_id: folderId, limit: '100' })
       if (pageToken) params.set('page_token', pageToken)
       if (kind !== 'all') params.set('kind', kind === 'folder' ? 'drive#folder' : 'drive#file')
+      if (accountId) params.set('account', accountId)
       try {
         const page = await apiGet<Page>(`files?${params.toString()}`)
         if (id !== reqId.current) return
@@ -84,7 +109,7 @@ export default function Files() {
         const nextToken = page.next_page_token || ''
         setItems(nextItems)
         setToken(nextToken)
-        writeCache<CachedList>(cacheKeys.files(folderId, kind), { items: nextItems, token: nextToken })
+        writeCache<CachedList>(cacheKeys.files(accountId, folderId, kind), { items: nextItems, token: nextToken })
       } catch (e) {
         if (id === reqId.current) setError((e as Error).message)
         if (reset) setItems([])
@@ -92,14 +117,15 @@ export default function Files() {
         if (id === reqId.current) setLoading(false)
       }
     },
-    [folderId, kind],
+    [accountId, folderId, kind],
   )
 
   useEffect(() => {
     clearSelection()
     // Coming back to a folder shows the listing it had; 刷新 and the mutation
-    // paths replace it.
-    const cached = readCache<CachedList>(cacheKeys.files(folderId, kind))
+    // paths replace it. Keys carry the account, so a cached listing can never
+    // be another account's rows.
+    const cached = readCache<CachedList>(cacheKeys.files(accountId, folderId, kind))
     if (cached) {
       itemsRef.current = cached.items
       setItems(cached.items)
@@ -110,7 +136,7 @@ export default function Files() {
     setItems([])
     setToken('')
     void fetchPage('', true)
-  }, [fetchPage, folderId, kind])
+  }, [fetchPage, folderId, kind, accountId, clearSelection])
 
   useEffect(() => {
     const el = sentinel.current
@@ -132,20 +158,6 @@ export default function Files() {
     return () => window.removeEventListener('click', close)
   }, [menu])
 
-  const shown = sortFiles(filterFiles(items, q, kind), sortKey, sortDir)
-  // Selection is by list position, like the Finder: click selects one,
-  // Command/Control adds or removes, Shift takes the range, and a drag on the
-  // background rubber-bands over whatever it touches.
-  const {
-    ids: selectedIds,
-    selected,
-    select,
-    hitTest,
-    selectAll,
-    clear: clearSelection,
-  } = useFileSelection(shown.map((f) => f.id))
-  const { box: bodyRef, rect: marqueeRect, onMouseDown: startMarquee } = useMarquee({ onHits: hitTest })
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -160,6 +172,23 @@ export default function Files() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selectAll, clearSelection])
+
+  // Switching accounts changes whose files everything is: drop every page's
+  // cache, go back to the drive root with nothing selected, and refetch. The
+  // reqId guard drops whatever response the pre-switch folder request lands,
+  // and a folder id foreign to this account 404s into that same drop.
+  const prevAccount = useRef(accountId)
+  useEffect(() => {
+    if (prevAccount.current === accountId) return
+    prevAccount.current = accountId
+    resetCache()
+    setStack([])
+    itemsRef.current = []
+    setItems([])
+    setToken('')
+    clearSelection()
+    void fetchPage('', true)
+  }, [accountId, fetchPage, clearSelection])
 
   function openFile(f: FileItem) {
     if (!isFolder(f)) return
@@ -177,7 +206,7 @@ export default function Files() {
     if (!name?.trim()) return
     setBusy(true)
     try {
-      await apiPost('folders', { parent_id: folderId, name: name.trim() })
+      await apiPost(withAccount('folders', accountId), { parent_id: folderId, name: name.trim() })
       dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
@@ -192,7 +221,7 @@ export default function Files() {
     if (!name?.trim() || name.trim() === f.name) return
     setBusy(true)
     try {
-      await apiPatch(`files/${f.id}`, { name: name.trim() })
+      await apiPatch(withAccount(`files/${f.id}`, accountId), { name: name.trim() })
       dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
@@ -208,7 +237,7 @@ export default function Files() {
     setBusy(true)
     try {
       const plan = deletePlan(mode)
-      const res = await apiPost<{ pending: boolean }>(plan.path, { ids })
+      const res = await apiPost<{ pending: boolean }>(withAccount(plan.path, accountId), { ids })
       setNotice(res.pending ? '任务已提交，稍后自动刷新' : plan.notice)
       clearSelection()
       dropCachePrefix('files:')
@@ -224,7 +253,7 @@ export default function Files() {
     if (!move) return
     setBusy(true)
     try {
-      const res = await apiPost<{ pending: boolean }>(`files/${move.mode}`, {
+      const res = await apiPost<{ pending: boolean }>(withAccount(`files/${move.mode}`, accountId), {
         ids: move.ids,
         to_parent_id: destId,
       })
@@ -252,8 +281,10 @@ export default function Files() {
     setBusy(true)
     try {
       // No directory in the request: downloads go to the folder configured in
-      // settings, which the server validates against the user's grants.
-      setNotice(await queueDownloads(fileIDs))
+      // settings, which the server validates against the user's grants. Every
+      // item names this page's account, so the queue acts on the same drive
+      // the listing came from.
+      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: accountId }))))
       clearSelection()
     } catch (e) {
       setError(downloadErrorMessage(e))
@@ -273,7 +304,7 @@ export default function Files() {
     if (!paths.length) return
     setBusy(true)
     try {
-      const res = await apiPost<{ created: unknown[] }>('uploads', {
+      const res = await apiPost<{ created: unknown[] }>(withAccount('uploads', accountId), {
         local_paths: paths,
         parent_id: folderId,
       })
@@ -298,7 +329,7 @@ export default function Files() {
     void (async () => {
       setBusy(true)
       try {
-        const res = await apiPost<{ pending: boolean }>('files/move', {
+        const res = await apiPost<{ pending: boolean }>(withAccount('files/move', accountId), {
           ids,
           to_parent_id: destId ?? '',
         })
@@ -330,6 +361,7 @@ export default function Files() {
   return (
     <section className="file-page">
       <div className="fm-nav">
+        <AccountSwitcher accounts={accounts} currentId={accountId} onChange={setCurrent} />
         <button className="icon-btn" type="button" onClick={goUp} disabled={stack.length === 0} title="上一级" aria-label="上一级">
           <ChevronLeft />
         </button>
@@ -463,7 +495,7 @@ export default function Files() {
           />
         ) : (
           <FileGrid
-            thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id)}`}
+            thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id, undefined, accountId)}`}
             items={shown}
             selected={selected}
             onSelect={select}

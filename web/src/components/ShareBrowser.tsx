@@ -367,7 +367,9 @@ export default function ShareBrowser({
         })
         if (job.file_id) fileIDs.push(job.file_id)
       }
-      setNotice(await queueDownloads(fileIDs))
+      // An empty account_id resolves to the caller's default account on the
+      // server — the same identity these copies have always downloaded under.
+      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: '' }))))
       clearSelection()
     } catch (err) {
       setError(downloadErrorMessage(err))

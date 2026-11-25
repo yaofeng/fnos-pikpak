@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import StatusBar from '../components/StatusBar'
 import { apiGet, apiPost } from '../api'
+import { useAccounts } from '../AccountContext'
+import AccountSwitcher from '../components/AccountSwitcher'
 import FileTable from '../components/FileTable'
 import { RefreshIcon, RestoreIcon, TrashIcon } from '../components/icons'
 import type { FileItem } from '../files'
-import { cacheKeys, readCache, writeCache } from '../listCache'
+import { cacheKeys, readCache, resetCache, writeCache } from '../listCache'
 import { useFileSelection } from '../useFileSelection'
 import { useMarquee } from '../useMarquee'
 
 type Page = { items: FileItem[]; next_page_token: string }
 type CachedList = { items: FileItem[]; token: string }
 
+// withAccount scopes a request path to one account: the server resolves an
+// empty id to the caller's default, so unbound-in-flight pages just omit it.
+function withAccount(path: string, accountId: string): string {
+  return accountId ? `${path}?account=${encodeURIComponent(accountId)}` : path
+}
+
 export default function Trash() {
+  const { accounts, currentId: accountId, setCurrent } = useAccounts()
   const [items, setItems] = useState<FileItem[]>([])
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
@@ -22,30 +31,43 @@ export default function Trash() {
   const itemsRef = useRef<FileItem[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
 
-  const fetchPage = useCallback(async (pageToken: string, reset: boolean) => {
-    const id = ++reqId.current
-    setLoading(true)
-    setError('')
-    try {
-      const params = pageToken ? `trash?page_token=${encodeURIComponent(pageToken)}` : 'trash'
-      const page = await apiGet<Page>(params)
-      if (id !== reqId.current) return
-      const nextItems = reset ? page.items : [...itemsRef.current, ...page.items]
-      itemsRef.current = nextItems
-      const nextToken = page.next_page_token || ''
-      setItems(nextItems)
-      setToken(nextToken)
-      writeCache<CachedList>(cacheKeys.trash(), { items: nextItems, token: nextToken })
-      if (reset) clearSelection()
-    } catch (e) {
-      if (id === reqId.current) setError((e as Error).message)
-    } finally {
-      if (id === reqId.current) setLoading(false)
-    }
-  }, [])
+  // Same Finder selection as 我的文件: click selects one, Command/Control
+  // toggles, Shift takes the range, a drag on the background rubber-bands.
+  // Declared before the effects below so they can clear it in their
+  // dependency arrays.
+  const { ids, selected, select, hitTest, clear: clearSelection } = useFileSelection(items.map((f) => f.id))
+  const { box: bodyRef, rect: marqueeRect, onMouseDown: startMarquee } = useMarquee({ onHits: hitTest })
+
+  const fetchPage = useCallback(
+    async (pageToken: string, reset: boolean) => {
+      const id = ++reqId.current
+      setLoading(true)
+      setError('')
+      try {
+        const params = new URLSearchParams()
+        if (accountId) params.set('account', accountId)
+        if (pageToken) params.set('page_token', pageToken)
+        const qs = params.toString()
+        const page = await apiGet<Page>(qs ? `trash?${qs}` : 'trash')
+        if (id !== reqId.current) return
+        const nextItems = reset ? page.items : [...itemsRef.current, ...page.items]
+        itemsRef.current = nextItems
+        const nextToken = page.next_page_token || ''
+        setItems(nextItems)
+        setToken(nextToken)
+        writeCache<CachedList>(cacheKeys.trash(accountId), { items: nextItems, token: nextToken })
+        if (reset) clearSelection()
+      } catch (e) {
+        if (id === reqId.current) setError((e as Error).message)
+      } finally {
+        if (id === reqId.current) setLoading(false)
+      }
+    },
+    [accountId, clearSelection],
+  )
 
   useEffect(() => {
-    const cached = readCache<CachedList>(cacheKeys.trash())
+    const cached = readCache<CachedList>(cacheKeys.trash(accountId))
     if (cached) {
       itemsRef.current = cached.items
       setItems(cached.items)
@@ -53,7 +75,7 @@ export default function Trash() {
       return
     }
     void fetchPage('', true)
-  }, [fetchPage])
+  }, [fetchPage, accountId])
 
   useEffect(() => {
     const el = sentinel.current
@@ -68,11 +90,6 @@ export default function Trash() {
     return () => obs.disconnect()
   }, [token, loading, fetchPage])
 
-  // Same Finder selection as 我的文件: click selects one, Command/Control
-  // toggles, Shift takes the range, a drag on the background rubber-bands.
-  const { ids, selected, select, hitTest, clear: clearSelection } = useFileSelection(items.map((f) => f.id))
-  const { box: bodyRef, rect: marqueeRect, onMouseDown: startMarquee } = useMarquee({ onHits: hitTest })
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -83,12 +100,24 @@ export default function Trash() {
     return () => window.removeEventListener('keydown', onKey)
   }, [clearSelection])
 
+  // Switching accounts changes whose trash everything is: drop every page's
+  // cache, release the selection, and refetch. The reqId guard drops whatever
+  // response the pre-switch request lands.
+  const prevAccount = useRef(accountId)
+  useEffect(() => {
+    if (prevAccount.current === accountId) return
+    prevAccount.current = accountId
+    resetCache()
+    clearSelection()
+    void fetchPage('', true)
+  }, [accountId, fetchPage, clearSelection])
+
   async function run(action: 'untrash' | 'delete', target: string[]) {
     if (!target.length) return
     if (action === 'delete' && !window.confirm(`永久删除 ${target.length} 项？此操作不可恢复。`)) return
     setBusy(true)
     try {
-      const res = await apiPost<{ pending: boolean }>(`files/${action}`, { ids: target })
+      const res = await apiPost<{ pending: boolean }>(withAccount(`files/${action}`, accountId), { ids: target })
       setNotice(res.pending ? '任务已提交，稍后自动刷新' : action === 'untrash' ? '已恢复' : '已永久删除')
       await fetchPage('', true)
     } catch (e) {
@@ -103,7 +132,7 @@ export default function Trash() {
     if (answer !== '确认') return
     setBusy(true)
     try {
-      const res = await apiPost<{ pending: boolean }>('trash/empty', {})
+      const res = await apiPost<{ pending: boolean }>(withAccount('trash/empty', accountId), {})
       setNotice(res.pending ? '清空任务已提交' : '回收站已清空')
       await fetchPage('', true)
     } catch (e) {
@@ -116,6 +145,7 @@ export default function Trash() {
   return (
     <section>
       <div className="fm-nav">
+        <AccountSwitcher accounts={accounts} currentId={accountId} onChange={setCurrent} />
         <div className="crumb-box">
           <span className="fm-title">回收站</span>
         </div>

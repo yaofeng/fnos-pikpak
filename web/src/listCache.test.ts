@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { dropCachePrefix, readCache, resetCache, writeCache } from './listCache'
+import { describe, expect, it, test } from 'vitest'
+import { cacheKeys, dropCachePrefix, readCache, resetCache, writeCache } from './listCache'
 
 describe('listCache', () => {
   test('returns what was written', () => {
@@ -18,5 +18,11 @@ describe('listCache', () => {
     expect(readCache('files:root')).toBeUndefined()
     expect(readCache('files:abc')).toBeUndefined()
     expect(readCache('trash')).toBe(3)
+  })
+
+  it('cacheKeys 含账号段', () => {
+    expect(cacheKeys.files('a1', 'root', 'all')).toBe('files:a1:root|all')
+    expect(cacheKeys.trash('a1')).toBe('trash:a1')
+    expect(cacheKeys.recent()).toBe('recent:merged')
   })
 })

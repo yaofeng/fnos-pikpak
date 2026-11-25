@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { fileKind, filterFiles, formatSize, isVideo, sortFiles, thumbPath, type FileItem } from './files'
 
 function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem {
@@ -74,6 +74,10 @@ describe('helpers', () => {
 
   test('builds a share thumbnail path', () => {
     expect(thumbPath('sf2', 'VOabc123')).toBe('thumb?share_id=VOabc123&file_id=sf2')
+  })
+
+  it('thumbPath 追加 account', () => {
+    expect(thumbPath('f1', undefined, 'a2')).toBe('thumb?file_id=f1&account=a2')
   })
 
   test('fileKind picks the icon the file manager shows', () => {

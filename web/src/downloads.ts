@@ -1,12 +1,15 @@
 import { apiPost, ApiError } from './api'
 
+// DownloadItem is one queued file: which drive file, and under which bound
+// account. An empty account_id falls back to the request's ?account= (and
+// then to the default account), which is what share and favorites callers send.
+export type DownloadItem = { file_id: string; account_id: string }
+
 // queueDownloads hands the drive file ids of restored copies to the download
 // queue and returns the notice the page shows: how many were added, and how
 // many same-name files the configured conflict policy skipped.
-export async function queueDownloads(fileIDs: string[]): Promise<string> {
-  const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', {
-    file_ids: fileIDs,
-  })
+export async function queueDownloads(items: DownloadItem[]): Promise<string> {
+  const res = await apiPost<{ created: unknown[]; skipped: string[] }>('downloads', { items })
   const skipped = res.skipped?.length ? `，跳过 ${res.skipped.length} 个同名文件` : ''
   return `已加入下载队列：${res.created.length} 个${skipped}。可在「传输」中查看进度。`
 }
