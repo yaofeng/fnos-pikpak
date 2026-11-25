@@ -1,4 +1,5 @@
 import { apiPost } from './api'
+import { getLang, makeT, type Lang } from './i18n'
 
 // AccountInfo is one row of GET /api/accounts: identity and VIP fields from
 // the stored account, quota from the cached probe snapshot, and a non-empty
@@ -66,11 +67,16 @@ export function resolveCurrentId(items: AccountInfo[], currentId: string): strin
 
 // validateDisplayName mirrors the rename endpoint's rules so the inline
 // rename edit rejects before the request: trim, non-empty, at most 50 code
-// points. The error strings are the endpoint's own wording.
-export function validateDisplayName(raw: string): { ok: true; name: string } | { ok: false; error: string } {
+// points. The error copy comes from the i18n table; the process-wide language
+// applies unless the caller passes one.
+export function validateDisplayName(
+  raw: string,
+  lang?: Lang,
+): { ok: true; name: string } | { ok: false; error: string } {
   const name = raw.trim()
-  if (!name) return { ok: false, error: '账号名称不能为空' }
-  if ([...name].length > 50) return { ok: false, error: '账号名称过长，最多 50 个字符' }
+  const t = makeT(lang ?? getLang())
+  if (!name) return { ok: false, error: t('account.name_empty') }
+  if ([...name].length > 50) return { ok: false, error: t('account.name_too_long') }
   return { ok: true, name }
 }
 

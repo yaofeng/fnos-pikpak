@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { backupFilename, filenameFromDisposition, restoreSummary, type RestoreResult } from './backup'
 
 describe('backupFilename', () => {
@@ -39,5 +39,19 @@ describe('restoreSummary', () => {
     expect(text).toContain('分享收藏新增 2、跳过 1')
     expect(text).toContain('视频收藏新增 3、跳过 5')
     expect(text).toContain('分组新增 1、合并 2')
+  })
+})
+
+describe('restoreSummary（en）', () => {
+  it('按英文输出恢复摘要', () => {
+    const result: RestoreResult = {
+      settings_overwritten: 2,
+      share_favorites: { added: 3, skipped: 1 },
+      video_favorites: { added: 4, skipped: 2 },
+      video_groups: { added: 1, merged: 5 },
+    }
+    expect(restoreSummary(result, 'en')).toBe(
+      '2 settings overwritten; share favorites: 3 added, 1 skipped; video favorites: 4 added, 2 skipped; groups: 1 added, 5 merged',
+    )
   })
 })

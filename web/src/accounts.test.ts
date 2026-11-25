@@ -112,3 +112,18 @@ describe('validateDisplayName', () => {
     expect(validateDisplayName('长'.repeat(50)).ok).toBe(true)
   })
 })
+
+describe('validateDisplayName（en）', () => {
+  it('纯空格拒绝时返回英文提示', () => {
+    expect(validateDisplayName('   ', 'en')).toEqual({ ok: false, error: 'Account name cannot be empty' })
+  })
+  it('超过 50 字返回英文提示', () => {
+    expect(validateDisplayName('长'.repeat(51), 'en')).toEqual({
+      ok: false,
+      error: 'Account name is too long; 50 characters at most',
+    })
+  })
+  it('默认语言为中文', () => {
+    expect(validateDisplayName(' ', undefined)).toEqual({ ok: false, error: '账号名称不能为空' })
+  })
+})

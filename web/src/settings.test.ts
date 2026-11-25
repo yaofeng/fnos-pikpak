@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { changedSettings, globalSettingKeys, pickSettings, unbindWarning, userSettingKeys } from './settings'
+import { changedSettings, globalSettingKeys, pickSettings, userSettingKeys } from './settings'
 
 const all = {
   download_concurrency: '3',
@@ -41,17 +41,5 @@ describe('changedSettings', () => {
 
   test('returns nothing when nothing changed', () => {
     expect(changedSettings(all, { ...all })).toEqual({})
-  })
-})
-
-describe('unbindWarning', () => {
-  test('names both the cleared credentials and the cleared task records', () => {
-    expect(unbindWarning).toContain('凭据')
-    expect(unbindWarning).toContain('任务记录')
-  })
-
-  test('scopes the loss to the one account being unbound', () => {
-    expect(unbindWarning).toContain('其他账号不受影响')
-    expect(unbindWarning).not.toContain('本用户的全部')
   })
 })

@@ -3,7 +3,7 @@ import { apiGet, apiPost } from '../api'
 import { useAccounts } from '../AccountContext'
 import { renameAccount, validateDisplayName, type AccountInfo } from '../accounts'
 import { copyText } from '../clipboard'
-import { unbindWarning } from '../settings'
+import { getLang, makeT } from '../i18n'
 
 type DeviceStart = {
   id: string
@@ -33,10 +33,10 @@ function announce() {
 // statusTag maps an account row to the badge wording and severity. A row with
 // a probe error still works for most calls, so the badge stays green and the
 // reason is shown as detail text instead.
-function statusTag(acct: AccountInfo): { cls: string; text: string } {
+function statusTag(acct: AccountInfo, t: (key: string) => string): { cls: string; text: string } {
   return acct.status === 'reauth_required'
-    ? { cls: 'tag tag-warn', text: '需重新授权' }
-    : { cls: 'tag tag-pass', text: '正常' }
+    ? { cls: 'tag tag-warn', text: t('status.reauth') }
+    : { cls: 'tag tag-pass', text: t('status.ok') }
 }
 
 // FlowPanel is the device-code progress block: the verify link with its copy
@@ -46,27 +46,31 @@ function FlowPanel(props: {
   flow: DeviceStart
   state: FlowState
   left: number
+  t: (key: string) => string
   onRetry(): void
   onCopyFail(): void
 }) {
-  const { flow, state, left, onRetry, onCopyFail } = props
+  const { flow, state, left, t, onRetry, onCopyFail } = props
   const pending = state.status === 'pending'
   return (
     <>
       {pending && (
         <div className="bind-flow">
-          <p>在浏览器中打开下面的链接，输入或确认用户码：</p>
+          <p>{t('flow.open_link')}</p>
           <p className="user-code mono">{flow.user_code}</p>
           <p>
             <a href={flow.verify_url} target="_blank" rel="noreferrer">
               {flow.verify_url}
             </a>
             <button type="button" className="link" onClick={onCopyFail}>
-              复制链接
+              {t('flow.copy_link')}
             </button>
           </p>
           <p className="muted">
-            剩余 {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}，等待授权…
+            {t('flow.waiting').replace(
+              '{time}',
+              `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`,
+            )}
           </p>
         </div>
       )}
@@ -74,7 +78,7 @@ function FlowPanel(props: {
         <p className="error">
           {state.error || state.status}
           <button type="button" className="link" onClick={onRetry}>
-            重试
+            {t('flow.retry')}
           </button>
         </p>
       )}
@@ -88,6 +92,7 @@ function FlowPanel(props: {
 // bind page any more — adding or re-authorizing expands the device-code flow
 // right under the row (or under the empty state) it was started from.
 export function AccountSection() {
+  const t = makeT(getLang())
   const { accounts, reload } = useAccounts()
   const [flow, setFlow] = useState<DeviceStart | null>(null)
   // Which row the flow belongs to: '' adds a new account, an account id
@@ -217,6 +222,7 @@ export function AccountSection() {
         flow={flow}
         state={state}
         left={left}
+        t={t}
         onRetry={() => {
           setFlow(null)
           setFlowTarget(null)
@@ -224,7 +230,7 @@ export function AccountSection() {
         }}
         onCopyFail={() => {
           void copyText(flow.verify_url).then((ok) => {
-            if (!ok) setError('复制失败，请手动选中链接复制')
+            if (!ok) setError(t('flow.copy_failed'))
           })
         }}
       />
@@ -233,25 +239,25 @@ export function AccountSection() {
   return (
     <section className="card">
       <div className="card-header">
-        <h2>PikPak 账号</h2>
+        <h2>{t('account.title')}</h2>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className={accounts.length > 0 ? 'tag tag-pass' : 'tag tag-warn'}>
-            {accounts.length > 0 ? `已绑定 ${accounts.length} 个` : '未绑定'}
+            {accounts.length > 0
+              ? t('account.bound_count').replace('{n}', String(accounts.length))
+              : t('account.unbound')}
           </span>
           <button type="button" onClick={() => startBind()} disabled={busy || !!flow}>
-            {busy ? '申请中…' : '添加账号'}
+            {busy ? t('account.requesting') : t('account.add')}
           </button>
         </span>
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      {accounts.length === 0 && !flow && (
-        <p className="muted">尚未绑定。绑定后本应用才能访问你的 PikPak 文件。</p>
-      )}
+      {accounts.length === 0 && !flow && <p className="muted">{t('account.empty_hint')}</p>}
 
       {accounts.map((acct) => {
-        const tag = statusTag(acct)
+        const tag = statusTag(acct, t)
         return (
           // The row layout is inline: the stylesheet carries no account-card
           // rule, and adding one is another task's file.
@@ -278,7 +284,7 @@ export function AccountSection() {
                     <input
                       autoFocus
                       value={draft}
-                      aria-label="账号名称"
+                      aria-label={t('account.name_label')}
                       onChange={(e) => setDraft(e.target.value)}
                       onBlur={() => void submitRename(acct.id)}
                       onKeyDown={(e) => {
@@ -306,10 +312,10 @@ export function AccountSection() {
                   disabled={pending || editingId === acct.id}
                   onClick={() => beginRename(acct)}
                 >
-                  重命名
+                  {t('account.rename')}
                 </button>
                 <button type="button" className="link" disabled={pending} onClick={() => startBind(acct.id)}>
-                  重新授权
+                  {t('account.reauthorize')}
                 </button>
                 <button
                   type="button"
@@ -317,7 +323,7 @@ export function AccountSection() {
                   disabled={pending}
                   onClick={() => setConfirmId(acct.id)}
                 >
-                  解绑
+                  {t('account.unbind')}
                 </button>
               </div>
             </div>
@@ -331,14 +337,14 @@ export function AccountSection() {
       {confirmId && (
         <div className="modal-backdrop" onClick={() => setConfirmId(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>确认解绑</h2>
-            <p>{unbindWarning}</p>
+            <h2>{t('account.unbind_confirm_title')}</h2>
+            <p>{t('account.unbind_warning')}</p>
             <div className="actions">
               <button type="button" className="danger" onClick={() => void unbind(confirmId)}>
-                确认解绑
+                {t('account.unbind')}
               </button>
               <button type="button" onClick={() => setConfirmId(null)}>
-                取消
+                {t('common.cancel')}
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import type { AccountInfo } from '../accounts'
+import { getLang, makeT } from '../i18n'
 
 // accountLabel is the name-only option text: the stored label the user set,
 // else the id's first six characters. VIP tier, usage and status used to ride
@@ -18,9 +19,10 @@ export default function AccountSwitcher({ accounts, currentId, onChange }: {
   onChange(id: string): void
 }) {
   if (accounts.length < 2) return null
+  const t = makeT(getLang())
   return (
     <label className="fm-pick">
-      <select value={currentId} onChange={(e) => onChange(e.target.value)} aria-label="切换账号">
+      <select value={currentId} onChange={(e) => onChange(e.target.value)} aria-label={t('account.switch_label')}>
         {accounts.map((a) => (
           <option key={a.id} value={a.id}>
             {accountLabel(a)}

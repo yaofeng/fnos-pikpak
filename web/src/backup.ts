@@ -1,6 +1,8 @@
 // A backup is plain JSON. These helpers keep the download filename and the
 // restore summary out of the page, so both can be unit tested without a DOM.
 
+import { getLang, makeT, type Lang } from './i18n'
+
 type RestoreCounts = { added: number; skipped: number }
 type RestoreGroupCounts = { added: number; merged: number }
 
@@ -31,12 +33,21 @@ export function filenameFromDisposition(header: string | null): string {
 }
 
 // restoreSummary is the line shown after an import: every count the server
-// reports, in the order the page lists the data.
-export function restoreSummary(result: RestoreResult): string {
-  return [
-    `设置已覆盖 ${result.settings_overwritten} 项`,
-    `分享收藏新增 ${result.share_favorites.added}、跳过 ${result.share_favorites.skipped}`,
-    `视频收藏新增 ${result.video_favorites.added}、跳过 ${result.video_favorites.skipped}`,
-    `分组新增 ${result.video_groups.added}、合并 ${result.video_groups.merged}`,
-  ].join('；')
+// reports, in the order the page lists the data. Copy comes from the i18n
+// table; the process-wide language applies unless the caller passes one.
+export function restoreSummary(result: RestoreResult, lang?: Lang): string {
+  const t = makeT(lang ?? getLang())
+  const parts = [
+    t('backup.summary_settings').replace('{n}', String(result.settings_overwritten)),
+    t('backup.summary_share')
+      .replace('{a}', String(result.share_favorites.added))
+      .replace('{s}', String(result.share_favorites.skipped)),
+    t('backup.summary_video')
+      .replace('{a}', String(result.video_favorites.added))
+      .replace('{s}', String(result.video_favorites.skipped)),
+    t('backup.summary_groups')
+      .replace('{a}', String(result.video_groups.added))
+      .replace('{m}', String(result.video_groups.merged)),
+  ]
+  return parts.join(lang === 'en' ? '; ' : '；')
 }
