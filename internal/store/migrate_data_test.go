@@ -154,9 +154,9 @@ func TestLegacyDataMigrates(t *testing.T) {
 		t.Fatal("bound_at was not set during migration")
 	}
 
-	cred, err := s.GetCredential(ctx, 1001)
+	cred, err := s.GetAccountCredential(ctx, 1001, a.ID)
 	if err != nil {
-		t.Fatalf("GetCredential: %v", err)
+		t.Fatalf("GetAccountCredential: %v", err)
 	}
 	if cred.AccessToken != "at-old" || cred.RefreshToken != "rt-old" || cred.DeviceID != "dev-old" {
 		t.Fatalf("credential did not survive re-encryption: %+v", cred)
@@ -200,7 +200,7 @@ func TestDataMigrationIdempotent(t *testing.T) {
 	if len(accounts) != 1 || accounts[0].ID != firstID {
 		t.Fatalf("reopened accounts = %+v, want exactly %q", accounts, firstID)
 	}
-	cred, err := s2.GetCredential(ctx, 1001)
+	cred, err := s2.GetAccountCredential(ctx, 1001, firstID)
 	if err != nil || cred.AccessToken != "at-old" {
 		t.Fatalf("reopened credential = %+v, %v", cred, err)
 	}

@@ -19,9 +19,13 @@ const (
 )
 
 // videoPrepareResult is what a finished prepare hands the browser: the copy in
-// Pack From Shared and a signed URL that plays it.
+// Pack From Shared (and the account whose drive holds it) plus a signed URL
+// that plays it.
 type videoPrepareResult struct {
-	FileID    string `json:"file_id"`
+	FileID string `json:"file_id"`
+	// AccountID names the account the copy lives on and the stream token
+	// spends; empty only for results minted before accounts existed.
+	AccountID string `json:"account_id"`
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
 	StreamURL string `json:"stream_url"`

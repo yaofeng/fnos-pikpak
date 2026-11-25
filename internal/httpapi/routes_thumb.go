@@ -38,23 +38,23 @@ func newThumbCache() *thumbCache {
 	return &thumbCache{ttl: thumbTTL, items: map[string]thumbItem{}}
 }
 
-func thumbKey(uid int, shareID, fileID string) string {
-	return strconv.Itoa(uid) + "|" + shareID + "|" + fileID
+func thumbKey(uid int, accountID, shareID, fileID string) string {
+	return strconv.Itoa(uid) + "|" + accountID + "|" + shareID + "|" + fileID
 }
 
-func (c *thumbCache) get(uid int, shareID, fileID string, now time.Time) ([]byte, string, bool) {
+func (c *thumbCache) get(uid int, accountID, shareID, fileID string, now time.Time) ([]byte, string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	item, ok := c.items[thumbKey(uid, shareID, fileID)]
+	item, ok := c.items[thumbKey(uid, accountID, shareID, fileID)]
 	if !ok || now.After(item.expires) {
 		return nil, "", false
 	}
 	return item.data, item.mime, true
 }
 
-func (c *thumbCache) put(uid int, shareID, fileID string, data []byte, mime string, now time.Time) {
+func (c *thumbCache) put(uid int, accountID, shareID, fileID string, data []byte, mime string, now time.Time) {
 	c.mu.Lock()
-	c.items[thumbKey(uid, shareID, fileID)] = thumbItem{data: data, mime: mime, expires: now.Add(c.ttl)}
+	c.items[thumbKey(uid, accountID, shareID, fileID)] = thumbItem{data: data, mime: mime, expires: now.Add(c.ttl)}
 	c.mu.Unlock()
 }
 
@@ -72,16 +72,16 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "bad_ids", "缺少文件编号")
 			return
 		}
-		now := time.Now()
-		if data, mime, ok := deps.Thumbs.get(id.UID, shareID, fileID, now); ok {
-			writeThumb(w, data, mime)
-			return
-		}
-
 		client, acct, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
+		now := time.Now()
+		if data, mime, ok := deps.Thumbs.get(id.UID, acct.ID, shareID, fileID, now); ok {
+			writeThumb(w, data, mime)
+			return
+		}
+
 		var link string
 		if shareID != "" {
 			token, ok := thumbShareToken(w, r, deps, client, id.UID, acct.ID, shareID)
@@ -112,7 +112,7 @@ func registerThumbRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadGateway, "thumb_failed", "缩略图加载失败")
 			return
 		}
-		deps.Thumbs.put(id.UID, shareID, fileID, data, mime, now)
+		deps.Thumbs.put(id.UID, acct.ID, shareID, fileID, data, mime, now)
 		writeThumb(w, data, mime)
 	})
 }

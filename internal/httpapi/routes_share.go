@@ -128,7 +128,11 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		now := time.Now()
-		t := playtoken.SignShare(deps.PlaySecret, id.UID, acct.ID, shareID, fileID, playTokenTTL, now)
+		t, err := playtoken.SignShare(deps.PlaySecret, id.UID, acct.ID, shareID, fileID, playTokenTTL, now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "无法签发播放链接")
+			return
+		}
 		escShare, escFile := url.PathEscape(shareID), url.PathEscape(fileID)
 		out := map[string]any{
 			"file_id":      fileID,
@@ -196,12 +200,15 @@ func registerShareRoutes(mux *http.ServeMux, deps Deps) {
 		type refusal struct{ name, reason string }
 		var refused []refusal
 		for _, nc := range clients {
-			token, _, ok := openShareFor(aw, r, deps, id.UID, nc.Account, shareID, passCode)
-			if !ok {
+			token, _, err := openShareFor(aw, r, deps, id.UID, nc.Account, shareID, passCode)
+			if err != nil {
 				if aw.wrote {
 					return
 				}
-				refused = append(refused, refusal{name: accountLabel(nc.Account), reason: "打开分享失败"})
+				refused = append(refused, refusal{
+					name:   accountLabel(nc.Account),
+					reason: strings.TrimSpace(probe.Redact(err.Error())),
+				})
 				continue
 			}
 			if _, err := nc.C.RestoreShare(r.Context(), shareID, token, body.FileIDs); err != nil {
@@ -340,32 +347,46 @@ func restoreClients(w http.ResponseWriter, r *http.Request, deps Deps, fallback 
 	return out, true
 }
 
-// openShareFor opens a share as one account and seeds that account's
-// pass-code session with the code used. Share-level refusals — wrong code,
-// gone share, anything that would repeat on every account — are answered
-// here; account-level failures return unwritten so a rotation loop can try
-// the next account. ok false with nothing written means exactly that.
-func openShareFor(w http.ResponseWriter, r *http.Request, deps Deps, uid int, acct store.PikPakAccount, shareID, passCode string) (string, *pikpak.ShareInfo, bool) {
-	client, err := deps.Sessions.ClientForAccount(r.Context(), uid, acct.ID)
+// openShareAs opens a share as one account using the account's already
+// loaded client and seeds that account's pass-code session with the code
+// used. The error travels raw so the caller can classify it: the pass-code
+// and share-gone refusals would fail on every account the same way, while
+// anything else can be one account's own bad day.
+func openShareAs(ctx context.Context, deps Deps, uid int, acct store.PikPakAccount, client *pikpak.Client, shareID, passCode string) (string, *pikpak.ShareInfo, error) {
+	info, err := client.GetShare(ctx, shareID, passCode)
 	if err != nil {
-		return "", nil, false
-	}
-	info, err := client.GetShare(r.Context(), shareID, passCode)
-	if err != nil {
-		switch {
-		case errors.Is(err, pikpak.ErrPassCodeRequired):
-			writeError(w, http.StatusBadRequest, "pass_code_required", "该分享需要访问密码")
-		case errors.Is(err, pikpak.ErrPassCodeWrong):
-			writeError(w, http.StatusBadRequest, "pass_code_wrong", "访问密码不正确")
-		case errors.Is(err, pikpak.ErrShareUnavailable):
-			writeError(w, http.StatusNotFound, "share_unavailable", "分享已失效或已被取消")
-		case !isAccountLevelErr(err):
-			writeUpstreamError(w, err)
-		}
-		return "", nil, false
+		return "", nil, err
 	}
 	deps.ShareSessions.put(uid, acct.ID, shareID, info.PassCodeToken, passCode, time.Now())
-	return info.PassCodeToken, &info, true
+	return info.PassCodeToken, &info, nil
+}
+
+// openShareFor wraps openShareAs for the HTTP routes. Share-level refusals —
+// wrong code, gone share, anything that would repeat on every account — are
+// answered here; a non-account-level upstream error is written too; an
+// account-level failure returns unwritten so a rotation loop can try the
+// next account. The returned error doubles as the per-account reason the
+// all_accounts_failed envelope lists.
+func openShareFor(w http.ResponseWriter, r *http.Request, deps Deps, uid int, acct store.PikPakAccount, shareID, passCode string) (string, *pikpak.ShareInfo, error) {
+	client, err := deps.Sessions.ClientForAccount(r.Context(), uid, acct.ID)
+	if err != nil {
+		return "", nil, err
+	}
+	token, info, err := openShareAs(r.Context(), deps, uid, acct, client, shareID, passCode)
+	if err == nil {
+		return token, info, nil
+	}
+	switch {
+	case errors.Is(err, pikpak.ErrPassCodeRequired):
+		writeError(w, http.StatusBadRequest, "pass_code_required", "该分享需要访问密码")
+	case errors.Is(err, pikpak.ErrPassCodeWrong):
+		writeError(w, http.StatusBadRequest, "pass_code_wrong", "访问密码不正确")
+	case errors.Is(err, pikpak.ErrShareUnavailable):
+		writeError(w, http.StatusNotFound, "share_unavailable", "分享已失效或已被取消")
+	case !isAccountLevelErr(err):
+		writeUpstreamError(w, err)
+	}
+	return "", nil, err
 }
 
 // migrateShareFavorites rewrites rows saved before links were parsed on add:
@@ -453,7 +474,7 @@ func registerShareFavoriteRoutes(mux *http.ServeMux, deps Deps) {
 		// Best effort: remember who shared it while the share is at hand. The
 		// totals wait for the first visit, where the share is walked in the
 		// background.
-		if client, err := deps.Sessions.ClientFor(r.Context(), id.UID); err == nil {
+		if client, err := deps.Sessions.ClientForAccount(r.Context(), id.UID, ""); err == nil {
 			metaCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			fav = refreshShareFavoriteStats(metaCtx, deps, id.UID, fav, client, false)
 			cancel()

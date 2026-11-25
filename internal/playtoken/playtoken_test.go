@@ -18,7 +18,10 @@ func signedToken(secret []byte, payload string) string {
 
 func TestSignVerifyRoundTrip(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "acct-1", "file-abc", 6*time.Hour, now)
+	token, err := Sign(secret, 1000, "acct-1", "file-abc", 6*time.Hour, now)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 
 	claims, err := Verify(secret, token, now)
 	if err != nil {
@@ -42,7 +45,10 @@ func TestVerifyRejectsWrongSignature(t *testing.T) {
 
 func TestVerifyRejectsWrongSecret(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	token, err := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	if _, err := Verify([]byte("another-secret-another-secret-32"), token, now); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v", err)
 	}
@@ -50,7 +56,10 @@ func TestVerifyRejectsWrongSecret(t *testing.T) {
 
 func TestVerifyRejectsTamperedPayload(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	token, err := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	_, sig, _ := strings.Cut(token, ".")
 
 	for _, payload := range []string{
@@ -79,7 +88,10 @@ func TestVerifyRejectsLegacyFormats(t *testing.T) {
 
 func TestVerifyRejectsExpired(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	token, err := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	if _, err := Verify(secret, token, now.Add(2*time.Hour)); !errors.Is(err, ErrExpired) {
 		t.Fatalf("err = %v", err)
 	}
@@ -108,7 +120,10 @@ func TestDeriveSecretIsStableAndSeparate(t *testing.T) {
 
 func TestSignShareVerifyRoundTrip(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	token := SignShare(secret, 1000, "acct-1", "VOabc123", "sf1", 6*time.Hour, now)
+	token, err := SignShare(secret, 1000, "acct-1", "VOabc123", "sf1", 6*time.Hour, now)
+	if err != nil {
+		t.Fatalf("SignShare: %v", err)
+	}
 
 	claims, err := Verify(secret, token, now)
 	if err != nil {
@@ -121,8 +136,14 @@ func TestSignShareVerifyRoundTrip(t *testing.T) {
 
 func TestDriveAndShareTokensDoNotSubstituteForEachOther(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	drive := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
-	share := SignShare(secret, 1000, "acct-1", "VOabc123", "f1", time.Hour, now)
+	drive, err := Sign(secret, 1000, "acct-1", "f1", time.Hour, now)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	share, err := SignShare(secret, 1000, "acct-1", "VOabc123", "f1", time.Hour, now)
+	if err != nil {
+		t.Fatalf("SignShare: %v", err)
+	}
 
 	dc, err := Verify(secret, drive, now)
 	if err != nil || dc.ShareID != "" {
@@ -131,5 +152,17 @@ func TestDriveAndShareTokensDoNotSubstituteForEachOther(t *testing.T) {
 	sc, err := Verify(secret, share, now)
 	if err != nil || sc.ShareID != "VOabc123" {
 		t.Fatalf("share claims = %+v err=%v", sc, err)
+	}
+}
+
+// 签发侧同样拒绝空账号：真实账号 id 接入后，空账号是调用方 bug，直接失败
+// 而不是签出一个永远无法核销的令牌（Verify 拒绝旧格式）。
+func TestSignRejectsEmptyAccount(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	if _, err := Sign(secret, 1000, "", "f1", time.Hour, now); !errors.Is(err, ErrEmptyAccount) {
+		t.Fatalf("Sign err = %v, want ErrEmptyAccount", err)
+	}
+	if _, err := SignShare(secret, 1000, "", "s1", "f1", time.Hour, now); !errors.Is(err, ErrEmptyAccount) {
+		t.Fatalf("SignShare err = %v, want ErrEmptyAccount", err)
 	}
 }

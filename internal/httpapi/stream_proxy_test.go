@@ -2,10 +2,14 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -67,7 +71,10 @@ func newStreamEnv(t *testing.T, expiredFirst bool) *streamEnv {
 
 func (e *streamEnv) request(t *testing.T, method string, header map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	token := playtoken.Sign(e.deps.PlaySecret, 1000, "", "f1", time.Hour, time.Now())
+	token, err := playtoken.Sign(e.deps.PlaySecret, 1000, testAccountID(1000), "f1", time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	req := httptest.NewRequest(method, "/api/stream/f1?t="+token, nil)
 	for k, v := range header {
 		req.Header.Set(k, v)
@@ -188,4 +195,72 @@ func TestStreamRejectsPost(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", rec.Code)
 	}
+}
+
+// The stream spends the token's own account: a token minted for acct-b asks
+// acct-b's drive for the link, and a legacy 3-segment token (no account
+// segment) is refused outright instead of falling back to the default.
+func TestStreamUsesTokenAccount(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		fetchDev string
+	)
+	var medias *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /drive/v1/files/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("usage") != "FETCH" {
+			_, _ = io.WriteString(w, `{"id":"f1","name":"a.mp4","kind":"drive#file","size":"1024","mime_type":"video/mp4"}`)
+			return
+		}
+		mu.Lock()
+		fetchDev = r.Header.Get("X-Device-Id")
+		mu.Unlock()
+		fmt.Fprintf(w, `{"web_content_link":%q,"size":"1024"}`, medias.URL+"/media/ok")
+	})
+	mux.HandleFunc("/media/ok", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "a.mp4", time.Unix(1_700_000_000, 0), bytes.NewReader(mediaBody))
+	})
+	medias = httptest.NewServer(mux)
+	t.Cleanup(medias.Close)
+
+	deps, st := newAuthTestDeps(t, medias.URL)
+	base := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	bindAccountAt(t, st, 1000, acctA, "sub-a", "active", base)
+	bindAccountAt(t, st, 1000, acctB, "sub-b", "active", base.Add(time.Minute))
+	deps.PlaySecret = []byte("test-play-secret-test-play-secret")
+
+	token, err := playtoken.Sign(deps.PlaySecret, 1000, acctB, "f1", time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/stream/f1?t="+token, nil)
+	rec := httptest.NewRecorder()
+	NewMux(deps).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
+	}
+	mu.Lock()
+	got := fetchDev
+	mu.Unlock()
+	if got != testDeviceID(acctB) {
+		t.Fatalf("the link request hit device %q, want acct-b's", got)
+	}
+
+	// 旧格式令牌（无账号段）在 Verify 就被拒绝，不会退回默认账号。
+	legacy := legacyFormatToken(deps.PlaySecret, "1000|f1|9999999999")
+	req = httptest.NewRequest(http.MethodGet, "/api/stream/f1?t="+legacy, nil)
+	rec = httptest.NewRecorder()
+	NewMux(deps).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("legacy token status = %d body=%s", rec.Code, rec.Body)
+	}
+	assertErrorCode(t, rec, "invalid_token")
+}
+
+// legacyFormatToken 手拼 Task 3 之前的旧格式令牌（3 段、无账号段）。
+func legacyFormatToken(secret []byte, payload string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." +
+		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

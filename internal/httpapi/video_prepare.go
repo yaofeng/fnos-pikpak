@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/playtoken"
+	"fnos-pikpak/internal/probe"
 	"fnos-pikpak/internal/store"
 )
 
@@ -38,21 +40,27 @@ var (
 	errVideoNoLink       = errors.New("该文件没有可播放的链接")
 	errReauth            = errors.New("PikPak 授权已失效，请重新绑定账号")
 	errUpstream          = errors.New("PikPak 请求失败，请稍后重试")
+	errAllAccountsFailed = errors.New("所有账号都无法完成转存")
 )
 
 // videoPrepareRequest names the share video to prepare. A favorite carries a
 // sealed pass code, so it reopens without asking; a share tab relies on its
 // server-side session.
 type videoPrepareRequest struct {
-	ShareID    string
-	FileID     string
+	ShareID string
+	FileID  string
+	// FavoriteID is positive when the video comes from 视频收藏夹.
 	FavoriteID int64
 }
 
+// videoSource is the share file a prepare or preview plays. passCode is the
+// code the share was opened with, so the account rotation can reopen the
+// share under other accounts' identities.
 type videoSource struct {
 	shareID  string
 	fileID   string
 	token    string
+	passCode string
 	owner    string
 	title    string
 	favorite *store.VideoFavorite
@@ -60,9 +68,15 @@ type videoSource struct {
 
 // prepareVideo restores one share video into Pack From Shared, making room
 // first, and returns a signed URL for that copy. A copy an earlier 完整播放
-// left there is reused: the video is never restored twice.
+// left in ANY account's drive is reused: the video is never restored twice.
+//
+// 转存换号（spec §10）：先在默认账号上解析来源与 share link；任何账号的
+// Pack From Shared 已有匹配副本就直接用副本账号播放并回写收藏；未命中则
+// 按随机顺序逐账号：makeRoom → openShareAs → RestoreShare → waitTask。
+// restore 任务落定前的失败换下一个账号，落定后的失败只报告——副本已经存
+// 在，别的账号重试只会造成重复。耗尽时报 errAllAccountsFailed。
 func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (videoPrepareResult, error) {
-	client, err := deps.Sessions.ClientFor(ctx, uid)
+	client, err := deps.Sessions.ClientForAccount(ctx, uid, "")
 	if errors.Is(err, pikpak.ErrNotBound) {
 		return videoPrepareResult{}, errNotBound
 	}
@@ -70,7 +84,10 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 		return videoPrepareResult{}, errSessionLoad
 	}
 
-	source, err := resolveVideoSource(ctx, deps, uid, req, client, defaultAccountID(ctx, deps, uid))
+	// 来源与 share link 仍走默认账号：分享页和收藏夹都在默认账号下打开，
+	// pass-code 会话也以它为键。
+	acctID := defaultAccountID(ctx, deps, uid)
+	source, err := resolveVideoSource(ctx, deps, uid, req, client, acctID)
 	if err != nil {
 		return videoPrepareResult{}, err
 	}
@@ -97,46 +114,116 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 		})
 	}
 
+	// 跨账号复用：任何账号的既有副本（先按记住的 id，再按名字+大小）都能
+	// 短路整个转存。
+	if found, foundAcct, ok := findCopyAcross(packCopies(ctx, deps, uid), restoredID, targetName, link.Name, link.Size); ok {
+		copyClient, err := deps.Sessions.ClientForAccount(ctx, uid, foundAcct)
+		if err != nil {
+			return videoPrepareResult{}, errSessionLoad
+		}
+		return reuseRestoredCopy(ctx, deps, copyClient, uid, foundAcct, source, found, targetName)
+	}
+
+	accounts, err := deps.Store.ListAccounts(ctx, uid)
+	if err != nil {
+		return videoPrepareResult{}, errSessionLoad
+	}
+	rotation := shuffledActives(accounts)
+	if len(accounts) == 0 {
+		// A user bound before accounts existed owns exactly the legacy
+		// placeholder identity; it is the only account to try.
+		if fallback, err := deps.resolveAccount(ctx, uid, ""); err == nil {
+			rotation = []store.PikPakAccount{fallback}
+		}
+	}
+	var failures []string
+	for _, acct := range rotation {
+		res, reason, err := restoreOnAccount(ctx, deps, uid, acct, source, link, targetName)
+		if err != nil {
+			// The failure would repeat on every account (share-level
+			// refusal) or happened after the restore task settled and the
+			// copy exists — either way, report instead of rotating.
+			return videoPrepareResult{}, err
+		}
+		if reason == "" {
+			return res, nil
+		}
+		failures = append(failures, accountLabel(acct)+"："+reason)
+	}
+	return videoPrepareResult{}, fmt.Errorf("%w：%s", errAllAccountsFailed, strings.Join(failures, "；"))
+}
+
+// restoreOnAccount runs one account's whole restore pipeline: snapshot the
+// folders, make room, open the share as this account, restore, wait. It
+// answers one of three ways:
+//
+//	(result, "", nil)  the copy exists on this account — done
+//	({}, reason, nil)  this account failed; try the next one
+//	({}, "", err)      stop and report err: the refusal travels with the
+//	                   share, or the restore task already settled so another
+//	                   account retrying would only duplicate the copy
+func restoreOnAccount(ctx context.Context, deps Deps, uid int, acct store.PikPakAccount, source videoSource, link pikpak.ShareFileLink, targetName string) (videoPrepareResult, string, error) {
+	client, err := deps.Sessions.ClientForAccount(ctx, uid, acct.ID)
+	if err != nil {
+		return videoPrepareResult{}, "无法加载会话", nil
+	}
+
 	// PikPak drops a restored share into the root folder "Pack From Shared",
 	// creating it on the first restore; older accounts see the file in the
-	// root itself. Both are listed up front, so an existing copy short-circuits
-	// the whole restore.
+	// root itself. Both are snapshotted before the restore so the freshly
+	// restored file can be told apart from same-named files already there.
 	beforeRoot, err := client.ListAllFiles(ctx, "")
 	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
+		return videoPrepareResult{}, rotateReason(err), nil
 	}
 	var beforePack []pikpak.File
 	if pack, ok := findFolder(beforeRoot, packFromSharedName); ok {
 		if beforePack, err = client.ListAllFiles(ctx, pack.ID); err != nil {
-			return videoPrepareResult{}, videoUpstreamMessage(err)
+			return videoPrepareResult{}, rotateReason(err), nil
 		}
-	}
-	if existing, ok := findRestoredCopy(beforePack, beforeRoot, restoredID, targetName, link.Name, link.Size); ok {
-		return reuseRestoredCopy(ctx, deps, client, uid, source, existing, targetName)
 	}
 
 	if err := makeRoom(ctx, client, link.Size); err != nil {
-		return videoPrepareResult{}, err
+		return videoPrepareResult{}, rotateReason(err), nil
 	}
-
 	knownRoot := fileIDs(beforeRoot)
 	knownPack := fileIDs(beforePack)
-	restoreTask, err := client.RestoreShare(ctx, source.shareID, source.token, []string{source.fileID})
+	token, _, err := openShareAs(ctx, deps, uid, acct, client, source.shareID, source.passCode)
 	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
+		switch {
+		case errors.Is(err, pikpak.ErrPassCodeRequired):
+			return videoPrepareResult{}, "", errPassRequired
+		case errors.Is(err, pikpak.ErrPassCodeWrong):
+			return videoPrepareResult{}, "", errPassWrong
+		case errors.Is(err, pikpak.ErrShareUnavailable):
+			return videoPrepareResult{}, "", errShareUnavailable
+		case !isAccountLevelErr(err):
+			return videoPrepareResult{}, "", videoUpstreamMessage(err)
+		}
+		return videoPrepareResult{}, rotateReason(err), nil
+	}
+	restoreTask, err := client.RestoreShare(ctx, source.shareID, token, []string{source.fileID})
+	if err != nil {
+		if !isAccountLevelErr(err) {
+			return videoPrepareResult{}, "", videoUpstreamMessage(err)
+		}
+		return videoPrepareResult{}, rotateReason(err), nil
 	}
 	if err := waitTask(ctx, client, restoreTask); err != nil {
-		return videoPrepareResult{}, err
+		return videoPrepareResult{}, rotateReason(err), nil
 	}
+
+	// 从这里开始 restore 任务已经落定：副本已存在，之后的失败只报告，不
+	// 再换号重试——别的账号再转存只会造成重复。
 	afterRoot, err := client.ListAllFiles(ctx, "")
 	if err != nil {
-		return videoPrepareResult{}, videoUpstreamMessage(err)
+		return videoPrepareResult{}, "", videoUpstreamMessage(err)
 	}
 	var afterPack []pikpak.File
 	if pack, ok := findFolder(afterRoot, packFromSharedName); ok {
 		afterPack, err = client.ListAllFiles(ctx, pack.ID)
 		if err != nil {
-			return videoPrepareResult{}, videoUpstreamMessage(err)
+			return videoPrepareResult{}, "", videoUpstreamMessage(err)
 		}
 	}
 	restored, ok := findRestoredFile(afterPack, knownPack, link.Name)
@@ -144,74 +231,56 @@ func prepareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareReque
 		restored, ok = findRestoredFile(afterRoot, knownRoot, link.Name)
 	}
 	if !ok {
-		return videoPrepareResult{}, errors.New("转存已完成，但没有找到该视频")
+		return videoPrepareResult{}, "", errors.New("转存已完成，但没有找到该视频")
 	}
 	if restored.Name != targetName {
 		if err := client.Rename(ctx, restored.ID, targetName); err != nil {
-			return videoPrepareResult{}, videoUpstreamMessage(err)
+			return videoPrepareResult{}, "", videoUpstreamMessage(err)
 		}
 		restored.Name = targetName
 	}
-	recordRestoredCopy(ctx, deps, uid, source, restored.ID)
-	return finishedVideoResult(ctx, deps, client, uid, restored)
+	recordRestoredCopy(ctx, deps, uid, source, restored.ID, acct.ID)
+	res, err := finishedVideoResult(ctx, deps, client, uid, acct.ID, restored)
+	return res, "", err
 }
 
-// reuseRestoredCopy plays a copy an earlier 完整播放 left in Pack From Shared,
-// renaming it to the local name when that changed since.
-func reuseRestoredCopy(ctx context.Context, deps Deps, client *pikpak.Client, uid int, source videoSource, file pikpak.File, targetName string) (videoPrepareResult, error) {
+// rotateReason renders one account's failure for the all_accounts_failed
+// envelope: redacted upstream text, exactly what the share-restore loop
+// reports per account.
+func rotateReason(err error) string {
+	return strings.TrimSpace(probe.Redact(err.Error()))
+}
+
+// reuseRestoredCopy plays a copy an earlier 完整播放 left in Pack From Shared
+// (on any account), renaming it to the local name when that changed since.
+func reuseRestoredCopy(ctx context.Context, deps Deps, client *pikpak.Client, uid int, accountID string, source videoSource, file pikpak.File, targetName string) (videoPrepareResult, error) {
 	if file.Name != targetName {
 		if err := client.Rename(ctx, file.ID, targetName); err != nil {
 			return videoPrepareResult{}, videoUpstreamMessage(err)
 		}
 		file.Name = targetName
 	}
-	recordRestoredCopy(ctx, deps, uid, source, file.ID)
-	return finishedVideoResult(ctx, deps, client, uid, file)
+	recordRestoredCopy(ctx, deps, uid, source, file.ID, accountID)
+	return finishedVideoResult(ctx, deps, client, uid, accountID, file)
 }
 
-// recordRestoredCopy remembers which drive file backs the favourite; the list
-// then marks it ✅ and the next play skips the restore.
-func recordRestoredCopy(ctx context.Context, deps Deps, uid int, source videoSource, fileID string) {
+// recordRestoredCopy remembers which account's drive file backs the
+// favourite; the list then marks it ✅ and the next play skips the restore.
+func recordRestoredCopy(ctx context.Context, deps Deps, uid int, source videoSource, fileID, accountID string) {
 	if source.favorite == nil {
 		return
 	}
-	_ = deps.Store.SetVideoFavoriteRestoredID(ctx, uid, source.favorite.ID, fileID)
+	_ = deps.Store.SetVideoFavoriteRestoredID(ctx, uid, source.favorite.ID, fileID, accountID)
 }
 
-// findRestoredCopy looks for a copy a previous restore left behind: first by
-// the id the favourite remembers, then by name and size inside Pack From
-// Shared, the only folder a restore writes to. The root is searched by id
-// only: a file that merely shares a name there is someone else's.
-func findRestoredCopy(pack, root []pikpak.File, rememberedID, targetName, originalName string, size int64) (pikpak.File, bool) {
-	if rememberedID != "" {
-		if f, ok := findFileByID(pack, rememberedID); ok {
-			return f, true
-		}
-		if f, ok := findFileByID(root, rememberedID); ok {
-			return f, true
-		}
+// finishedVideoResult signs the proxy URL under the copy's own account and,
+// when 设置 says IINA, adds the file's own CDN link so the external player
+// never goes through the proxy.
+func finishedVideoResult(ctx context.Context, deps Deps, client *pikpak.Client, uid int, accountID string, file pikpak.File) (videoPrepareResult, error) {
+	out, err := signVideoResult(deps, uid, accountID, file)
+	if err != nil {
+		return videoPrepareResult{}, err
 	}
-	for _, name := range []string{targetName, originalName} {
-		if f, ok := findSameVideo(pack, name, size); ok {
-			return f, true
-		}
-	}
-	return pikpak.File{}, false
-}
-
-func findFileByID(files []pikpak.File, id string) (pikpak.File, bool) {
-	for _, f := range files {
-		if f.ID == id {
-			return f, true
-		}
-	}
-	return pikpak.File{}, false
-}
-
-// finishedVideoResult signs the proxy URL and, when 设置 says IINA, adds the
-// file's own CDN link so the external player never goes through the proxy.
-func finishedVideoResult(ctx context.Context, deps Deps, client *pikpak.Client, uid int, file pikpak.File) (videoPrepareResult, error) {
-	out := signVideoResult(deps, uid, file)
 	if videoPlayer(ctx, deps, uid) == "iina" {
 		link, err := client.GetDownloadLink(ctx, file.ID)
 		if err != nil {
@@ -226,17 +295,16 @@ func finishedVideoResult(ctx context.Context, deps Deps, client *pikpak.Client, 
 }
 
 // previewShareVideo signs the share's own stream URL: nothing is restored, so
-// the video plays straight from the share.
+// the video plays straight from the share. It acts as the default account,
+// the same one the share browser opens with.
 func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepareRequest) (videoPreviewResult, error) {
-	client, err := deps.Sessions.ClientFor(ctx, uid)
+	client, err := deps.Sessions.ClientForAccount(ctx, uid, "")
 	if errors.Is(err, pikpak.ErrNotBound) {
 		return videoPreviewResult{}, errNotBound
 	}
 	if err != nil {
 		return videoPreviewResult{}, errSessionLoad
 	}
-	// The preview acts as the default account, the same one the share browser
-	// opens with, so its session and stream token carry that account's id.
 	acctID := defaultAccountID(ctx, deps, uid)
 	source, err := resolveVideoSource(ctx, deps, uid, req, client, acctID)
 	if err != nil {
@@ -246,7 +314,10 @@ func previewShareVideo(ctx context.Context, deps Deps, uid int, req videoPrepare
 	if err != nil {
 		return videoPreviewResult{}, videoUpstreamMessage(err)
 	}
-	token := playtoken.SignShare(deps.PlaySecret, uid, acctID, source.shareID, source.fileID, playTokenTTL, time.Now())
+	token, err := playtoken.SignShare(deps.PlaySecret, uid, acctID, source.shareID, source.fileID, playTokenTTL, time.Now())
+	if err != nil {
+		return videoPreviewResult{}, err
+	}
 	out := videoPreviewResult{
 		StreamURL: "/api/share/stream/" + url.PathEscape(source.shareID) + "/" + url.PathEscape(source.fileID) + "?t=" + token,
 	}
@@ -293,15 +364,19 @@ func resolveVideoSource(ctx context.Context, deps Deps, uid int, req videoPrepar
 		deps.ShareSessions.put(uid, acctID, fav.ShareID, info.PassCodeToken, fav.PassCode, time.Now())
 		return videoSource{
 			shareID: fav.ShareID, fileID: fav.FileID,
-			token: info.PassCodeToken, owner: info.Owner, title: info.Title,
+			token: info.PassCodeToken, passCode: fav.PassCode,
+			owner: info.Owner, title: info.Title,
 			favorite: &fav,
 		}, nil
 	}
-	token, _, ok := deps.ShareSessions.get(uid, acctID, req.ShareID, time.Now())
+	token, passCode, ok := deps.ShareSessions.get(uid, acctID, req.ShareID, time.Now())
 	if !ok {
 		return videoSource{}, errSessionGone
 	}
-	return videoSource{shareID: req.ShareID, fileID: req.FileID, token: token}, nil
+	return videoSource{
+		shareID: req.ShareID, fileID: req.FileID,
+		token: token, passCode: passCode,
+	}, nil
 }
 
 // videoUpstreamMessage turns the upstream errors a person can act on into
@@ -511,13 +586,28 @@ func waitTask(ctx context.Context, client *pikpak.Client, taskID string) error {
 	return nil
 }
 
-func signVideoResult(deps Deps, uid int, file pikpak.File) videoPrepareResult {
-	// TODO(多账号): Task 8 接入真实账号
-	token := playtoken.Sign(deps.PlaySecret, uid, "", file.ID, playTokenTTL, time.Now())
+// signVideoResult signs the proxy URL under the copy's own account: the
+// stream endpoint then spends exactly that account's session.
+func signVideoResult(deps Deps, uid int, accountID string, file pikpak.File) (videoPrepareResult, error) {
+	token, err := playtoken.Sign(deps.PlaySecret, uid, accountID, file.ID, playTokenTTL, time.Now())
+	if err != nil {
+		return videoPrepareResult{}, err
+	}
 	return videoPrepareResult{
 		FileID:    file.ID,
+		AccountID: accountID,
 		Name:      file.Name,
 		Size:      file.Size,
 		StreamURL: "/api/stream/" + url.PathEscape(file.ID) + "?t=" + token,
+	}, nil
+}
+
+// findFileByID returns the file with the given id from one folder listing.
+func findFileByID(files []pikpak.File, id string) (pikpak.File, bool) {
+	for _, f := range files {
+		if f.ID == id {
+			return f, true
+		}
 	}
+	return pikpak.File{}, false
 }

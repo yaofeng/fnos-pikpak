@@ -115,10 +115,15 @@ func TestAuthDeviceFlowBindsAndLogsOut(t *testing.T) {
 
 	waitFlowStatus(t, h, start.ID, "bound")
 
-	// The credential is persisted, encrypted, and usable.
-	cred, err := st.GetCredential(t.Context(), 1000)
+	// The credential is persisted, encrypted, and usable, stored under the
+	// account row the bind created.
+	accounts, err := st.ListAccounts(t.Context(), 1000)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("ListAccounts = %+v, %v", accounts, err)
+	}
+	cred, err := st.GetAccountCredential(t.Context(), 1000, accounts[0].ID)
 	if err != nil {
-		t.Fatalf("GetCredential: %v", err)
+		t.Fatalf("GetAccountCredential: %v", err)
 	}
 	if cred.AccessToken != "at-1" || cred.RefreshToken != "rt-1" {
 		t.Fatalf("cred = %+v", cred)
@@ -334,7 +339,7 @@ func TestLogoutCancelsPendingFlow(t *testing.T) {
 	if flow["status"] != "cancelled" {
 		t.Fatalf("flow status after logout = %v", flow["status"])
 	}
-	if _, err := st.GetCredential(t.Context(), 1000); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.GetAccountCredential(t.Context(), 1000, flowRec.AccountID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("credential after cancelled flow: err=%v, want ErrNotFound", err)
 	}
 	_, me := getJSON(t, h, "/api/me", "1000")

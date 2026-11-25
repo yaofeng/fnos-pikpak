@@ -40,7 +40,7 @@ func (p *pikPakProbe) Run(ctx context.Context) probe.Result {
 	if !ok {
 		return probe.Result{Name: p.name, Status: probe.Skip, Detail: "没有飞牛用户上下文"}
 	}
-	client, err := p.sessions.ClientFor(ctx, uid)
+	client, err := p.sessions.ClientForAccount(ctx, uid, "")
 	if errors.Is(err, pikpak.ErrNotBound) {
 		return probe.Result{Name: p.name, Status: probe.Skip, Detail: "未绑定 PikPak 账号，请先在上方绑定"}
 	}

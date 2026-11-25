@@ -400,13 +400,6 @@ func (s *SessionStore) Client() *Client {
 	return s.client
 }
 
-// Get returns the session of the user's default account. Kept as a thin
-// wrapper until every caller knows about accounts; torn down with the rest of
-// the legacy surface.
-func (s *SessionStore) Get(ctx context.Context, uid int) (*Session, error) {
-	return s.GetAccountSession(ctx, uid, "")
-}
-
 // GetAccountSession returns the cached session for (uid, accountID), loading
 // it from the store on first use. An empty accountID resolves the user's
 // default account: the first active row in bind order, else the oldest row.
@@ -466,7 +459,7 @@ func (s *SessionStore) defaultAccountID(ctx context.Context, uid int) (string, e
 		return oldest, nil
 	}
 
-	cred, err := s.st.GetCredential(ctx, uid)
+	cred, err := s.st.GetAccountCredential(ctx, uid, "")
 	if errors.Is(err, store.ErrNotFound) {
 		return "", ErrNotBound
 	}
@@ -489,12 +482,6 @@ func (s *SessionStore) accountCredential(ctx context.Context, uid int, accountID
 		return store.Credential{}, err
 	}
 	return cred, nil
-}
-
-// ClientFor returns a Client bound to the user's default account. Kept as a
-// thin wrapper until every caller knows about accounts.
-func (s *SessionStore) ClientFor(ctx context.Context, uid int) (*Client, error) {
-	return s.ClientForAccount(ctx, uid, "")
 }
 
 // ClientForAccount returns a Client bound to one account's session, ready for
@@ -523,12 +510,6 @@ func (s *SessionStore) limiterFor(key string) *limiter {
 	return l
 }
 
-// Install caches a session created right after a successful device flow.
-// Kept as a wrapper until bind completion learns about accounts.
-func (s *SessionStore) Install(uid int, cred store.Credential) *Session {
-	return s.InstallAccount(uid, cred.AccountID, cred)
-}
-
 // InstallAccount caches a session created right after a successful device
 // flow for one account.
 func (s *SessionStore) InstallAccount(uid int, accountID string, cred store.Credential) *Session {
@@ -537,45 +518,6 @@ func (s *SessionStore) InstallAccount(uid int, accountID string, cred store.Cred
 	s.sessions[sessionKey(uid, accountID)] = sess
 	s.mu.Unlock()
 	return sess
-}
-
-// Drop forgets everything the user has bound: each account's session,
-// credential and pending flows, plus anything stored without an account row.
-// Kept as a wrapper until logout learns about accounts.
-func (s *SessionStore) Drop(ctx context.Context, uid int) error {
-	accounts, err := s.st.ListAccounts(ctx, uid)
-	if err != nil {
-		return err
-	}
-	for _, a := range accounts {
-		if err := s.DropAccount(ctx, uid, a.ID); err != nil {
-			return err
-		}
-	}
-
-	// Credentials and flows without an account row (binds completed before
-	// the routes grew account handling) are cleaned up wholesale. Sessions
-	// are disabled before the store writes — under sess.mu via disable, the
-	// same ordering as DropAccount — so an in-flight refresh cannot
-	// interleave and write the credential back.
-	s.mu.Lock()
-	prefix := sessionKey(uid, "")
-	var doomed []*Session
-	for key, sess := range s.sessions {
-		if strings.HasPrefix(key, prefix) {
-			doomed = append(doomed, sess)
-			delete(s.sessions, key)
-		}
-	}
-	for _, sess := range doomed {
-		sess.disable()
-	}
-	err = s.st.DeleteCredential(ctx, uid)
-	if err == nil {
-		err = s.st.CancelAccountFlows(ctx, uid, "")
-	}
-	s.mu.Unlock()
-	return err
 }
 
 // DropAccount forgets one account's session, deletes its stored credential
@@ -606,15 +548,16 @@ func (s *SessionStore) dropAccountCredential(ctx context.Context, uid int, accou
 }
 
 // HasAny reports whether the user holds any PikPak identity: an account row
-// or a stored credential. Store errors count as "nothing" — callers use this
-// to pick between UI states, not to gate writes.
+// or a stored credential under any account id (including the pre-account
+// placeholder row that credential-only users keep). Store errors count as
+// "nothing" — callers use this to pick between UI states, not to gate writes.
 func (s *SessionStore) HasAny(ctx context.Context, uid int) bool {
 	accounts, err := s.st.ListAccounts(ctx, uid)
 	if err == nil && len(accounts) > 0 {
 		return true
 	}
-	_, err = s.st.GetCredential(ctx, uid)
-	return err == nil
+	has, err := s.st.HasAnyCredential(ctx, uid)
+	return err == nil && has
 }
 
 // sessionClient copies the base client and pins it to the user's device id,

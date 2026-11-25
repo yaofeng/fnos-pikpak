@@ -31,7 +31,7 @@ func registerDiagRoutes(mux *http.ServeMux, deps Deps) {
 
 		bound := false
 		if deps.Sessions != nil {
-			if _, err := deps.Sessions.Get(ctx, id.UID); err == nil {
+			if _, err := deps.Sessions.ClientForAccount(ctx, id.UID, ""); err == nil {
 				bound = true
 			}
 		}

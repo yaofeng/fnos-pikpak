@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,10 +35,29 @@ func accountServer(t *testing.T, aboutCalls, vipCalls *int32) *httptest.Server {
 	}))
 }
 
+// testAccountID is the account row bindTestUser creates for a uid, so tests
+// that seed account-keyed state can name the same id.
+func testAccountID(uid int) string {
+	return "acct-" + strconv.Itoa(uid)
+}
+
+// bindTestUser binds one PikPak account to the uid: an account row plus its
+// stored credential. Every minting site now signs stream tokens with a real
+// account id, so a credential-only user would fail at mint time — tests bind
+// the real row instead of minting empty-account tokens.
 func bindTestUser(t *testing.T, st *store.Store, uid int) {
 	t.Helper()
+	if err := st.PutAccount(context.Background(), store.PikPakAccount{
+		ID:          testAccountID(uid),
+		UID:         uid,
+		DisplayName: "测试账号" + strconv.Itoa(uid),
+		Status:      "active",
+		BoundAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("PutAccount: %v", err)
+	}
 	if err := st.PutCredential(context.Background(), store.Credential{
-		UID: uid, AuthType: "oauth", ClientID: pikpak.DefaultClientID,
+		UID: uid, AccountID: testAccountID(uid), AuthType: "oauth", ClientID: pikpak.DefaultClientID,
 		AccessToken: "at", RefreshToken: "rt",
 		DeviceID:        "0123456789abcdef0123456789abcdef",
 		AccessExpiresAt: time.Now().Add(time.Hour),

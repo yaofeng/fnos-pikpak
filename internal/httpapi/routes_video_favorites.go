@@ -184,10 +184,11 @@ func writeVideoFavoriteError(w http.ResponseWriter, err error, fallback string) 
 }
 
 // markRestoredCopies sets Restored on the favourites whose copy from an earlier
-// 完整播放 still exists — in Pack From Shared, or the root for older accounts.
-// One listing answers for the whole page. The badge claims a copy exists, so
-// when the drive cannot be read it stays off: the stored id says where a copy
-// once was, not that it survived a later delete.
+// 完整播放 still exists — in any account's Pack From Shared, or the root for
+// older accounts. One parallel listing round answers for the whole page. The
+// badge claims a copy exists, so when the drives cannot be read it stays off:
+// the stored id says where a copy once was, not that it survived a later
+// delete.
 func markRestoredCopies(ctx context.Context, deps Deps, uid int, items []store.VideoFavorite) {
 	wanted := false
 	for _, fav := range items {
@@ -199,21 +200,12 @@ func markRestoredCopies(ctx context.Context, deps Deps, uid int, items []store.V
 	if !wanted {
 		return
 	}
-	client, err := deps.Sessions.ClientFor(ctx, uid)
-	if err != nil {
-		return
-	}
-	root, err := client.ListAllFiles(ctx, "")
-	if err != nil {
-		return
-	}
-	present := fileIDs(root)
-	if pack, ok := findFolder(root, packFromSharedName); ok {
-		files, err := client.ListAllFiles(ctx, pack.ID)
-		if err != nil {
-			return
+	present := map[string]bool{}
+	for _, listing := range packCopies(ctx, deps, uid) {
+		for id := range fileIDs(listing.Root) {
+			present[id] = true
 		}
-		for id := range fileIDs(files) {
+		for id := range fileIDs(listing.Pack) {
 			present[id] = true
 		}
 	}

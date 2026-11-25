@@ -20,7 +20,7 @@ func registerVideoRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
-		if _, err := deps.Sessions.ClientFor(r.Context(), id.UID); err != nil {
+		if _, err := deps.Sessions.ClientForAccount(r.Context(), id.UID, ""); err != nil {
 			writeVideoError(w, err)
 			return
 		}
@@ -103,6 +103,8 @@ func writeVideoError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "share_unavailable", err.Error())
 	case errors.Is(err, errReauth):
 		writeError(w, http.StatusUnauthorized, "pikpak_reauth_required", err.Error())
+	case errors.Is(err, errAllAccountsFailed):
+		writeError(w, http.StatusTooManyRequests, "all_accounts_failed", err.Error())
 	case errors.Is(err, errSpaceInsufficient), errors.Is(err, errUpstream), errors.Is(err, errSessionLoad),
 		errors.Is(err, errVideoNoLink):
 		writeError(w, http.StatusBadGateway, "video_failed", err.Error())

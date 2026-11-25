@@ -15,6 +15,11 @@ var (
 	// caller does not need to distinguish them.
 	ErrInvalid = errors.New("playtoken: invalid token")
 	ErrExpired = errors.New("playtoken: token expired")
+	// ErrEmptyAccount is what the minting functions answer when the caller
+	// has no account id. A token without one can never be spent — Verify
+	// rejects the legacy account-less formats — so minting fails fast
+	// instead of signing something unusable.
+	ErrEmptyAccount = errors.New("playtoken: account id is empty")
 )
 
 // Claims is what a stream URL carries: who may read, which file, until when.
@@ -39,19 +44,28 @@ func DeriveSecret(master []byte) []byte {
 }
 
 // Sign returns base64url(payload) "." base64url(HMAC-SHA256(secret, payload))
-// where payload is "uid|acct|file|unix_expiry".
-func Sign(secret []byte, uid int, accountID, fileID string, ttl time.Duration, now time.Time) string {
+// where payload is "uid|acct|file|unix_expiry". accountID must be a real
+// account id: an empty one is a caller bug (ErrEmptyAccount), not something
+// to sign.
+func Sign(secret []byte, uid int, accountID, fileID string, ttl time.Duration, now time.Time) (string, error) {
+	if accountID == "" {
+		return "", ErrEmptyAccount
+	}
 	payload := strconv.Itoa(uid) + "|" + accountID + "|" + fileID + "|" +
 		strconv.FormatInt(now.Add(ttl).Unix(), 10)
-	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload)
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload), nil
 }
 
 // SignShare signs a file inside a share. The payload starts with "s" so it can
-// never be confused with a drive-file token.
-func SignShare(secret []byte, uid int, accountID, shareID, fileID string, ttl time.Duration, now time.Time) string {
+// never be confused with a drive-file token. Like Sign, it refuses an empty
+// account id.
+func SignShare(secret []byte, uid int, accountID, shareID, fileID string, ttl time.Duration, now time.Time) (string, error) {
+	if accountID == "" {
+		return "", ErrEmptyAccount
+	}
 	payload := "s|" + strconv.Itoa(uid) + "|" + accountID + "|" + shareID + "|" + fileID + "|" +
 		strconv.FormatInt(now.Add(ttl).Unix(), 10)
-	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload)
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(secret, payload), nil
 }
 
 func sign(secret []byte, payload string) string {

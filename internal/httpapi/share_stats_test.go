@@ -128,7 +128,7 @@ func TestShareTotalsCountsEveryFolderAndPage(t *testing.T) {
 	up := newStatsUpstream(t)
 	deps, _ := newAuthTestDeps(t, up.srv.URL)
 	bindTestUser(t, deps.Store, 1000)
-	client, err := deps.Sessions.ClientFor(context.Background(), 1000)
+	client, err := deps.Sessions.ClientForAccount(context.Background(), 1000, "")
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}

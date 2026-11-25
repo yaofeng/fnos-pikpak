@@ -56,7 +56,7 @@ func (deps Deps) resolveAccount(ctx context.Context, uid int, raw string) (store
 	if def != nil {
 		return *def, nil
 	}
-	cred, err := deps.Store.GetCredential(ctx, uid)
+	cred, err := deps.Store.GetAccountCredential(ctx, uid, "")
 	if errors.Is(err, store.ErrNotFound) {
 		return store.PikPakAccount{}, pikpak.ErrNotBound
 	}

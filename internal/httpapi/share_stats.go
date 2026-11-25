@@ -166,7 +166,7 @@ func startShareStats(deps Deps, uid int, fav store.ShareFavorite) {
 		defer runningShareStats.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), shareStatsJobTimeout)
 		defer cancel()
-		client, err := deps.Sessions.ClientFor(ctx, uid)
+		client, err := deps.Sessions.ClientForAccount(ctx, uid, "")
 		if err != nil {
 			return
 		}

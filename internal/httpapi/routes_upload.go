@@ -112,7 +112,7 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		id, _ := fnos.IdentityFrom(r.Context())
 		bound := false
-		if _, err := deps.Sessions.Get(r.Context(), id.UID); err == nil {
+		if _, err := deps.Sessions.ClientForAccount(r.Context(), id.UID, ""); err == nil {
 			bound = true
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -170,7 +170,7 @@ func registerUploadRoutes(mux *http.ServeMux, deps Deps) {
 			path = resolved
 		}
 
-		client, err := deps.Sessions.ClientFor(r.Context(), id.UID)
+		client, err := deps.Sessions.ClientForAccount(r.Context(), id.UID, "")
 		if errors.Is(err, pikpak.ErrNotBound) {
 			writeError(w, http.StatusUnauthorized, "not_bound", "请先绑定 PikPak 账号")
 			return

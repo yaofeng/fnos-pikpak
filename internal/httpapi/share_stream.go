@@ -46,7 +46,9 @@ func (deps Deps) shareMedia(attachment bool) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "share_session_missing", "分享会话已过期，请重新打开分享")
 			return
 		}
-		client, err := deps.Sessions.ClientFor(r.Context(), claims.UID)
+		// The token carries the account that opened the share; the stream is
+		// fetched through that account's session, not the default one.
+		client, err := deps.Sessions.ClientForAccount(r.Context(), claims.UID, claims.AccountID)
 		if err != nil {
 			writeUpstreamError(w, err)
 			return

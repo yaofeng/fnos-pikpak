@@ -18,7 +18,7 @@ const playTokenTTL = 6 * time.Hour
 func registerPlayRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/play/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := fnos.IdentityFrom(r.Context())
-		client, _, ok := accountClient(w, r, deps)
+		client, acct, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
@@ -31,8 +31,13 @@ func registerPlayRoutes(mux *http.ServeMux, deps Deps) {
 			writeError(w, http.StatusBadRequest, "not_a_file", "文件夹不能播放")
 			return
 		}
-		// TODO(多账号): Task 8 接入真实账号
-		token := playtoken.Sign(deps.PlaySecret, id.UID, "", file.ID, playTokenTTL, time.Now())
+		// The token names the account the file was found on, so the stream
+		// spends that account's session and no other's.
+		token, err := playtoken.Sign(deps.PlaySecret, id.UID, acct.ID, file.ID, playTokenTTL, time.Now())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "无法签发播放链接")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"file_id":    file.ID,
 			"name":       file.Name,
@@ -79,7 +84,7 @@ func (deps Deps) streamFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if playMode(r.Context(), deps, claims.UID) == "redirect" {
-		url, err := deps.linkFor(r.Context(), claims.UID, claims.FileID, false)
+		url, err := deps.linkFor(r.Context(), claims.UID, claims.AccountID, claims.FileID, false)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "pikpak_error", probe.Redact(err.Error()))
 			return
@@ -87,5 +92,5 @@ func (deps Deps) streamFile(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
-	deps.proxyStream(w, r, claims.UID, claims.FileID)
+	deps.proxyStream(w, r, claims.UID, claims.AccountID, claims.FileID)
 }

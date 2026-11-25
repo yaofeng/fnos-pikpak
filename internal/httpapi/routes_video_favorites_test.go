@@ -159,7 +159,7 @@ func TestARestoredCopyInTheTrashLosesItsBadge(t *testing.T) {
 		t.Fatalf("add status = %d body=%v", rec.Code, body)
 	}
 	id := int64(body["id"].(float64))
-	if err := deps.Store.SetVideoFavoriteRestoredID(context.Background(), 1000, id, "copy-1"); err != nil {
+	if err := deps.Store.SetVideoFavoriteRestoredID(context.Background(), 1000, id, "copy-1", testAccountID(1000)); err != nil {
 		t.Fatalf("remember the copy: %v", err)
 	}
 
@@ -186,7 +186,7 @@ func TestTheRestoredBadgeIsNotAssumedWhenTheDriveCannotBeRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddVideoFavorite: %v", err)
 	}
-	if err := deps.Store.SetVideoFavoriteRestoredID(ctx, 1000, fav.ID, "copy-1"); err != nil {
+	if err := deps.Store.SetVideoFavoriteRestoredID(ctx, 1000, fav.ID, "copy-1", testAccountID(1000)); err != nil {
 		t.Fatalf("remember the copy: %v", err)
 	}
 
@@ -198,5 +198,36 @@ func TestTheRestoredBadgeIsNotAssumedWhenTheDriveCannotBeRead(t *testing.T) {
 	first, _ := items[0].(map[string]any)
 	if first["restored"] != false {
 		t.Fatalf("restored = %v, want false when the drive cannot be read", first["restored"])
+	}
+}
+
+// ✅ 徽章跨账号成立：副本只存在于第二个账号的 Pack From Shared 时，列表也
+// 能凭保存的文件 id 在那个账号的网盘里认出它。
+func TestMarkRestoredUsesAnyAccount(t *testing.T) {
+	deps, h, _, upB := newMultiVideoEnv(t, nil, func(up *videoUpstream) {
+		up.set("", folderEntry("pack-b", packFromSharedName))
+		up.set("pack-b", fileEntry("df-b", "new.mp4", 50, "2026-11-20T10:00:00Z"))
+	})
+	fav, err := deps.Store.AddVideoFavorite(t.Context(), 1000, store.VideoFavorite{
+		ShareID: "VOabc123", FileID: "sf2", Name: "new.mp4", Size: 50,
+	})
+	if err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df-b", acctB); err != nil {
+		t.Fatalf("remember the copy: %v", err)
+	}
+
+	_, list := getJSON(t, h, "/api/video-favorites", "1000")
+	items, _ := list["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", list["items"])
+	}
+	first, _ := items[0].(map[string]any)
+	if first["restored"] != true {
+		t.Fatalf("restored = %v, want true via acct-b's copy", first["restored"])
+	}
+	if _, _, restores, _ := upB.snapshot(); restores != 0 {
+		t.Fatalf("marking restored must not restore anything (acct-b restores=%d)", restores)
 	}
 }

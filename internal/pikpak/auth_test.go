@@ -198,9 +198,9 @@ func TestSessionSingleFlightRefresh(t *testing.T) {
 	}
 
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
-	sess, err := ss.Get(ctx, 1000)
+	sess, err := ss.GetAccountSession(ctx, 1000, "")
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("GetAccountSession: %v", err)
 	}
 
 	var wg sync.WaitGroup
@@ -233,9 +233,9 @@ func TestSessionSingleFlightRefresh(t *testing.T) {
 		t.Fatalf("refresh calls = %d, want 1", n)
 	}
 
-	cred, err := st.GetCredential(ctx, 1000)
+	cred, err := st.GetAccountCredential(ctx, 1000, "")
 	if err != nil {
-		t.Fatalf("GetCredential: %v", err)
+		t.Fatalf("GetAccountCredential: %v", err)
 	}
 	if cred.RefreshToken != "rt-new" || cred.AccessToken != "at-new" {
 		t.Fatalf("persisted cred = %+v", cred)
@@ -262,9 +262,9 @@ func TestSessionInvalidGrantRequiresReauth(t *testing.T) {
 	}
 
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
-	sess, err := ss.Get(ctx, 1000)
+	sess, err := ss.GetAccountSession(ctx, 1000, "")
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("GetAccountSession: %v", err)
 	}
 
 	if _, err := sess.Token(ctx); !errors.Is(err, ErrReauthRequired) {
@@ -291,15 +291,15 @@ func TestSessionInvalidGrantRequiresReauth(t *testing.T) {
 func TestSessionStoreNotBound(t *testing.T) {
 	st := testStore(t)
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://127.0.0.1:1"}))
-	if _, err := ss.Get(context.Background(), 42); !errors.Is(err, ErrNotBound) {
-		t.Fatalf("Get err = %v, want ErrNotBound", err)
+	if _, err := ss.GetAccountSession(context.Background(), 42, ""); !errors.Is(err, ErrNotBound) {
+		t.Fatalf("GetAccountSession err = %v, want ErrNotBound", err)
 	}
-	if _, err := ss.ClientFor(context.Background(), 42); !errors.Is(err, ErrNotBound) {
-		t.Fatalf("ClientFor err = %v, want ErrNotBound", err)
+	if _, err := ss.ClientForAccount(context.Background(), 42, ""); !errors.Is(err, ErrNotBound) {
+		t.Fatalf("ClientForAccount err = %v, want ErrNotBound", err)
 	}
 }
 
-func TestClientForBindsSession(t *testing.T) {
+func TestClientForAccountBindsSession(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
 	if err := st.PutCredential(ctx, store.Credential{
@@ -312,9 +312,9 @@ func TestClientForBindsSession(t *testing.T) {
 	}
 
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://user.test", BaseDrive: "http://drive.test", DeviceID: "base"}))
-	c, err := ss.ClientFor(ctx, 7)
+	c, err := ss.ClientForAccount(ctx, 7, "")
 	if err != nil {
-		t.Fatalf("ClientFor: %v", err)
+		t.Fatalf("ClientForAccount: %v", err)
 	}
 	if c.Session == nil {
 		t.Fatal("Session is nil")
@@ -348,9 +348,9 @@ func TestSessionForceRefresh(t *testing.T) {
 	}
 
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
-	sess, err := ss.Get(ctx, 1000)
+	sess, err := ss.GetAccountSession(ctx, 1000, "")
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("GetAccountSession: %v", err)
 	}
 	if tok, _ := sess.Token(ctx); tok != "at-old" {
 		t.Fatalf("initial token = %q", tok)
@@ -372,7 +372,7 @@ func TestSessionForceRefresh(t *testing.T) {
 	}
 }
 
-func TestClientForReusesPerUserLimiter(t *testing.T) {
+func TestClientForAccountReusesPerUserLimiter(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
 	for _, uid := range []int{7, 8} {
@@ -387,15 +387,15 @@ func TestClientForReusesPerUserLimiter(t *testing.T) {
 	}
 
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: "http://user.test", BaseDrive: "http://drive.test"}))
-	c1, err := ss.ClientFor(ctx, 7)
+	c1, err := ss.ClientForAccount(ctx, 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c2, err := ss.ClientFor(ctx, 7)
+	c2, err := ss.ClientForAccount(ctx, 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c3, err := ss.ClientFor(ctx, 8)
+	c3, err := ss.ClientForAccount(ctx, 8, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestClientForReusesPerUserLimiter(t *testing.T) {
 	}
 }
 
-func TestDropStopsInFlightRefresh(t *testing.T) {
+func TestDropAccountStopsInFlightRefresh(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -421,8 +421,17 @@ func TestDropStopsInFlightRefresh(t *testing.T) {
 
 	st := testStore(t)
 	ctx := context.Background()
+	acct, err := store.NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	if err := st.PutAccount(ctx, store.PikPakAccount{
+		ID: acct, UID: 1000, DisplayName: "A", Status: "active", BoundAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("PutAccount: %v", err)
+	}
 	if err := st.PutCredential(ctx, store.Credential{
-		UID: 1000, AuthType: "oauth", ClientID: DefaultClientID,
+		UID: 1000, AccountID: acct, AuthType: "oauth", ClientID: DefaultClientID,
 		AccessToken: "at-old", RefreshToken: "rt-old",
 		DeviceID:        "0123456789abcdef0123456789abcdef",
 		AccessExpiresAt: time.Now().Add(-time.Minute),
@@ -431,9 +440,9 @@ func TestDropStopsInFlightRefresh(t *testing.T) {
 	}
 
 	ss := NewSessionStore(st, NewClient(ClientOptions{BaseUser: srv.URL}))
-	sess, err := ss.Get(ctx, 1000)
+	sess, err := ss.GetAccountSession(ctx, 1000, acct)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("GetAccountSession: %v", err)
 	}
 
 	done := make(chan error, 1)
@@ -443,17 +452,17 @@ func TestDropStopsInFlightRefresh(t *testing.T) {
 	}()
 	<-started
 
-	if err := ss.Drop(ctx, 1000); err != nil {
-		t.Fatalf("Drop: %v", err)
+	if err := ss.DropAccount(ctx, 1000, acct); err != nil {
+		t.Fatalf("DropAccount: %v", err)
 	}
 	close(release)
 	if err := <-done; err == nil {
-		t.Fatal("in-flight refresh should fail after Drop")
+		t.Fatal("in-flight refresh should fail after DropAccount")
 	}
 
 	// The refresh response must not resurrect the credential.
-	if _, err := st.GetCredential(ctx, 1000); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("credential after Drop: err=%v, want ErrNotFound", err)
+	if _, err := st.GetAccountCredential(ctx, 1000, acct); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("credential after DropAccount: err=%v, want ErrNotFound", err)
 	}
 }
 
@@ -532,9 +541,9 @@ func TestSessionStoreTwoAccountsIsolated(t *testing.T) {
 	if tok, err := cb2.Session.Token(ctx); err != nil || tok != "at-b" {
 		t.Fatalf("account b token after drop = %q, %v", tok, err)
 	}
-	got, err := st.GetCredential(ctx, uid)
+	got, err := st.GetAccountCredential(ctx, uid, acctB)
 	if err != nil {
-		t.Fatalf("GetCredential after drop: %v", err)
+		t.Fatalf("GetAccountCredential after drop: %v", err)
 	}
 	if got.AccountID != acctB || got.RefreshToken != "rt-b" {
 		t.Fatalf("surviving credential = %+v, want account b untouched", got)
@@ -586,7 +595,7 @@ func TestDropAccountRemovesItsCredentialRow(t *testing.T) {
 	if _, err := sess.Token(ctx); !errors.Is(err, ErrNotBound) {
 		t.Fatalf("dropped session Token = %v, want ErrNotBound", err)
 	}
-	if _, err := st.GetCredential(ctx, uid); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.GetAccountCredential(ctx, uid, acct); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("credential after DropAccount = %v, want ErrNotFound", err)
 	}
 }

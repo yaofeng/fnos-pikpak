@@ -189,15 +189,6 @@ func TestCredentialPerAccount(t *testing.T) {
 		t.Fatalf("foreign uid err = %v, want ErrNotFound", err)
 	}
 
-	// The legacy single-credential accessor still resolves the uid's row.
-	cred, err := s.GetCredential(ctx, 1001)
-	if err != nil {
-		t.Fatalf("GetCredential: %v", err)
-	}
-	if cred.AccessToken != "tok-a" && cred.AccessToken != "tok-b" {
-		t.Fatalf("GetCredential token = %q, want one of the two accounts", cred.AccessToken)
-	}
-
 	// The per-account delete removes only its own row.
 	if err := s.DeleteAccountCredential(ctx, 1001, aID); err != nil {
 		t.Fatalf("DeleteAccountCredential: %v", err)
@@ -230,18 +221,13 @@ func TestCredentialPerAccount(t *testing.T) {
 		t.Fatalf("placeholder after delete err = %v, want ErrNotFound", err)
 	}
 
-	if err := s.DeleteCredential(ctx, 1001); err != nil {
-		t.Fatalf("DeleteCredential: %v", err)
+	// Each account's row goes only when its own delete runs; the wholesale
+	// per-uid delete no longer exists.
+	if err := s.DeleteAccountCredential(ctx, 1001, bID); err != nil {
+		t.Fatalf("DeleteAccountCredential: %v", err)
 	}
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM credentials2 WHERE uid = 1001`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Fatalf("DeleteCredential left %d rows", n)
-	}
-	if _, err := s.GetCredential(ctx, 1001); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("after delete err = %v, want ErrNotFound", err)
+	if _, err := s.GetAccountCredential(ctx, 1001, bID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("b after delete err = %v, want ErrNotFound", err)
 	}
 }
 

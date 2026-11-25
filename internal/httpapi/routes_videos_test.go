@@ -283,7 +283,7 @@ func newVideoEnv(t *testing.T, tweak func(up *videoUpstream)) (Deps, http.Handle
 	bindTestUser(t, st, 1000)
 	deps.ShareSessions = newShareSessions()
 	deps.Videos = newVideoJobs()
-	deps.ShareSessions.put(1000, "", "VOabc123", "tok-1", "", time.Now())
+	deps.ShareSessions.put(1000, testAccountID(1000), "VOabc123", "tok-1", "", time.Now())
 	return deps, NewMux(deps), up
 }
 
@@ -594,7 +594,7 @@ func TestPrepareReusesTheRestoredCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("favorite: %v", err)
 	}
-	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df1"); err != nil {
+	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df1", testAccountID(1000)); err != nil {
 		t.Fatalf("restored id: %v", err)
 	}
 
@@ -660,7 +660,7 @@ func TestVideoFavoritesMarkRestoredCopies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("favorite: %v", err)
 	}
-	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df1"); err != nil {
+	if err := deps.Store.SetVideoFavoriteRestoredID(t.Context(), 1000, fav.ID, "df1", testAccountID(1000)); err != nil {
 		t.Fatalf("restored id: %v", err)
 	}
 

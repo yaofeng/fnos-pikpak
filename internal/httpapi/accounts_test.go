@@ -22,13 +22,21 @@ import (
 // id was reused" is observable.
 func bindAccount(t *testing.T, st *store.Store, uid int, id, sub, status string) store.PikPakAccount {
 	t.Helper()
+	return bindAccountAt(t, st, uid, id, sub, status, time.Now().UTC())
+}
+
+// bindAccountAt is bindAccount with the bind time pinned, so tests that need
+// a deterministic bind order — the default account is the first active row —
+// get one.
+func bindAccountAt(t *testing.T, st *store.Store, uid int, id, sub, status string, boundAt time.Time) store.PikPakAccount {
+	t.Helper()
 	acct := store.PikPakAccount{
 		ID:          id,
 		UID:         uid,
 		PikPakSub:   sub,
 		DisplayName: "账号" + id,
 		Status:      status,
-		BoundAt:     time.Now().UTC(),
+		BoundAt:     boundAt,
 	}
 	if err := st.PutAccount(context.Background(), acct); err != nil {
 		t.Fatalf("PutAccount %s: %v", id, err)

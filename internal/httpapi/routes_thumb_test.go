@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // thumbUpstream serves one drive file with a thumbnail and one share whose
@@ -184,5 +185,50 @@ func TestThumbOpensAPublicShareWithoutACode(t *testing.T) {
 	thumb := thumbGet(t, h, "/api/thumb?share_id=PUBLIC01&file_id=sf9", "1000")
 	if thumb.Code != http.StatusOK || thumb.Body.String() != "JPEG" {
 		t.Fatalf("thumb: status=%d body=%s", thumb.Code, thumb.Body.String())
+	}
+}
+
+// ?account=b 必须打到 b 的上游，并且缩略图缓存不能把一个账号的图片递给另
+// 一个账号的请求：同样的 file_id，两个账号看到的可能是不同的文件。
+func TestThumbFollowsAccountParam(t *testing.T) {
+	images := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/a.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("A-JPEG"))
+		case "/b.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("B-JPEG"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(images.Close)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		thumb := images.URL + "/a.jpg"
+		if r.Header.Get("X-Device-Id") == testDeviceID(acctB) {
+			thumb = images.URL + "/b.jpg"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "f1", "name": "a.jpg", "kind": "drive#file", "size": "9",
+			"thumbnail_link": thumb,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	base := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	bindAccountAt(t, st, 1000, acctA, "sub-a", "active", base)
+	bindAccountAt(t, st, 1000, acctB, "sub-b", "active", base.Add(time.Minute))
+	h := NewMux(deps)
+
+	aThumb := thumbGet(t, h, "/api/thumb?file_id=f1", "1000")
+	if aThumb.Code != http.StatusOK || aThumb.Body.String() != "A-JPEG" {
+		t.Fatalf("default thumb: status=%d body=%q, want acct-a's image", aThumb.Code, aThumb.Body.String())
+	}
+	bThumb := thumbGet(t, h, "/api/thumb?file_id=f1&account=acct-b", "1000")
+	if bThumb.Code != http.StatusOK || bThumb.Body.String() != "B-JPEG" {
+		t.Fatalf("account=b thumb: status=%d body=%q, want acct-b's own image (cache must not leak across accounts)", bThumb.Code, bThumb.Body.String())
 	}
 }

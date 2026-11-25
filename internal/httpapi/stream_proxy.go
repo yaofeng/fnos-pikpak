@@ -20,8 +20,10 @@ type cachedLink struct {
 	expires time.Time
 }
 
-// linkCache remembers signed download URLs per user and file so a seek-heavy
-// video does not ask PikPak for a fresh link on every range request.
+// linkCache remembers signed download URLs per user, account and file so a
+// seek-heavy video does not ask PikPak for a fresh link on every range
+// request. The account is part of the key: the same file id on two accounts
+// is two different files with two different signed URLs.
 type linkCache struct {
 	mu    sync.Mutex
 	ttl   time.Duration
@@ -35,8 +37,8 @@ func newLinkCache(ttl time.Duration) *linkCache {
 	return &linkCache{ttl: ttl, items: map[string]cachedLink{}}
 }
 
-func (c *linkCache) key(uid int, fileID string) string {
-	return strconv.Itoa(uid) + "|" + fileID
+func (c *linkCache) key(uid int, accountID, fileID string) string {
+	return strconv.Itoa(uid) + "|" + accountID + "|" + fileID
 }
 
 func (c *linkCache) get(key string, now time.Time) (string, bool) {
@@ -61,15 +63,16 @@ func (c *linkCache) drop(key string) {
 	c.mu.Unlock()
 }
 
-// linkFor returns a signed URL, using the cache unless refresh is set.
-func (deps Deps) linkFor(ctx context.Context, uid int, fileID string, refresh bool) (string, error) {
-	key := deps.Links.key(uid, fileID)
+// linkFor returns a signed URL, using the cache unless refresh is set. The
+// URL is fetched through the named account's session.
+func (deps Deps) linkFor(ctx context.Context, uid int, accountID, fileID string, refresh bool) (string, error) {
+	key := deps.Links.key(uid, accountID, fileID)
 	if !refresh {
 		if url, ok := deps.Links.get(key, time.Now()); ok {
 			return url, nil
 		}
 	}
-	client, err := deps.Sessions.ClientFor(ctx, uid)
+	client, err := deps.Sessions.ClientForAccount(ctx, uid, accountID)
 	if err != nil {
 		return "", err
 	}
@@ -86,8 +89,8 @@ func (deps Deps) linkFor(ctx context.Context, uid int, fileID string, refresh bo
 
 // proxyStream relays the media with Range semantics intact: PikPak's CDN does
 // the seeking, and the signed URL never reaches the browser.
-func (deps Deps) proxyStream(w http.ResponseWriter, r *http.Request, uid int, fileID string) {
-	url, err := deps.linkFor(r.Context(), uid, fileID, false)
+func (deps Deps) proxyStream(w http.ResponseWriter, r *http.Request, uid int, accountID, fileID string) {
+	url, err := deps.linkFor(r.Context(), uid, accountID, fileID, false)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -101,8 +104,8 @@ func (deps Deps) proxyStream(w http.ResponseWriter, r *http.Request, uid int, fi
 		// The signature expired: drop it, ask for a new one, retry once.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
 		resp.Body.Close()
-		deps.Links.drop(deps.Links.key(uid, fileID))
-		url, err = deps.linkFor(r.Context(), uid, fileID, true)
+		deps.Links.drop(deps.Links.key(uid, accountID, fileID))
+		url, err = deps.linkFor(r.Context(), uid, accountID, fileID, true)
 		if err != nil {
 			writeUpstreamError(w, err)
 			return

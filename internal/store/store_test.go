@@ -73,7 +73,7 @@ func TestCredentialRoundTrip(t *testing.T) {
 	if err := s.PutCredential(ctx, sampleCredential(1000, "first")); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	got, err := s.GetCredential(ctx, 1000)
+	got, err := s.GetAccountCredential(ctx, 1000, "")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestCredentialRoundTrip(t *testing.T) {
 	if err := s.PutCredential(ctx, sampleCredential(1000, "second")); err != nil {
 		t.Fatalf("put 2: %v", err)
 	}
-	got, _ = s.GetCredential(ctx, 1000)
+	got, _ = s.GetAccountCredential(ctx, 1000, "")
 	if got.AccessToken != "second" {
 		t.Fatalf("token = %q", got.AccessToken)
 	}
@@ -98,13 +98,13 @@ func TestCredentialIsolation(t *testing.T) {
 	_ = s.PutCredential(ctx, sampleCredential(1000, "a"))
 	_ = s.PutCredential(ctx, sampleCredential(1001, "b"))
 
-	a, _ := s.GetCredential(ctx, 1000)
-	b, _ := s.GetCredential(ctx, 1001)
+	a, _ := s.GetAccountCredential(ctx, 1000, "")
+	b, _ := s.GetAccountCredential(ctx, 1001, "")
 	if a.AccessToken != "a" || b.AccessToken != "b" {
 		t.Fatalf("a=%q b=%q", a.AccessToken, b.AccessToken)
 	}
 
-	if _, err := s.GetCredential(ctx, 2000); err == nil {
+	if _, err := s.GetAccountCredential(ctx, 2000, ""); err == nil {
 		t.Fatal("missing uid returned a credential")
 	}
 }
@@ -294,7 +294,7 @@ func TestDataSurvivesReopen(t *testing.T) {
 	}
 	defer s2.Close()
 
-	got, err := s2.GetCredential(ctx, 1000)
+	got, err := s2.GetAccountCredential(ctx, 1000, "")
 	if err != nil || got.AccessToken != "persisted" {
 		t.Fatalf("got %+v err %v", got, err)
 	}
@@ -336,19 +336,35 @@ func TestAuthFlowRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDeleteCredential(t *testing.T) {
+func TestDeleteAccountCredential(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
 	if err := s.PutCredential(ctx, Credential{UID: 1, AuthType: "oauth", ClientID: "c", AccessToken: "a", RefreshToken: "r", DeviceID: "d", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("put: %v", err)
+		t.Fatalf("put placeholder: %v", err)
 	}
-	if err := s.DeleteCredential(ctx, 1); err != nil {
+	acct, err := NewAccountID()
+	if err != nil {
+		t.Fatalf("NewAccountID: %v", err)
+	}
+	acctCred := sampleCredential(1, "acct")
+	acctCred.AccountID = acct
+	if err := s.PutCredential(ctx, acctCred); err != nil {
+		t.Fatalf("put account row: %v", err)
+	}
+
+	// The empty account id deletes exactly the placeholder row; the sibling
+	// account's credential stays.
+	if err := s.DeleteAccountCredential(ctx, 1, ""); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := s.GetCredential(ctx, 1); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("after delete err = %v, want ErrNotFound", err)
+	if _, err := s.GetAccountCredential(ctx, 1, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("placeholder after delete err = %v, want ErrNotFound", err)
 	}
-	if err := s.DeleteCredential(ctx, 1); err != nil {
+	if _, err := s.GetAccountCredential(ctx, 1, acct); err != nil {
+		t.Fatalf("account credential after placeholder delete: %v", err)
+	}
+	// Deleting a missing row is not an error.
+	if err := s.DeleteAccountCredential(ctx, 1, ""); err != nil {
 		t.Fatalf("delete missing: %v", err)
 	}
 }

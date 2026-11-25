@@ -249,22 +249,6 @@ ON CONFLICT(account_id) DO UPDATE SET
 	return err
 }
 
-// GetCredential returns the uid's current credential. It predates
-// multi-account support: callers that know their account id should read the
-// credential through the account instead.
-func (s *Store) GetCredential(ctx context.Context, uid int) (Credential, error) {
-	var key string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT account_id FROM credentials2 WHERE uid = ? LIMIT 1`, uid).Scan(&key)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Credential{}, ErrNotFound
-	}
-	if err != nil {
-		return Credential{}, err
-	}
-	return s.readCredential(ctx, key)
-}
-
 // GetAccountCredential returns one account's stored credential. An empty
 // accountID selects the pre-account placeholder row (see credentialKey).
 // The uid must match the row's owner.
@@ -277,6 +261,18 @@ func (s *Store) GetAccountCredential(ctx context.Context, uid int, accountID str
 		return Credential{}, ErrNotFound
 	}
 	return c, nil
+}
+
+// HasAnyCredential reports whether the uid holds at least one credential row,
+// under any account id. It answers "is this user bound at all" without having
+// to name a specific account.
+func (s *Store) HasAnyCredential(ctx context.Context, uid int) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM credentials2 WHERE uid = ?`, uid).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // readCredential loads and unseals the credentials2 row with the given
@@ -393,14 +389,6 @@ func parseTime(s string) time.Time {
 		return time.Time{}
 	}
 	return t
-}
-
-// DeleteCredential unbinds a user's PikPak sessions: every credentials2 row of
-// the uid goes, however many accounts it has. Missing rows are not an error:
-// the caller's intent (no credential) already holds.
-func (s *Store) DeleteCredential(ctx context.Context, uid int) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM credentials2 WHERE uid = ?`, uid)
-	return err
 }
 
 // DeleteAccountCredential removes one account's stored credential. An empty

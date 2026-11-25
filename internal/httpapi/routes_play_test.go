@@ -102,7 +102,10 @@ func TestStreamRejectsExpiredToken(t *testing.T) {
 	env := newPlayEnv(t)
 	h := NewMux(env.deps)
 
-	token := playtoken.Sign(env.deps.PlaySecret, 1000, "", "f1", -time.Hour, time.Now())
+	token, err := playtoken.Sign(env.deps.PlaySecret, 1000, testAccountID(1000), "f1", -time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/stream/f1?t="+token, nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -116,7 +119,10 @@ func TestStreamRejectsTokenForAnotherFile(t *testing.T) {
 	env := newPlayEnv(t)
 	h := NewMux(env.deps)
 
-	token := playtoken.Sign(env.deps.PlaySecret, 1000, "", "f1", time.Hour, time.Now())
+	token, err := playtoken.Sign(env.deps.PlaySecret, 1000, testAccountID(1000), "f1", time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/stream/f2?t="+token, nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -130,7 +136,10 @@ func TestStreamAcceptsValidTokenWithoutIdentityHeader(t *testing.T) {
 	env := newPlayEnv(t)
 	h := NewMux(env.deps)
 
-	token := playtoken.Sign(env.deps.PlaySecret, 1000, "", "f1", time.Hour, time.Now())
+	token, err := playtoken.Sign(env.deps.PlaySecret, 1000, testAccountID(1000), "f1", time.Hour, time.Now())
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/stream/f1?t="+token, nil)
 	// No X-Trim-Userid: the signed token is the identity for this route.
 	rec := httptest.NewRecorder()
