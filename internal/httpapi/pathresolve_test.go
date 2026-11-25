@@ -79,7 +79,7 @@ func resolveTestClient(t *testing.T, srvURL string) namedClient {
 // plus a prefix decoy and a file sharing the folder's name.
 func movieTree() map[string]string {
 	return map[string]string{
-		"":      `{"files":[` +
+		"": `{"files":[` +
 			`{"id":"root1","kind":"drive#folder","name":"电影"},` +
 			`{"id":"decoy","kind":"drive#folder","name":"电影续"},` +
 			`{"id":"filetrap","kind":"drive#file","name":"电影"}]}`,
@@ -138,7 +138,7 @@ func TestResolveFolderPathMissingSegment(t *testing.T) {
 func TestPathCacheKeyIncludesUIDAndSegments(t *testing.T) {
 	rec := &walkRecorder{}
 	srv := folderTreeServer(t, rec, map[string]string{
-		"":      `{"files":[` +
+		"": `{"files":[` +
 			`{"id":"slash","kind":"drive#folder","name":"a/b"},` +
 			`{"id":"dira","kind":"drive#folder","name":"a"}]}`,
 		"slash": `{"files":[]}`,

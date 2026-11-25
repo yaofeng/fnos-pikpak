@@ -676,3 +676,101 @@ func TestTasksClearScopedToAccountParam(t *testing.T) {
 		t.Fatalf("all-clear dels=%v before=%v, want acct-a's task dropped and acct-b left alone", dels, beforeDels)
 	}
 }
+
+func TestTasksAllSentinelTakesMergedBranch(t *testing.T) {
+	// Spec Review Focus #2: every scope route must split on the "all"
+	// sentinel before accountForParam resolves it as an account id — a
+	// missing split turns account=all into a store lookup and the request
+	// 404s with "账号不存在". These two routes share taskScopeClients, so the
+	// explicit ?account=all must behave exactly like the absent parameter.
+	var mu sync.Mutex
+	// Per-bearer live lists that the DELETE shrinks, so the clear flow
+	// converges instead of spinning against a fixed answer.
+	live := map[string][]map[string]any{
+		"at-acct-a": {
+			{"id": "ta", "phase": "PHASE_TYPE_RUNNING", "progress": 10, "file_name": "a.mkv", "file_size": "1"},
+			{"id": "ta2", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "a2.mkv", "file_size": "2"},
+		},
+		"at-acct-b": {
+			{"id": "tb", "phase": "PHASE_TYPE_COMPLETE", "progress": 100, "file_name": "b.mkv", "file_size": "2"},
+		},
+	}
+	listed := map[string]int{}
+	deleted := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v1/tasks":
+			mu.Lock()
+			tasks := append([]map[string]any(nil), live[token]...)
+			listed[token]++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"tasks": tasks})
+		case r.Method == http.MethodDelete && r.URL.Path == "/drive/v1/tasks":
+			drop := map[string]bool{}
+			for _, id := range strings.Split(r.URL.Query().Get("task_ids"), ",") {
+				drop[id] = true
+			}
+			mu.Lock()
+			kept := live[token][:0]
+			for _, task := range live[token] {
+				if !drop[task["id"].(string)] {
+					kept = append(kept, task)
+				}
+			}
+			live[token] = kept
+			deleted[token]++
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	// GET with the explicit sentinel takes the merged branch: both accounts'
+	// rows concatenate into one listing, each stamped with its account.
+	rec, body := getJSON(t, h, "/api/tasks?account=all", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 3 {
+		t.Fatalf("merged listing returned %d rows: %v", len(items), body["items"])
+	}
+	stamps := map[string]string{}
+	for _, raw := range items {
+		row, _ := raw.(map[string]any)
+		id, _ := row["id"].(string)
+		acct, _ := row["account_id"].(string)
+		stamps[id] = acct
+	}
+	if stamps["ta"] != "acct-a" || stamps["tb"] != "acct-b" {
+		t.Fatalf("stamps = %v, want both accounts' tasks in one merged listing", stamps)
+	}
+
+	// POST with the sentinel clears every active account: acct-a's finished
+	// task and acct-b's finished task both go, and both upstreams were
+	// entered — not a 404 lookup of an account named "all".
+	rec, body = postJSON(t, h, "/api/tasks/clear?account=all", "1000", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear status = %d body=%v", rec.Code, body)
+	}
+	if body["ok"] != true || body["deleted"] != float64(2) {
+		t.Fatalf("resp = %v, want one finished task cleared per account", body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if listed["at-acct-a"] == 0 || listed["at-acct-b"] == 0 {
+		t.Fatalf("listed = %v, want the clear flow entered on both accounts", listed)
+	}
+	if deleted["at-acct-a"] != 1 || deleted["at-acct-b"] != 1 {
+		t.Fatalf("deleted = %v, want exactly one delete call per account", deleted)
+	}
+}
