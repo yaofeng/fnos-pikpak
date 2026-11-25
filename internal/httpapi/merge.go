@@ -90,12 +90,12 @@ func stampFiles(items []pikpak.File, acct namedClient) []pikpak.File {
 	}
 	for i := range items {
 		items[i].AccountID = acct.Account.ID
+		items[i].AccountName = acct.Account.DisplayName
 	}
 	return items
 }
 
-// stampTasks is stampFiles for task rows, which also carry the display name
-// so the interface can show who owns each task.
+// stampTasks is stampFiles for task rows.
 func stampTasks(items []pikpak.Task, acct namedClient) []pikpak.Task {
 	if acct.Account.ID == "" {
 		return items

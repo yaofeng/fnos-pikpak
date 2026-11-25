@@ -212,3 +212,18 @@ func TestIsAccountLevelErr(t *testing.T) {
 		}
 	}
 }
+
+func TestStampFilesCarriesAccountName(t *testing.T) {
+	nc := namedClient{Account: store.PikPakAccount{ID: "acct-a", DisplayName: "主号"}}
+	items := []pikpak.File{{ID: "f1"}}
+	out := stampFiles(items, nc)
+	if out[0].AccountID != "acct-a" || out[0].AccountName != "主号" {
+		t.Fatalf("stamps = %q/%q", out[0].AccountID, out[0].AccountName)
+	}
+	// 空 id 的 legacy 账号保持不打戳
+	keep := []pikpak.File{{ID: "f2"}}
+	out2 := stampFiles(keep, namedClient{})
+	if out2[0].AccountID != "" || out2[0].AccountName != "" {
+		t.Fatalf("legacy account must stay unstamped")
+	}
+}

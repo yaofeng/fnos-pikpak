@@ -130,6 +130,9 @@ type File struct {
 	// AccountID stamps merged cross-account listings with the account that
 	// served the row; PikPak never sends it.
 	AccountID string `json:"account_id,omitempty"`
+	// AccountName is the display-name stamp merged listings carry so the
+	// interface can show which account owns each row; PikPak does not send it.
+	AccountName string `json:"account_name,omitempty"`
 	// ThumbnailLink is a short-lived CDN URL. It stays server-side: the
 	// browser asks /api/thumb instead.
 	ThumbnailLink string `json:"-"`
