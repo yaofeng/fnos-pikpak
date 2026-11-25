@@ -526,3 +526,165 @@ func TestFilesMergedAccountErrorIsolated(t *testing.T) {
 		t.Fatalf("account_errors[0].error = %v, want a message", e["error"])
 	}
 }
+
+// TestFilesMergedSamePathSubdirectory pins the ?seg= branch of the merged
+// listing: each account's folder at the same name path is resolved and those
+// folders' contents merge. An account that lacks the path contributes no rows
+// and no account_errors entry — absence is not a fault.
+func TestFilesMergedSamePathSubdirectory(t *testing.T) {
+	// acct-a 根目录有"电影"（内含两行）；acct-b 根目录没有"电影"。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") != "Bearer at-acct-a" {
+			// acct-b 根目录只有文件，没有"电影"。
+			_, _ = io.WriteString(w, `{"files":[{"id":"bb1","name":"b.mkv","kind":"drive#file","size":"2"}]}`)
+			return
+		}
+		switch r.URL.Query().Get("parent_id") {
+		case "":
+			_, _ = io.WriteString(w, `{"files":[`+
+				`{"id":"movie-a","kind":"drive#folder","name":"电影"},`+
+				`{"id":"a0","kind":"drive#file","name":"readme.txt"}]}`)
+		case "movie-a":
+			_, _ = io.WriteString(w, `{"files":[`+
+				`{"id":"aa1","name":"a1.mkv","kind":"drive#file","modified_time":"2026-01-02T00:00:00Z"},`+
+				`{"id":"aa2","name":"a2.mkv","kind":"drive#file","modified_time":"2026-01-01T00:00:00Z"}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"files":[]}`)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/files?account=all&seg=%E7%94%B5%E5%BD%B1", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("items = %v, want only acct-a's 电影 contents (two rows)", body["items"])
+	}
+	for _, raw := range items {
+		file, _ := raw.(map[string]any)
+		if file["account_id"] != "acct-a" {
+			t.Fatalf("row %v stamped %v, want acct-a only (acct-b lacks the path)", file["id"], file["account_id"])
+		}
+		if file["account_name"] != "账号acct-a" {
+			t.Fatalf("row %v named %v, want 账号acct-a", file["id"], file["account_name"])
+		}
+	}
+	if _, ok := body["account_errors"]; ok {
+		t.Fatalf("account_errors = %v, want the key absent (a missing path is not a failure)", body["account_errors"])
+	}
+}
+
+// TestFilesMergedSubdirectoryMissingForAll pins the all-missing seg path:
+// neither account has the folder, so the merged listing is an empty array
+// with HTTP 200 — not an error envelope, and no account_errors either.
+func TestFilesMergedSubdirectoryMissingForAll(t *testing.T) {
+	// 两个账号根目录都只有文件，没有"电影"。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"files":[{"id":"f1","name":"note.txt","kind":"drive#file","size":"1"}]}`)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/files?account=all&seg=%E7%94%B5%E5%BD%B1", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v, want 200", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 0 {
+		t.Fatalf("items = %v, want an empty array", body["items"])
+	}
+	if _, ok := body["account_errors"]; ok {
+		t.Fatalf("account_errors = %v, want the key absent", body["account_errors"])
+	}
+}
+
+// TestFilesMergedSubdirectoryCacheHit pins the shared Deps.PathCache: a
+// second merged request with the same segs must not walk the root again (the
+// resolution answers from cache) while the subdirectory listing still runs.
+func TestFilesMergedSubdirectoryCacheHit(t *testing.T) {
+	var mu sync.Mutex
+	rootCalls, movieCalls := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		parent := r.URL.Query().Get("parent_id")
+		mu.Lock()
+		if parent == "" {
+			rootCalls++
+		} else {
+			movieCalls++
+		}
+		mu.Unlock()
+		switch parent {
+		case "":
+			_, _ = io.WriteString(w, `{"files":[{"id":"movie-a","kind":"drive#folder","name":"电影"}]}`)
+		case "movie-a":
+			_, _ = io.WriteString(w, `{"files":[{"id":"aa1","name":"a1.mkv","kind":"drive#file","modified_time":"2026-01-02T00:00:00Z"}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"files":[]}`)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	h := NewMux(deps)
+
+	seg := "/api/files?account=all&seg=%E7%94%B5%E5%BD%B1"
+	rec, body := getJSON(t, h, seg, "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("first items = %v, want the folder row", body["items"])
+	}
+	mu.Lock()
+	if rootCalls != 1 || movieCalls != 1 {
+		mu.Unlock()
+		t.Fatalf("first request: root=%d movie=%d calls, want 1/1", rootCalls, movieCalls)
+	}
+	mu.Unlock()
+
+	// 同 segs 第二次请求：解析走查被缓存，根目录请求计数不增长；子目录列表照常发生。
+	rec, body = getJSON(t, h, seg, "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second status = %d body=%v", rec.Code, body)
+	}
+	items, _ = body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("second items = %v, want the folder listed again", body["items"])
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if rootCalls != 1 {
+		t.Fatalf("root calls = %d after the cached second request, want still 1", rootCalls)
+	}
+	if movieCalls != 2 {
+		t.Fatalf("movie calls = %d, want 2 (the listing still happens)", movieCalls)
+	}
+}

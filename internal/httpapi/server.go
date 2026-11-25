@@ -55,6 +55,10 @@ type Deps struct {
 	// Videos runs the 完整播放 preparation jobs. Nil means a fresh registry:
 	// one job per user, results kept for 30 minutes.
 	Videos *videoJobs
+	// PathCache memoizes merged-listing folder resolutions per (fnOS user,
+	// PikPak account, path segments). Nil means a fresh in-memory cache with
+	// the default 5-minute TTL.
+	PathCache *pathCache
 	// DevUID, when non-zero, lets localhost development skip the gateway
 	// identity header. Production never sets it.
 	DevUID int
@@ -82,6 +86,9 @@ func NewMux(deps Deps) *http.ServeMux {
 	}
 	if deps.Videos == nil {
 		deps.Videos = newVideoJobs()
+	}
+	if deps.PathCache == nil {
+		deps.PathCache = newPathCache()
 	}
 	if len(deps.PlaySecret) == 0 {
 		secret := make([]byte, 32)

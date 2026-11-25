@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/pikpak"
 	"fnos-pikpak/internal/probe"
 )
@@ -201,9 +202,27 @@ func handleMergedFiles(w http.ResponseWriter, r *http.Request, deps Deps) {
 		return
 	}
 
-	// Every account starts at its root; Task 4 resolves the ?seg= name
-	// segments into a per-account parent id at this one line.
+	// Every account starts at its root; with ?seg= name segments each
+	// account's folder at that same path is resolved first (Task 3's walker,
+	// cached per user/account/path) and those folders are what get listed.
+	// An account whose resolution fails simply lacks the path: it is
+	// silently absent — no rows, and no account_errors entry, because
+	// absence is not a fault. Presetting its token to pageDone keeps the
+	// listing from asking it and later pages from resurrecting it.
+	segs := r.URL.Query()["seg"]
 	parentIDs := make([]string, len(clients))
+	if len(segs) > 0 {
+		id, _ := fnos.IdentityFrom(r.Context())
+		uid := strconv.Itoa(id.UID)
+		for i, nc := range clients {
+			parent, err := resolveFolderPath(r.Context(), uid, nc, segs, deps.PathCache)
+			if err != nil {
+				tokens[nc.Account.ID] = pageDone
+				continue
+			}
+			parentIDs[i] = parent
+		}
+	}
 
 	pages, nexts, failures := fetchListPages(r.Context(), clients, parentIDs, filters, limit, tokens)
 	items := mergeFilePages(pages, clients)
