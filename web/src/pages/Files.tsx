@@ -52,7 +52,7 @@ function withAccount(path: string, accountId: string): string {
 export default function Files() {
   const lang = getLang()
   const t = makeT(lang)
-  const { accounts, currentId: accountId, setCurrent } = useAccounts()
+  const { accounts, currentId: accountId, scope, setCurrent } = useAccounts()
   const [stack, setStack] = useState<Crumb[]>([])
   const folderId = stack.length ? stack[stack.length - 1].id : ''
 
@@ -371,7 +371,7 @@ export default function Files() {
   return (
     <section className="file-page">
       <div className="fm-nav">
-        <AccountSwitcher accounts={accounts} currentId={accountId} onChange={setCurrent} />
+        <AccountSwitcher accounts={accounts} scope={scope} onChange={setCurrent} />
         <button className="icon-btn" type="button" onClick={goUp} disabled={stack.length === 0} title={t('share.up_title')} aria-label={t('share.up_title')}>
           <ChevronLeft />
         </button>

@@ -56,6 +56,7 @@ const messages: Record<string, Entry> = {
     en: 'Account name is too long; 50 characters at most',
   },
   'account.switch_label': { 'zh-CN': '切换账号', en: 'Switch account' },
+  'account.all_accounts': { 'zh-CN': '-全部帐号-', en: '- All accounts -' },
   'status.ok': { 'zh-CN': '正常', en: 'OK' },
   'status.reauth': { 'zh-CN': '需重新授权', en: 'Re-auth required' },
 

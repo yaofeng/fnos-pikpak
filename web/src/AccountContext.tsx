@@ -5,6 +5,12 @@ import { resolveCurrentId, type AccountInfo } from './accounts'
 export type AccountContextValue = {
   accounts: AccountInfo[]
   byId: Map<string, AccountInfo>
+  // scope is what account-scoped consumers pass to the backend: '' (nothing
+  // chosen yet) and 'all' both mean every account merged, so both normalize
+  // to the 'all' sentinel; a concrete id means that one account. It is a
+  // display/routing value only — never feed it to resolveCurrentId, which
+  // only knows real ids.
+  scope: string
   currentId: string
   current?: AccountInfo
   setCurrent(id: string): void
@@ -21,7 +27,8 @@ const AccountContext = createContext<AccountContextValue | null>(null)
 export function AccountProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<AccountInfo[]>([])
   // The selection lives in memory only: a reload falls back to the first
-  // account, which is also the backend's default for a bare uid.
+  // account, which is also the backend's default for a bare uid. 'all' is a
+  // stored value too (setCurrent accepts it) and means every account merged.
   const [wantedId, setWantedId] = useState('')
 
   const reload = useCallback(async () => {
@@ -44,12 +51,18 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   }, [reload])
 
   const byId = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts])
-  const currentId = resolveCurrentId(accounts, wantedId)
+  // scope = wantedId || 'all': '' and 'all' are both the merged view, a
+  // concrete id is that account. currentId keeps its legacy meaning — the
+  // resolved concrete account for consumers that still need one — so 'all'
+  // must not reach resolveCurrentId: it is not a real id and would fall back
+  // to the first account as if a specific one had been picked.
+  const scope = wantedId || 'all'
+  const currentId = resolveCurrentId(accounts, wantedId !== 'all' ? wantedId : '')
   const current = byId.get(currentId)
 
   const value = useMemo<AccountContextValue>(
-    () => ({ accounts, byId, currentId, current, setCurrent: setWantedId, reload }),
-    [accounts, byId, currentId, current, reload],
+    () => ({ accounts, byId, scope, currentId, current, setCurrent: setWantedId, reload }),
+    [accounts, byId, scope, currentId, current, reload],
   )
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>

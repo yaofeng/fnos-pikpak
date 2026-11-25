@@ -59,6 +59,15 @@ describe('resolveCurrentId', () => {
   it('没有 currentId 时默认第一个', () => {
     expect(resolveCurrentId([{ ...base, id: 'c' }], '')).toBe('c')
   })
+
+  it("'all' 哨兵不是真实 id，空串仍落第一个账号", () => {
+    const items = [{ ...base }, { ...base, id: 'b' }]
+    // 既有语义回归：空串落到第一个账号
+    expect(resolveCurrentId(items, '')).toBe('a')
+    // AccountContext 的 scope 推导是组件内一行；可测的是它的组成材料：
+    // 'all' 不得被 resolveCurrentId 兜底吞掉——它永远不该流进来。
+    expect(resolveCurrentId(items, 'all')).toBe('a')
+  })
 })
 
 describe('vipTypeLabel', () => {

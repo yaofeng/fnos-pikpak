@@ -23,7 +23,7 @@ function withAccount(path: string, accountId: string): string {
 export default function Trash() {
   const lang = getLang()
   const t = makeT(lang)
-  const { accounts, currentId: accountId, setCurrent } = useAccounts()
+  const { accounts, currentId: accountId, scope, setCurrent } = useAccounts()
   const [items, setItems] = useState<FileItem[]>([])
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
@@ -154,7 +154,7 @@ export default function Trash() {
   return (
     <section>
       <div className="fm-nav">
-        <AccountSwitcher accounts={accounts} currentId={accountId} onChange={setCurrent} />
+        <AccountSwitcher accounts={accounts} scope={scope} onChange={setCurrent} />
         <div className="crumb-box">
           <span className="fm-title">{t('trash.title')}</span>
         </div>
