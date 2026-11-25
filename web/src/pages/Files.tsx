@@ -37,6 +37,7 @@ import {
   type SortDir,
   type SortKey,
 } from '../files'
+import { getLang, makeT } from '../i18n'
 
 type Page = { items: FileItem[]; next_page_token: string }
 type Crumb = { id: string; name: string }
@@ -49,6 +50,8 @@ function withAccount(path: string, accountId: string): string {
 }
 
 export default function Files() {
+  const lang = getLang()
+  const t = makeT(lang)
   const { accounts, currentId: accountId, setCurrent } = useAccounts()
   const [stack, setStack] = useState<Crumb[]>([])
   const folderId = stack.length ? stack[stack.length - 1].id : ''
@@ -209,7 +212,7 @@ export default function Files() {
   }
 
   async function createFolder() {
-    const name = window.prompt('文件夹名称')
+    const name = window.prompt(t('files.folder_name_prompt'))
     if (!name?.trim()) return
     setBusy(true)
     try {
@@ -224,7 +227,7 @@ export default function Files() {
   }
 
   async function rename(f: FileItem) {
-    const name = window.prompt('新名称', f.name)
+    const name = window.prompt(t('files.rename_prompt'), f.name)
     if (!name?.trim() || name.trim() === f.name) return
     setBusy(true)
     try {
@@ -243,9 +246,9 @@ export default function Files() {
     setRemoveAsk(null)
     setBusy(true)
     try {
-      const plan = deletePlan(mode)
+      const plan = deletePlan(mode, lang)
       const res = await apiPost<{ pending: boolean }>(withAccount(plan.path, accountId), { ids })
-      setNotice(res.pending ? '任务已提交，稍后自动刷新' : plan.notice)
+      setNotice(res.pending ? t('common.submitted') : plan.notice)
       clearSelection()
       dropCachePrefix('files:')
       await fetchPage('', true)
@@ -264,7 +267,7 @@ export default function Files() {
         ids: move.ids,
         to_parent_id: destId,
       })
-      setNotice(res.pending ? '任务已提交，稍后自动刷新' : move.mode === 'move' ? '已移动' : '已复制')
+      setNotice(res.pending ? t('common.submitted') : move.mode === 'move' ? t('files.moved') : t('files.copied'))
       setMove(null)
       clearSelection()
       dropCachePrefix('files:')
@@ -282,7 +285,7 @@ export default function Files() {
       return f && !isFolder(f)
     })
     if (!fileIDs.length) {
-      setError('文件夹暂不支持下载，请逐个选择其中的文件。')
+      setError(t('files.folder_download_unsupported'))
       return
     }
     setBusy(true)
@@ -291,10 +294,10 @@ export default function Files() {
       // settings, which the server validates against the user's grants. Every
       // item names this page's account, so the queue acts on the same drive
       // the listing came from.
-      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: accountId }))))
+      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: accountId })), lang))
       clearSelection()
     } catch (e) {
-      setError(downloadErrorMessage(e))
+      setError(downloadErrorMessage(e, lang))
     } finally {
       setBusy(false)
     }
@@ -303,9 +306,9 @@ export default function Files() {
   async function uploadFiles() {
     let paths: string[] = []
     if (hostAvailable()) {
-      paths = await pickFiles('选择要上传的文件')
+      paths = await pickFiles(t('files.pick_upload_files'))
     } else {
-      const asked = askPath('要上传的文件（绝对路径）')
+      const asked = askPath(t('files.ask_upload_file'))
       if (asked) paths = [asked]
     }
     if (!paths.length) return
@@ -315,7 +318,7 @@ export default function Files() {
         local_paths: paths,
         parent_id: folderId,
       })
-      setNotice(`已加入上传队列：${res.created.length} 个。可在「传输」中查看进度。`)
+      setNotice(t('files.queued_uploads').replace('{n}', String(res.created.length)))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -328,7 +331,7 @@ export default function Files() {
     dragged.current = null
     if (!f) return
     if (destId === f.id) {
-      setError('不能把文件夹移动到它自己里面')
+      setError(t('files.move_into_self'))
       return
     }
     const ids = selected.has(f.id) ? [...selected] : [f.id]
@@ -340,7 +343,7 @@ export default function Files() {
           ids,
           to_parent_id: destId ?? '',
         })
-        setNotice(res.pending ? '任务已提交，稍后自动刷新' : '已移动')
+        setNotice(res.pending ? t('common.submitted') : t('files.moved'))
         setMove(null)
         clearSelection()
         dropCachePrefix('files:')
@@ -369,7 +372,7 @@ export default function Files() {
     <section className="file-page">
       <div className="fm-nav">
         <AccountSwitcher accounts={accounts} currentId={accountId} onChange={setCurrent} />
-        <button className="icon-btn" type="button" onClick={goUp} disabled={stack.length === 0} title="上一级" aria-label="上一级">
+        <button className="icon-btn" type="button" onClick={goUp} disabled={stack.length === 0} title={t('share.up_title')} aria-label={t('share.up_title')}>
           <ChevronLeft />
         </button>
         <button
@@ -377,8 +380,8 @@ export default function Files() {
           type="button"
           onClick={() => void fetchPage('', true)}
           disabled={loading}
-          title="刷新"
-          aria-label="刷新"
+          title={t('common.refresh')}
+          aria-label={t('common.refresh')}
         >
           <RefreshIcon />
         </button>
@@ -389,7 +392,7 @@ export default function Files() {
           <SearchIcon />
           <input
             type="search"
-            placeholder="在当前目录中筛选"
+            placeholder={t('share.filter_placeholder')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -399,11 +402,11 @@ export default function Files() {
       <div className="fm-actions">
         <button className="btn-icon" type="button" onClick={() => void uploadFiles()} disabled={busy}>
           <UploadIcon />
-          上传
+          {t('files.upload')}
         </button>
         <button className="btn-icon" type="button" onClick={createFolder} disabled={busy}>
           <FolderPlusIcon />
-          新建文件夹
+          {t('files.new_folder')}
         </button>
         <button
           className="btn-icon"
@@ -412,7 +415,7 @@ export default function Files() {
           disabled={busy || selectedIds.length === 0}
         >
           <DownloadIcon />
-          下载
+          {t('common.download')}
         </button>
         <button
           className="btn-icon"
@@ -421,20 +424,20 @@ export default function Files() {
           disabled={busy || selectedIds.length === 0}
         >
           <TrashIcon />
-          删除
+          {t('common.delete')}
         </button>
         <button className="btn-icon" type="button" onClick={openMore}>
           <MoreIcon />
-          更多
+          {t('files.more')}
         </button>
 
         <span className="fm-spacer" />
 
         <label className="fm-pick">
-          <select value={kind} onChange={(e) => setKind(e.target.value as KindFilter)} aria-label="筛选">
-            <option value="all">全部</option>
-            <option value="folder">文件夹</option>
-            <option value="file">文件</option>
+          <select value={kind} onChange={(e) => setKind(e.target.value as KindFilter)} aria-label={t('files.filter_label')}>
+            <option value="all">{t('files.kind_all')}</option>
+            <option value="folder">{t('files.kind_folder')}</option>
+            <option value="file">{t('files.kind_file')}</option>
           </select>
         </label>
         <label className="fm-pick">
@@ -446,23 +449,23 @@ export default function Files() {
               setSortKey(k as SortKey)
               setSortDir(d as SortDir)
             }}
-            aria-label="排序"
+            aria-label={t('favorites.sort_label')}
           >
-            <option value="name:asc">名称 ↑</option>
-            <option value="name:desc">名称 ↓</option>
-            <option value="modified:desc">时间 ↓</option>
-            <option value="modified:asc">时间 ↑</option>
-            <option value="size:desc">大小 ↓</option>
-            <option value="size:asc">大小 ↑</option>
+            <option value="name:asc">{t('share.sort_name')} ↑</option>
+            <option value="name:desc">{t('share.sort_name')} ↓</option>
+            <option value="modified:desc">{t('share.sort_time')} ↓</option>
+            <option value="modified:asc">{t('share.sort_time')} ↑</option>
+            <option value="size:desc">{t('files.th_size')} ↓</option>
+            <option value="size:asc">{t('files.th_size')} ↑</option>
           </select>
         </label>
-        <div className="segmented" role="group" aria-label="视图">
+        <div className="segmented" role="group" aria-label={t('vfav.view_label')}>
           <button
             type="button"
             className={view === 'list' ? 'active' : ''}
             onClick={() => setView('list')}
-            title="列表视图"
-            aria-label="列表视图"
+            title={t('vfav.view_list')}
+            aria-label={t('vfav.view_list')}
           >
             <ListIcon />
           </button>
@@ -470,8 +473,8 @@ export default function Files() {
             type="button"
             className={view === 'grid' ? 'active' : ''}
             onClick={() => setView('grid')}
-            title="大图标视图"
-            aria-label="大图标视图"
+            title={t('vfav.view_grid')}
+            aria-label={t('vfav.view_grid')}
           >
             <GridIcon />
           </button>
@@ -481,7 +484,7 @@ export default function Files() {
       {error && <p className="error">{error}</p>}
 
       {!loading && shown.length === 0 && !error && (
-        <p className="muted">{items.length === 0 ? '这个文件夹是空的。' : '没有匹配的条目。'}</p>
+        <p className="muted">{items.length === 0 ? t('files.empty_folder') : t('files.no_match')}</p>
       )}
 
       <div className="file-body" ref={bodyRef} onMouseDown={startMarquee}>
@@ -526,7 +529,7 @@ export default function Files() {
         {/* Inside the scroll area: the observer sees it only when the list
             really reached its end. */}
         <div ref={sentinel} className="sentinel" />
-        {loading && <p className="muted">加载中…</p>}
+        {loading && <p className="muted">{t('common.loading')}</p>}
       </div>
 
       <StatusBar selected={selectedIds.length} total={shown.length} notice={notice} />
@@ -537,17 +540,17 @@ export default function Files() {
             <>
               {isFolder(menu.file) && (
                 <button type="button" onClick={() => openFile(menu.file!)}>
-                  打开
+                  {t('files.open')}
                 </button>
               )}
               <button type="button" onClick={() => void rename(menu.file!)}>
-                重命名
+                {t('account.rename')}
               </button>
               <button type="button" onClick={() => setMove({ mode: 'move', ids: [menu.file!.id] })}>
-                移动到…
+                {t('files.move_to')}
               </button>
               <button type="button" onClick={() => setMove({ mode: 'copy', ids: [menu.file!.id] })}>
-                复制到…
+                {t('files.copy_to')}
               </button>
               {isVideo(menu.file) && (
                 <button
@@ -557,16 +560,16 @@ export default function Files() {
                     setMenu(null)
                   }}
                 >
-                  播放
+                  {t('files.play')}
                 </button>
               )}
               {!isFolder(menu.file) && (
                 <button type="button" onClick={() => void download([menu.file!.id])}>
-                  下载
+                  {t('common.download')}
                 </button>
               )}
               <button type="button" className="danger" onClick={() => void remove([menu.file!.id], 'trash')}>
-                移入回收站
+                {t('files.trash_it')}
               </button>
             </>
           ) : (
@@ -579,7 +582,7 @@ export default function Files() {
                   setMove({ mode: 'move', ids: selectedIds })
                 }}
               >
-                移动到…
+                {t('files.move_to')}
               </button>
               <button
                 type="button"
@@ -589,13 +592,13 @@ export default function Files() {
                   setMove({ mode: 'copy', ids: selectedIds })
                 }}
               >
-                复制到…
+                {t('files.copy_to')}
               </button>
               <button type="button" onClick={() => selectAll()}>
-                全选
+                {t('files.select_all')}
               </button>
               <button type="button" onClick={() => clearSelection()}>
-                取消选择
+                {t('files.clear_selection')}
               </button>
             </>
           )}
@@ -607,10 +610,10 @@ export default function Files() {
       {move && (
         <div className="modal-backdrop" onClick={() => setMove(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{move.mode === 'move' ? '移动到' : '复制到'}</h3>
+            <h3>{move.mode === 'move' ? t('files.move_to') : t('files.copy_to')}</h3>
             <div className="dest-list">
               <button type="button" onClick={() => void applyMove('')} disabled={busy}>
-                我的文件（根目录）
+                {t('files.root_dest')}
               </button>
               {stack
                 .filter((c) => !move.ids.includes(c.id))
@@ -620,9 +623,9 @@ export default function Files() {
                   </button>
                 ))}
             </div>
-            <p className="muted small">已选 {move.ids.length} 项。也可以把它们拖到面包屑上的文件夹。</p>
+            <p className="muted small">{t('files.move_hint').replace('{n}', String(move.ids.length))}</p>
             <button type="button" onClick={() => setMove(null)}>
-              取消
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -634,20 +637,20 @@ export default function Files() {
             className="modal"
             role="dialog"
             aria-modal="true"
-            aria-label="删除"
+            aria-label={t('common.delete')}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3>删除 {removeAsk.length} 项？</h3>
-            <p className="muted small">移入回收站后仍可找回；永久删除会跳过回收站，无法恢复。</p>
+            <h3>{t('files.remove_ask').replace('{n}', String(removeAsk.length))}</h3>
+            <p className="muted small">{t('files.remove_hint')}</p>
             <div className="actions">
               <button type="button" className="primary" disabled={busy} onClick={() => void remove(removeAsk, 'trash')}>
-                移入回收站
+                {t('files.trash_it')}
               </button>
               <button type="button" className="danger" disabled={busy} onClick={() => void remove(removeAsk, 'delete')}>
-                永久删除
+                {t('trash.delete_forever')}
               </button>
               <button type="button" onClick={() => setRemoveAsk(null)}>
-                取消
+                {t('common.cancel')}
               </button>
             </div>
           </div>

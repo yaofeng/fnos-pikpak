@@ -20,6 +20,7 @@ import {
   type FavoriteSortDir,
   type FavoriteSortKey,
 } from '../shares'
+import { getLang, makeT } from '../i18n'
 import { useFileSelection } from '../useFileSelection'
 
 // A saved share, as the list route returns it. The pass code never comes back
@@ -48,14 +49,15 @@ function nameOf(fav: ShareFavorite): string {
   return fav.display_title || fav.title || fav.share_id
 }
 
-function expireText(expireAt: number): string {
+function expireText(expireAt: number, forever: string): string {
   // -1 is PikPak's "never expires"; 0 means the response did not say.
-  if (expireAt === -1) return '永久'
+  if (expireAt === -1) return forever
   if (expireAt > 0) return new Date(expireAt * 1000).toLocaleString()
   return '—'
 }
 
 export default function Favorites() {
+  const t = makeT(getLang())
   const [items, setItems] = useState<ShareFavorite[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -146,7 +148,7 @@ export default function Favorites() {
       await apiPost('share-favorites', { url })
       setNewURL('')
       setAdding(false)
-      setNotice('已加入分享收藏夹')
+      setNotice(t('favorites.added'))
       await load()
     } catch (err) {
       setAddError((err as Error).message)
@@ -158,14 +160,14 @@ export default function Favorites() {
   // Renaming is local only: it changes how this list shows the share, never
   // the share itself. An empty prompt restores the share's own title.
   async function rename(fav: ShareFavorite) {
-    const next = window.prompt('新名称（留空恢复原名）', nameOf(fav))
+    const next = window.prompt(t('favorites.rename_prompt'), nameOf(fav))
     if (next === null) return
     setBusy(true)
     setError('')
     try {
       const updated = await apiPatch<ShareFavorite>(`share-favorites/${fav.id}`, { title: next.trim() })
       setItems((prev) => (prev ?? []).map((f) => (f.id === fav.id ? { ...f, display_title: updated.display_title } : f)))
-      setNotice(next.trim() ? '已重命名（仅本机显示）' : '已恢复原名')
+      setNotice(next.trim() ? t('favorites.renamed') : t('favorites.name_restored'))
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -175,15 +177,18 @@ export default function Favorites() {
 
   async function remove(list: ShareFavorite[]) {
     if (list.length === 0) return
-    const label = list.length === 1 ? `「${nameOf(list[0])}」` : `${list.length} 个分享`
-    if (!window.confirm(`从分享收藏夹移除${label}？分享本身不会受影响。`)) return
+    const label =
+      list.length === 1
+        ? t('favorites.one_label').replace('{name}', nameOf(list[0]))
+        : t('favorites.count_label').replace('{n}', String(list.length))
+    if (!window.confirm(t('favorites.confirm_remove').replace('{label}', label))) return
     setBusy(true)
     setError('')
     try {
       for (const fav of list) await apiDelete(`share-favorites/${fav.id}`)
       setItems((prev) => (prev ?? []).filter((f) => !list.some((gone) => gone.id === f.id)))
       clear()
-      setNotice(`已移除${label}`)
+      setNotice(t('favorites.removed').replace('{label}', label))
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -227,19 +232,19 @@ export default function Favorites() {
           type="button"
           onClick={refresh}
           disabled={loading}
-          title="刷新"
-          aria-label="刷新"
+          title={t('common.refresh')}
+          aria-label={t('common.refresh')}
         >
           <RefreshIcon />
         </button>
         <div className="crumb-box">
-          <span className="fm-title">分享收藏夹</span>
+          <span className="fm-title">{t('favorites.title')}</span>
         </div>
         <label className="fm-search">
           <SearchIcon />
           <input
             type="search"
-            placeholder="筛选分享名称或创建者"
+            placeholder={t('favorites.filter_placeholder')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -249,11 +254,11 @@ export default function Favorites() {
       <div className="fm-actions">
         <button className="btn-icon" type="button" onClick={() => { setAdding((v) => !v); setAddError('') }}>
           <BookmarkIcon />
-          新增收藏
+          {t('favorites.add')}
         </button>
         <Link to="/search" className="btn-icon">
           <GlobeIcon />
-          去全网搜索
+          {t('favorites.go_search')}
         </Link>
         <button
           className="btn-icon"
@@ -261,7 +266,7 @@ export default function Favorites() {
           disabled={!one || busy}
           onClick={() => one && void rename(one)}
         >
-          重命名
+          {t('account.rename')}
         </button>
         <button
           className="btn-icon"
@@ -270,7 +275,7 @@ export default function Favorites() {
           onClick={() => void remove(picked)}
         >
           <TrashIcon />
-          删除
+          {t('common.delete')}
         </button>
 
         <span className="fm-spacer" />
@@ -284,21 +289,21 @@ export default function Favorites() {
               setSortKey(k as FavoriteSortKey)
               setSortDir(d as FavoriteSortDir)
             }}
-            aria-label="排序"
+            aria-label={t('favorites.sort_label')}
           >
-            <option value="default:asc">默认（收藏时间）</option>
-            <option value="name:asc">分享名称 ↑</option>
-            <option value="name:desc">分享名称 ↓</option>
-            <option value="owner:asc">创建者 ↑</option>
-            <option value="owner:desc">创建者 ↓</option>
-            <option value="count:desc">总文件数 ↓</option>
-            <option value="count:asc">总文件数 ↑</option>
-            <option value="size:desc">总大小 ↓</option>
-            <option value="size:asc">总大小 ↑</option>
-            <option value="shared:desc">分享时间 ↓</option>
-            <option value="shared:asc">分享时间 ↑</option>
-            <option value="expire:asc">过期时间 ↑</option>
-            <option value="expire:desc">过期时间 ↓</option>
+            <option value="default:asc">{t('favorites.sort_default')}</option>
+            <option value="name:asc">{t('favorites.col_name')} ↑</option>
+            <option value="name:desc">{t('favorites.col_name')} ↓</option>
+            <option value="owner:asc">{t('favorites.col_owner')} ↑</option>
+            <option value="owner:desc">{t('favorites.col_owner')} ↓</option>
+            <option value="count:desc">{t('favorites.col_count')} ↓</option>
+            <option value="count:asc">{t('favorites.col_count')} ↑</option>
+            <option value="size:desc">{t('favorites.col_size')} ↓</option>
+            <option value="size:asc">{t('favorites.col_size')} ↑</option>
+            <option value="shared:desc">{t('favorites.col_shared')} ↓</option>
+            <option value="shared:asc">{t('favorites.col_shared')} ↑</option>
+            <option value="expire:asc">{t('favorites.col_expire')} ↑</option>
+            <option value="expire:desc">{t('favorites.col_expire')} ↓</option>
           </select>
         </label>
       </div>
@@ -314,14 +319,14 @@ export default function Favorites() {
           <input
             value={newURL}
             onChange={(e) => setNewURL(e.target.value)}
-            placeholder="粘贴分享链接，例如 https://mypikpak.com/s/xxxx?pwd=1234"
-            aria-label="分享链接"
+            placeholder={t('favorites.url_placeholder')}
+            aria-label={t('favorites.url_label')}
           />
           <button type="submit" className="primary" disabled={!newURL.trim() || saving}>
-            {saving ? '保存中…' : '保存'}
+            {saving ? t('settings.saving') : t('settings.save')}
           </button>
           <button type="button" onClick={() => { setAdding(false); setNewURL(''); setAddError('') }}>
-            取消
+            {t('common.cancel')}
           </button>
           {addError && <span className="error small">{addError}</span>}
         </form>
@@ -329,28 +334,28 @@ export default function Favorites() {
 
       <div className="file-body">
         {items === null || (loading && (items ?? []).length === 0) ? (
-          <p className="muted">加载中…</p>
+          <p className="muted">{t('common.loading')}</p>
         ) : (items ?? []).length === 0 ? (
           <div className="empty-state">
             <BookmarkIcon size={28} />
-            <p>分享收藏夹还是空的。</p>
+            <p>{t('favorites.empty')}</p>
             <p className="muted small">
-              点「新增收藏」粘贴分享链接，或者在全网搜索里右键标签页选「收藏分享」，之后可以在这里直接进入。
+              {t('favorites.empty_hint')}
             </p>
           </div>
         ) : shown.length === 0 ? (
-          <p className="muted">没有匹配的分享。</p>
+          <p className="muted">{t('favorites.no_match')}</p>
         ) : (
           <table className="file-table fav-table">
             <thead>
               <tr>
                 <th className="col-open" />
-                <th>分享名称</th>
-                <th>创建者</th>
-                <th className="col-size">总文件数</th>
-                <th className="col-size">总大小</th>
-                <th className="col-time">分享时间</th>
-                <th className="col-time">过期时间</th>
+                <th>{t('favorites.col_name')}</th>
+                <th>{t('favorites.col_owner')}</th>
+                <th className="col-size">{t('favorites.col_count')}</th>
+                <th className="col-size">{t('favorites.col_size')}</th>
+                <th className="col-time">{t('favorites.col_shared')}</th>
+                <th className="col-time">{t('favorites.col_expire')}</th>
               </tr>
             </thead>
             <tbody>
@@ -367,7 +372,7 @@ export default function Favorites() {
                       <BookmarkIcon size={16} />
                       <span title={nameOf(fav)}>{nameOf(fav)}</span>
                     </span>
-                    {fav.protected && <span className="badge-lock">有密码</span>}
+                    {fav.protected && <span className="badge-lock">{t('favorites.protected')}</span>}
                   </td>
                   <td>
                     <span className="fav-owner">
@@ -394,7 +399,7 @@ export default function Favorites() {
                     {favoriteSizeText(fav)}
                   </td>
                   <td className="col-time muted small">{dateText(fav.share_created_at)}</td>
-                  <td className="col-time muted small">{expireText(fav.expire_at)}</td>
+                  <td className="col-time muted small">{expireText(fav.expire_at, t('favorites.forever'))}</td>
                 </tr>
               ))}
             </tbody>

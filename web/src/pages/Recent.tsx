@@ -5,6 +5,7 @@ import { useAccounts } from '../AccountContext'
 import FileTable from '../components/FileTable'
 import { RefreshIcon } from '../components/icons'
 import { cacheKeys, readCache, writeCache } from '../listCache'
+import { getLang, makeT } from '../i18n'
 import type { FileItem } from '../files'
 
 type AccountError = { account_id: string; account_name?: string; error: string }
@@ -12,6 +13,8 @@ type Page = { items: FileItem[]; next_page_token?: string; account_errors?: Acco
 type CachedList = { items: FileItem[]; token: string }
 
 export default function Recent() {
+  const lang = getLang()
+  const t = makeT(lang)
   const { byId } = useAccounts()
   const [items, setItems] = useState<FileItem[]>([])
   const [token, setToken] = useState('')
@@ -68,42 +71,46 @@ export default function Recent() {
     return () => obs.disconnect()
   }, [token, loading, fetchPage])
 
-  const accountOf = useCallback((f: FileItem) => accountLabel(byId, f.account_id), [byId])
+  const accountOf = (f: FileItem) => accountLabel(byId, f.account_id, undefined, lang)
 
   return (
     <section>
       <div className="fm-nav">
         <div className="crumb-box">
-          <span className="fm-title">最近</span>
+          <span className="fm-title">{t('recent.title')}</span>
         </div>
         <button
           className="icon-btn"
           type="button"
           onClick={() => void fetchPage('', true)}
           disabled={loading}
-          title="刷新"
-          aria-label="刷新"
+          title={t('common.refresh')}
+          aria-label={t('common.refresh')}
         >
           <RefreshIcon />
         </button>
       </div>
-      <p className="muted small">最近添加来自 PikPak 的事件流，包含新增、恢复等操作。</p>
+      <p className="muted small">{t('recent.hint')}</p>
 
       {error && <p className="error">{error}</p>}
       {/* One line per account whose page could not load: its rows are simply
           missing, so the failure has to say itself. */}
       {accountErrors.length > 0 && (
         <p className="muted small">
-          部分账号的最近记录没有加载：
+          {t('recent.account_errors')}
           {accountErrors
-            .map((e) => `账号 ${accountLabel(byId, e.account_id, e.account_name)}：${e.error}`)
-            .join('；')}
+            .map((e) =>
+              t('recent.account_error_line')
+                .replace('{name}', accountLabel(byId, e.account_id, e.account_name, lang))
+                .replace('{error}', e.error),
+            )
+            .join(lang === 'en' ? '; ' : '；')}
         </p>
       )}
-      {!loading && items.length === 0 && !error && <p className="muted">暂无记录。</p>}
+      {!loading && items.length === 0 && !error && <p className="muted">{t('common.empty')}</p>}
       {items.length > 0 && <FileTable items={items} accountOf={accountOf} />}
       <div ref={sentinel} className="sentinel" />
-      {loading && <p className="muted">加载中…</p>}
+      {loading && <p className="muted">{t('common.loading')}</p>}
     </section>
   )
 }

@@ -53,3 +53,21 @@ describe('downloadErrorMessage', () => {
     expect(downloadErrorMessage(new Error('boom'))).toBe('boom')
   })
 })
+
+describe('queueDownloads（en）', () => {
+  it('英文入队提示', async () => {
+    post.mockResolvedValue({ created: ['a'], skipped: ['x', 'y'] })
+    await expect(
+      queueDownloads([{ file_id: 'a', account_id: 'a1' }], 'en'),
+    ).resolves.toBe('Queued 1 downloads, 2 same-name file(s) skipped. Track them under Transfers.')
+  })
+})
+
+describe('downloadErrorMessage（en）', () => {
+  it('英文目录未设置提示', () => {
+    const err = new ApiError(400, 'download_dir_unset', 'zh', '400 download_dir_unset: zh')
+    expect(downloadErrorMessage(err, 'en')).toBe(
+      'No default download folder is set. Pick one under Settings → Transfers.',
+    )
+  })
+})

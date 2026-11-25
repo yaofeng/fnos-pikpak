@@ -75,3 +75,14 @@ describe('groupByAccount', () => {
     expect(groupByAccount([{ id: '9' }])).toEqual([{ account_id: '', ids: ['9'] }])
   })
 })
+
+describe('taskStatusText（en）', () => {
+  it('英文任务状态', () => {
+    expect(taskStatusText({ id: 't', phase: 'PHASE_TYPE_PENDING', progress: 0 }, 'en')).toBe('Queued')
+    expect(taskStatusText({ id: 't', phase: 'PHASE_TYPE_RUNNING', progress: 0 }, 'en')).toBe('Downloading')
+    expect(taskStatusText({ id: 't', phase: 'PHASE_TYPE_COMPLETE', progress: 100 }, 'en')).toBe('Done')
+    expect(
+      taskStatusText({ id: 't', phase: 'PHASE_TYPE_ERROR', progress: 0, message: 'quota' }, 'en'),
+    ).toBe('Failed: quota')
+  })
+})

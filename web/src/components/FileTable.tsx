@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from 'react'
 import { dateText } from '../dates'
 import { formatSize, isFolder, type FileItem } from '../files'
+import { getLang, makeT } from '../i18n'
 import { ChevronRight, FileIcon } from './icons'
 
 type Props = {
@@ -23,14 +24,15 @@ type Props = {
 // optional, so the 最近 and 回收站 pages can show the same table read-only or
 // with their own actions.
 export default function FileTable({ items, selected, onSelect, onOpen, onMenu, onDragStart, onDropOn, badge, accountOf }: Props) {
+  const t = makeT(getLang())
   return (
     <table className="file-table">
       <thead>
         <tr>
           <th className="col-open" />
-          <th>文件名</th>
-          <th className="col-size">大小</th>
-          <th className="col-time">修改时间</th>
+          <th>{t('files.th_name')}</th>
+          <th className="col-size">{t('files.th_size')}</th>
+          <th className="col-time">{t('files.th_modified')}</th>
         </tr>
       </thead>
       <tbody>
@@ -65,8 +67,8 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
                       e.stopPropagation()
                       onOpen(f)
                     }}
-                    aria-label={`打开 ${f.name}`}
-                    title="打开"
+                    aria-label={`${t('files.open')} ${f.name}`}
+                    title={t('files.open')}
                   >
                     <ChevronRight size={14} />
                   </button>

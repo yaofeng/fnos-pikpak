@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiGet, basePath } from '../api'
+import { getLang, makeT } from '../i18n'
 import { formatClock, guessMime, playPath } from '../player'
 
 type PlayInfo = {
@@ -33,6 +34,7 @@ export default function Player({
   // infoPath instead, so they simply leave it out.
   account?: string
 }) {
+  const t = makeT(getLang())
   const [info, setInfo] = useState<PlayInfo | null>(null)
   const [error, setError] = useState('')
   const [rate, setRate] = useState(1)
@@ -113,23 +115,23 @@ export default function Player({
               </button>
             ))}
             <button type="button" onClick={toggleFullscreen}>
-              全屏
+{t('player.fullscreen')}
             </button>
             {src && (
               <a className="button" href={src} download={info?.name || name}>
-                下载
+{t('common.download')}
               </a>
             )}
             <button type="button" onClick={onClose}>
-              关闭
+{t('common.close')}
             </button>
           </div>
         </header>
 
         {error && <p className="error">{error}</p>}
-        {!info && !error && <p className="muted">正在获取播放地址…</p>}
+        {!info && !error && <p className="muted">{t('player.loading')}</p>}
         {unsupported && (
-          <p className="notice">浏览器不支持该编码（{mime}），可下载后使用本地播放器观看。</p>
+          <p className="notice">{t('player.unsupported').replace('{mime}', mime)}</p>
         )}
 
         {src && (

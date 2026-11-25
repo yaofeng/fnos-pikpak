@@ -1,3 +1,5 @@
+import { getLang, makeT, type Lang } from './i18n'
+
 export type OfflineTask = {
   id: string
   type?: string
@@ -27,16 +29,19 @@ export function taskPercent(task: OfflineTask): number {
   return Math.max(0, Math.min(100, task.progress || 0))
 }
 
-export function taskStatusText(task: OfflineTask): string {
+// taskStatusText names an offline task's phase; copy follows the i18n table
+// and the process-wide language unless the caller passes one.
+export function taskStatusText(task: OfflineTask, lang?: Lang): string {
+  const t = makeT(lang ?? getLang())
   switch (task.phase) {
     case PHASE_PENDING:
-      return '排队中'
+      return t('status.queued')
     case PHASE_RUNNING:
-      return '下载中'
+      return t('task.running')
     case PHASE_COMPLETE:
-      return '已完成'
+      return t('status.done')
     case PHASE_ERROR:
-      return task.message ? `失败：${task.message}` : '失败'
+      return task.message ? t('status.failed').replace('{reason}', task.message) : t('status.failed_plain')
     default:
       return task.phase
   }

@@ -10,3 +10,10 @@ describe('deletePlan', () => {
     expect(deletePlan('delete')).toEqual({ path: 'files/delete', notice: '已永久删除' })
   })
 })
+
+describe('deletePlan（en）', () => {
+  test('英文提示', () => {
+    expect(deletePlan('trash', 'en')).toEqual({ path: 'files/trash', notice: 'Moved to trash' })
+    expect(deletePlan('delete', 'en')).toEqual({ path: 'files/delete', notice: 'Permanently deleted' })
+  })
+})

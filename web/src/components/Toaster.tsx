@@ -28,7 +28,7 @@ export default function Toaster() {
             <div className="actions">
               {toast.detail && (
                 <button type="button" className="link" onClick={() => setOpen(open === toast.id ? null : toast.id)}>
-                  {open === toast.id ? '收起' : t('error.details')}
+                  {open === toast.id ? t('common.collapse') : t('error.details')}
                 </button>
               )}
               <button type="button" className="link" onClick={() => dismiss(toast.id)}>

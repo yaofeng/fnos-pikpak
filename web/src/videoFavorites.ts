@@ -22,13 +22,15 @@ export type VideoFavorite = {
 
 export type VideoFavoriteGroup = { key: string; label: string; items: VideoFavorite[] }
 
-const unknownLabel = '未知分享'
+// unknownShareKey is the stable fallback label — the server builds group keys
+// from it, so it must never change; the UI translates it at render time.
+export const unknownShareKey = '未知分享'
 
 // groupLabelOf is the name a saved video shows under: the local label if one
 // was chosen, else the sharing user, else the share title, else 未知分享. The
 // server builds the same name.
 export function groupLabelOf(item: VideoFavorite): string {
-  return item.group_label.trim() || item.owner.trim() || item.share_title.trim() || unknownLabel
+  return item.group_label.trim() || item.owner.trim() || item.share_title.trim() || unknownShareKey
 }
 
 // groupKeyOf names the group a saved video sits in. It is built from the

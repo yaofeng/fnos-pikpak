@@ -7,6 +7,7 @@ import FileTable from '../components/FileTable'
 import { RefreshIcon, RestoreIcon, TrashIcon } from '../components/icons'
 import type { FileItem } from '../files'
 import { cacheKeys, readCache, resetCache, writeCache } from '../listCache'
+import { getLang, makeT } from '../i18n'
 import { useFileSelection } from '../useFileSelection'
 import { useMarquee } from '../useMarquee'
 
@@ -20,6 +21,8 @@ function withAccount(path: string, accountId: string): string {
 }
 
 export default function Trash() {
+  const lang = getLang()
+  const t = makeT(lang)
   const { accounts, currentId: accountId, setCurrent } = useAccounts()
   const [items, setItems] = useState<FileItem[]>([])
   const [token, setToken] = useState('')
@@ -114,11 +117,17 @@ export default function Trash() {
 
   async function run(action: 'untrash' | 'delete', target: string[]) {
     if (!target.length) return
-    if (action === 'delete' && !window.confirm(`永久删除 ${target.length} 项？此操作不可恢复。`)) return
+    if (action === 'delete' && !window.confirm(t('trash.confirm_delete').replace('{n}', String(target.length)))) return
     setBusy(true)
     try {
       const res = await apiPost<{ pending: boolean }>(withAccount(`files/${action}`, accountId), { ids: target })
-      setNotice(res.pending ? '任务已提交，稍后自动刷新' : action === 'untrash' ? '已恢复' : '已永久删除')
+      setNotice(
+        res.pending
+          ? t('trash.submitted')
+          : action === 'untrash'
+            ? t('trash.restored')
+            : t('files.notice_deleted'),
+      )
       await fetchPage('', true)
     } catch (e) {
       setError((e as Error).message)
@@ -128,12 +137,12 @@ export default function Trash() {
   }
 
   async function emptyTrash() {
-    const answer = window.prompt('清空回收站会永久删除全部文件，且不可恢复。输入"确认"继续：')
-    if (answer !== '确认') return
+    const answer = window.prompt(t('trash.confirm_empty_prompt'))
+    if (answer !== t('trash.confirm_word')) return
     setBusy(true)
     try {
       const res = await apiPost<{ pending: boolean }>(withAccount('trash/empty', accountId), {})
-      setNotice(res.pending ? '清空任务已提交' : '回收站已清空')
+      setNotice(res.pending ? t('trash.empty_submitted') : t('trash.emptied'))
       await fetchPage('', true)
     } catch (e) {
       setError((e as Error).message)
@@ -147,15 +156,15 @@ export default function Trash() {
       <div className="fm-nav">
         <AccountSwitcher accounts={accounts} currentId={accountId} onChange={setCurrent} />
         <div className="crumb-box">
-          <span className="fm-title">回收站</span>
+          <span className="fm-title">{t('trash.title')}</span>
         </div>
         <button
           className="icon-btn"
           type="button"
           onClick={() => void fetchPage('', true)}
           disabled={loading}
-          title="刷新"
-          aria-label="刷新"
+          title={t('common.refresh')}
+          aria-label={t('common.refresh')}
         >
           <RefreshIcon />
         </button>
@@ -169,7 +178,7 @@ export default function Trash() {
           disabled={busy || ids.length === 0}
         >
           <RestoreIcon />
-          恢复
+          {t('trash.restore')}
         </button>
         <button
           className="btn-icon"
@@ -178,17 +187,17 @@ export default function Trash() {
           disabled={busy || ids.length === 0}
         >
           <TrashIcon />
-          永久删除
+          {t('trash.delete_forever')}
         </button>
         <span className="fm-spacer" />
         <button type="button" className="danger" onClick={emptyTrash} disabled={busy || items.length === 0}>
-          清空回收站
+          {t('trash.empty')}
         </button>
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      {!loading && items.length === 0 && !error && <p className="muted">回收站是空的。</p>}
+      {!loading && items.length === 0 && !error && <p className="muted">{t('trash.empty_state')}</p>}
 
       {items.length > 0 && (
         <div className="file-body" ref={bodyRef} onMouseDown={startMarquee}>
@@ -205,7 +214,7 @@ export default function Trash() {
       <StatusBar selected={ids.length} total={items.length} notice={notice} />
 
       <div ref={sentinel} className="sentinel" />
-      {loading && <p className="muted">加载中…</p>}
+      {loading && <p className="muted">{t('common.loading')}</p>}
     </section>
   )
 }

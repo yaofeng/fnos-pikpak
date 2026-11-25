@@ -19,12 +19,15 @@ import {
   type Sample,
   type TransferJob,
 } from '../transfers'
+import { getLang, makeT } from '../i18n'
 
 type Kind = 'downloads' | 'uploads'
 
 const POLL_MS = 2000
 
 export default function Transfers() {
+  const lang = getLang()
+  const t = makeT(lang)
   const { byId } = useAccounts()
   const [tab, setTab] = useState<Kind>('downloads')
   const [downloads, setDownloads] = useState<TransferJob[]>([])
@@ -103,7 +106,9 @@ export default function Transfers() {
 
   async function remove(kind: Kind, job: TransferJob) {
     const finishedDownload = kind === 'downloads' && job.status === 'done'
-    const deleteFile = finishedDownload && window.confirm(`同时删除已下载的文件「${jobName(job)}」？\n取消则只移除任务记录。`)
+    const deleteFile =
+      finishedDownload &&
+      window.confirm(t('transfers.confirm_delete_file').replace('{name}', jobName(job)))
     setBusy(`${job.id}:delete`)
     try {
       // Same as control: the job row carries its account, the request names none.
@@ -125,16 +130,16 @@ export default function Transfers() {
       <div className="transfer-head">
         <div className="tabs">
           <button type="button" className={tab === 'downloads' ? 'tab active' : 'tab'} onClick={() => setTab('downloads')}>
-            下载 {downloads.length ? `(${downloads.length})` : ''}
+            {t('common.download')} {downloads.length ? `(${downloads.length})` : ''}
           </button>
           <button type="button" className={tab === 'uploads' ? 'tab active' : 'tab'} onClick={() => setTab('uploads')}>
-            上传 {uploads.length ? `(${uploads.length})` : ''}
+            {t('common.upload')} {uploads.length ? `(${uploads.length})` : ''}
           </button>
         </div>
         <div className="actions">
-          {active > 0 && <span className="muted small">{active} 个进行中</span>}
+          {active > 0 && <span className="muted small">{t('tasks.active_count').replace('{n}', String(active))}</span>}
           <button type="button" onClick={() => void load(tab)} disabled={loading}>
-            刷新
+            {t('common.refresh')}
           </button>
         </div>
       </div>
@@ -142,12 +147,10 @@ export default function Transfers() {
       {error && <p className="error">{error}</p>}
 
       <p className="muted small">
-        {tab === 'downloads'
-          ? '在「我的文件」里选中文件后点「下载」创建任务。'
-          : '在「我的文件」里点「上传」把飞牛上的文件传到 PikPak。'}
+        {tab === 'downloads' ? t('transfers.hint_downloads') : t('transfers.hint_uploads')}
       </p>
 
-      {items.length === 0 && !loading && <p className="muted">还没有{tab === 'downloads' ? '下载' : '上传'}任务。</p>}
+      {items.length === 0 && !loading && <p className="muted">{tab === 'downloads' ? t('transfers.empty_downloads') : t('transfers.empty_uploads')}</p>}
 
       <ul className="transfer-list">
         {items.map((job) => {
@@ -161,7 +164,7 @@ export default function Transfers() {
                 <span className="transfer-name" title={job.dest_path || job.local_path || jobName(job)}>
                   {jobName(job)}
                 </span>
-                <span className={job.status === 'failed' ? 'error small' : 'muted small'}>{statusText(job)}</span>
+                <span className={job.status === 'failed' ? 'error small' : 'muted small'}>{statusText(job, lang)}</span>
               </div>
 
               <div className="progress" aria-label={`${pct}%`}>
@@ -170,39 +173,39 @@ export default function Transfers() {
 
               <div className="transfer-line small muted">
                 <span>
-                  {accountLabel(byId, job.account_id)} · {pct}% · {formatSize(transferred(job))}
+                  {accountLabel(byId, job.account_id, undefined, lang)} · {pct}% · {formatSize(transferred(job))}
                   {job.size ? ` / ${formatSize(job.size)}` : ''}
                 </span>
                 <span>
                   {running && speed > 0 ? `${formatSize(speed)}/s` : ''}
-                  {running && eta !== null ? ` · 剩余 ${formatDuration(eta)}` : ''}
+                  {running && eta !== null ? ` ${t('transfers.eta_prefix')} ${formatDuration(eta, lang)}` : ''}
                 </span>
               </div>
 
               <div className="transfer-actions">
                 {canPause(job) && (
                   <button type="button" disabled={busy === `${job.id}:pause`} onClick={() => void control(tab, job, 'pause')}>
-                    暂停
+                    {t('transfers.pause')}
                   </button>
                 )}
                 {canResume(job) && (
                   <button type="button" disabled={busy === `${job.id}:resume`} onClick={() => void control(tab, job, 'resume')}>
-                    {job.status === 'failed' ? '重试' : '继续'}
+                    {job.status === 'failed' ? t('tasks.retry') : t('transfers.resume')}
                   </button>
                 )}
                 {canCancel(job) && (
                   <button type="button" className="danger" disabled={busy === `${job.id}:cancel`} onClick={() => void control(tab, job, 'cancel')}>
-                    取消
+                    {t('common.cancel')}
                   </button>
                 )}
                 {tab === 'downloads' && job.status === 'done' && canOpenFolder && (
                   <button type="button" onClick={() => void openFolder(job.dest_dir || '')}>
-                    打开所在目录
+                    {t('transfers.open_folder')}
                   </button>
                 )}
                 {!isActive(job) && (
                   <button type="button" className="subtle" disabled={busy === `${job.id}:delete`} onClick={() => void remove(tab, job)}>
-                    移除记录
+                    {t('transfers.remove_record')}
                   </button>
                 )}
               </div>

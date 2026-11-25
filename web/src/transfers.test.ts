@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { etaSeconds, formatDuration, percent, speedOf, statusText, transferred } from './transfers'
 
 function job(extra: Record<string, unknown> = {}) {
@@ -93,5 +93,25 @@ describe('statusText', () => {
 
   test('marks skipped uploads as a conflict', () => {
     expect(statusText({ id: '1', status: 'skipped', size: 0 })).toBe('已跳过（同名）')
+  })
+})
+
+describe('formatDuration（en）', () => {
+  it('英文时长单位', () => {
+    expect(formatDuration(45, 'en')).toBe('45s')
+    expect(formatDuration(125, 'en')).toBe('2m 05s')
+    expect(formatDuration(3725, 'en')).toBe('1h 02m')
+  })
+})
+
+describe('statusText（en）', () => {
+  it('英文状态与失败原因', () => {
+    expect(statusText({ id: '1', status: 'queued', size: 0 }, 'en')).toBe('Queued')
+    expect(statusText({ id: '1', status: 'running', size: 0 }, 'en')).toBe('Transferring')
+    expect(statusText({ id: '1', status: 'skipped', size: 0 }, 'en')).toBe('Skipped (same name)')
+    expect(statusText({ id: '1', status: 'failed', size: 0, error_message: 'disk full' }, 'en')).toBe(
+      'Failed: disk full',
+    )
+    expect(statusText({ id: '1', status: 'failed', size: 0 }, 'en')).toBe('Failed')
   })
 })

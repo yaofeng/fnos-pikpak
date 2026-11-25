@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { waitForVideoJob, type VideoJob } from './videoPrepare'
 
 function job(state: VideoJob['state'], extra: Partial<VideoJob> = {}): VideoJob {
@@ -37,5 +37,35 @@ describe('waitForVideoJob', () => {
         now: () => (now += 1000),
       }),
     ).rejects.toThrow('超时')
+  })
+})
+
+describe('waitForVideoJob（en）', () => {
+  it('失败与超时抛英文错误', async () => {
+    const failed = { id: 'j', state: 'failed', error: 'boom' }
+    await expect(
+      waitForVideoJob('j', { get: async () => failed as never, sleep: async () => {} }, 'en'),
+    ).rejects.toThrow('boom')
+    const running = { id: 'j', state: 'running' }
+    let tick = 0
+    await expect(
+      waitForVideoJob(
+        'j',
+        {
+          get: async () => running as never,
+          sleep: async () => {},
+          now: () => (tick += 500),
+          timeoutMs: 1000,
+        },
+        'en',
+      ),
+    ).rejects.toThrow('Video preparation timed out. Try again later.')
+    await expect(
+      waitForVideoJob(
+        'j',
+        { get: async () => ({ id: 'j', state: 'failed' }) as never, sleep: async () => {} },
+        'en',
+      ),
+    ).rejects.toThrow('Video preparation failed')
   })
 })

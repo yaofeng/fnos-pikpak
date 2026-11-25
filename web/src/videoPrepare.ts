@@ -1,5 +1,6 @@
 // Preparing a video for 完整播放 can restore, purge and move files, so the
 // server answers 202 with a job id and the browser polls it.
+import { getLang, makeT, type Lang } from './i18n'
 
 type VideoJobState = 'running' | 'ready' | 'failed'
 
@@ -29,16 +30,17 @@ type WaitOptions = {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-export async function waitForVideoJob(id: string, opts: WaitOptions): Promise<VideoJob> {
+export async function waitForVideoJob(id: string, opts: WaitOptions, lang?: Lang): Promise<VideoJob> {
   const sleep = opts.sleep ?? defaultSleep
   const now = opts.now ?? Date.now
   const interval = opts.intervalMs ?? 1000
   const deadline = now() + (opts.timeoutMs ?? 15 * 60 * 1000)
+  const t = makeT(lang ?? getLang())
   for (;;) {
     const job = await opts.get(id)
     if (job.state === 'ready') return job
-    if (job.state === 'failed') throw new Error(job.error || '视频准备失败')
-    if (now() >= deadline) throw new Error('视频准备超时，请稍后重试')
+    if (job.state === 'failed') throw new Error(job.error || t('video.prepare_failed'))
+    if (now() >= deadline) throw new Error(t('video.prepare_timeout'))
     await sleep(interval)
   }
 }

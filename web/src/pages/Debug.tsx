@@ -1,6 +1,7 @@
 import { TrimApp } from '@trimjs/web-app'
 import { useCallback, useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api'
+import { getLang, makeT } from '../i18n'
 import { AccountSection } from '../components/AccountSection'
 
 type Health = { ok: boolean; version: string; uid: number }
@@ -46,6 +47,7 @@ type GatewayInfo = {
 }
 
 function GatewayCard() {
+  const t = makeT(getLang())
   const [info, setInfo] = useState<GatewayInfo | null>(null)
   const [forged, setForged] = useState<{ header_count: number; duplicate_detected: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -79,13 +81,13 @@ function GatewayCard() {
   return (
     <section className="card">
       <div className="card-header">
-        <h2>网关信息</h2>
+        <h2>{t('debug.gateway')}</h2>
         <div className="actions">
           <button type="button" onClick={load}>
-            刷新
+            {t('common.refresh')}
           </button>
           <button type="button" onClick={testForged}>
-            伪造身份头测试
+            {t('debug.forged_test')}
           </button>
         </div>
       </div>
@@ -93,17 +95,17 @@ function GatewayCard() {
       {error && <p className="error">{error}</p>}
       {info && (
         <dl className="kv">
-          <dt>路径</dt>
+          <dt>{t('debug.path')}</dt>
           <dd className="mono">{info.path}</dd>
-          <dt>查询串</dt>
+          <dt>{t('debug.query')}</dt>
           <dd className="mono">{info.raw_query}</dd>
           <dt>Origin</dt>
-          <dd className="mono">{info.origin || '（空）'}</dd>
+          <dd className="mono">{info.origin || t('debug.empty')}</dd>
           <dt>Host</dt>
           <dd className="mono">{info.host}</dd>
-          <dt>身份</dt>
+          <dt>{t('debug.identity')}</dt>
           <dd className="mono">
-            uid={info.identity.uid} user={info.identity.username || '（空）'} admin=
+            uid={info.identity.uid} user={info.identity.username || t('debug.empty')} admin=
             {String(info.identity.is_admin)}
           </dd>
         </dl>
@@ -113,8 +115,8 @@ function GatewayCard() {
         <table className="table">
           <thead>
             <tr>
-              <th>请求头</th>
-              <th>出现次数</th>
+              <th>{t('debug.th_header')}</th>
+              <th>{t('debug.th_count')}</th>
             </tr>
           </thead>
           <tbody>
@@ -130,10 +132,8 @@ function GatewayCard() {
 
       {forged && (
         <p className={forged.duplicate_detected ? 'error' : 'ok'}>
-          X-Trim-Userid 出现 {forged.header_count} 次，
-          {forged.duplicate_detected
-            ? '网关保留了客户端伪造的副本（需要依赖重复头拒绝）。'
-            : '网关覆盖或剥离了客户端伪造的头。'}
+          {t('debug.forged_count').replace('{n}', String(forged.header_count))}
+          {forged.duplicate_detected ? t('debug.forged_kept') : t('debug.forged_stripped')}
         </p>
       )}
     </section>
@@ -149,7 +149,61 @@ type RangeRow = {
   bytes: number | string
 }
 
+// rangeCases builds the probe list from a translator, at module scope so the
+// component body stays free of nested-call purity noise.
+function rangeCases(tr: (key: string) => string): { label: string; range: string }[] {
+  const size = 64 << 20
+  return [
+    { label: tr('debug.range_head'), range: 'bytes=0-1023' },
+    { label: tr('debug.range_middle'), range: `bytes=${size / 2}-${size / 2 + (1 << 20) - 1}` },
+    { label: tr('debug.range_tail'), range: `bytes=${size - 1024}-${size - 1}` },
+    { label: tr('debug.range_eof'), range: `bytes=${size + 1024}-${size + 2048}` },
+  ]
+}
+
+
+// runRangeProbe times the Range requests from the module scope: the clock
+// calls are probe logic, not render work, and keeping them out of the
+// component avoids nested-async purity noise.
+async function runRangeProbe(tr: (key: string) => string): Promise<RangeRow[]> {
+  const size = 64 << 20
+  const cases = rangeCases(tr)
+  const out: RangeRow[] = []
+
+  for (const c of cases) {
+    const t0 = performance.now()
+    const res = await fetch(`api/stream-probe?size=${size}&t=${Date.now()}`, {
+      headers: { Range: c.range },
+    })
+    const ttfb = performance.now() - t0
+    const body = await res.arrayBuffer()
+    const total = performance.now() - t0
+    out.push({
+      label: c.label,
+      status: res.status,
+      contentRange: res.headers.get('Content-Range') ?? '—',
+      ttfb: ttfb.toFixed(0),
+      total: total.toFixed(0),
+      bytes: body.byteLength,
+    })
+  }
+
+  const t0 = performance.now()
+  const head = await fetch(`api/stream-probe?size=${size}&t=${Date.now()}`, { method: 'HEAD' })
+  const headTTFB = performance.now() - t0
+  out.push({
+    label: 'HEAD',
+    status: head.status,
+    contentRange: head.headers.get('Content-Range') ?? '—',
+    ttfb: headTTFB.toFixed(0),
+    total: (performance.now() - t0).toFixed(0),
+    bytes: head.headers.get('Content-Length') ?? '—',
+  })
+  return out
+}
+
 function RangeCard() {
+  const tr = makeT(getLang())
   const [rows, setRows] = useState<RangeRow[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -157,46 +211,8 @@ function RangeCard() {
   async function run() {
     setRunning(true)
     setError(null)
-    const size = 64 << 20
-    const cases = [
-      { label: '开头 1 KiB', range: 'bytes=0-1023' },
-      { label: '中间 1 MiB', range: `bytes=${size / 2}-${size / 2 + (1 << 20) - 1}` },
-      { label: '尾部 1 KiB', range: `bytes=${size - 1024}-${size - 1}` },
-      { label: '超出 EOF', range: `bytes=${size + 1024}-${size + 2048}` },
-    ]
-    const out: RangeRow[] = []
-
     try {
-      for (const c of cases) {
-        const t0 = performance.now()
-        const res = await fetch(`api/stream-probe?size=${size}&t=${Date.now()}`, {
-          headers: { Range: c.range },
-        })
-        const ttfb = performance.now() - t0
-        const body = await res.arrayBuffer()
-        const total = performance.now() - t0
-        out.push({
-          label: c.label,
-          status: res.status,
-          contentRange: res.headers.get('Content-Range') ?? '—',
-          ttfb: ttfb.toFixed(0),
-          total: total.toFixed(0),
-          bytes: body.byteLength,
-        })
-      }
-
-      const t0 = performance.now()
-      const head = await fetch(`api/stream-probe?size=${size}&t=${Date.now()}`, { method: 'HEAD' })
-      const headTTFB = performance.now() - t0
-      out.push({
-        label: 'HEAD',
-        status: head.status,
-        contentRange: head.headers.get('Content-Range') ?? '—',
-        ttfb: headTTFB.toFixed(0),
-        total: (performance.now() - t0).toFixed(0),
-        bytes: head.headers.get('Content-Length') ?? '—',
-      })
-      setRows(out)
+      setRows(await runRangeProbe(tr))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -207,25 +223,25 @@ function RangeCard() {
   return (
     <section className="card">
       <div className="card-header">
-        <h2>Range 探针</h2>
+        <h2>{tr('debug.range_probe')}</h2>
         <button type="button" onClick={run} disabled={running}>
-          {running ? '测试中…' : '测试 64 MiB 文件'}
+          {running ? tr('debug.testing') : tr('debug.test_64mib')}
         </button>
       </div>
       <p className="muted">
-        判断网关是否原样转发 206/Range、是否缓冲响应。首字节耗时明显接近总耗时说明整段被缓冲。
+        {tr('debug.range_hint')}
       </p>
       {error && <p className="error">{error}</p>}
       {rows.length > 0 && (
         <table className="table">
           <thead>
             <tr>
-              <th>用例</th>
-              <th>状态</th>
+              <th>{tr('debug.th_case')}</th>
+              <th>{tr('about.th_code')}</th>
               <th>Content-Range</th>
-              <th>首字节 ms</th>
-              <th>总耗时 ms</th>
-              <th>字节</th>
+              <th>{tr('debug.th_ttfb')}</th>
+              <th>{tr('debug.th_total_ms')}</th>
+              <th>{tr('debug.th_bytes')}</th>
             </tr>
           </thead>
           <tbody>
@@ -247,6 +263,7 @@ function RangeCard() {
 }
 
 function ProbesCard() {
+  const t = makeT(getLang())
   const [results, setResults] = useState<ProbeResult[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -267,26 +284,26 @@ function ProbesCard() {
   return (
     <section className="card">
       <div className="card-header">
-        <h2>探针</h2>
+        <h2>{t('debug.probes')}</h2>
         <div className="actions">
           <button type="button" onClick={run} disabled={running}>
-            {running ? '运行中…' : '运行全部探针'}
+            {running ? t('debug.running') : t('debug.run_all')}
           </button>
           <a className="button" href="api/report" download>
-            导出报告
+            {t('debug.export_report')}
           </a>
         </div>
       </div>
 
       {error && <p className="error">{error}</p>}
-      {!results && !error && <p className="muted">尚未运行。</p>}
+      {!results && !error && <p className="muted">{t('debug.not_run')}</p>}
       {results && (
         <table className="table">
           <thead>
             <tr>
-              <th>名称</th>
-              <th>结果</th>
-              <th>详情</th>
+              <th>{t('debug.th_name')}</th>
+              <th>{t('debug.th_result')}</th>
+              <th>{t('about.th_desc')}</th>
             </tr>
           </thead>
           <tbody>
@@ -300,7 +317,7 @@ function ProbesCard() {
                   {r.detail ?? ''}
                   {r.data && (
                     <details>
-                      <summary>数据</summary>
+                      <summary>{t('debug.th_data')}</summary>
                       <pre>{JSON.stringify(r.data, null, 2)}</pre>
                     </details>
                   )}
@@ -315,6 +332,7 @@ function ProbesCard() {
 }
 
 function ACLCard() {
+  const t = makeT(getLang())
   const [standalone, setStandalone] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [result, setResult] = useState<ACLProbeResponse | null>(null)
@@ -328,9 +346,10 @@ function ACLCard() {
   }, [])
 
   const pick = useCallback(async () => {
+    const t = makeT(getLang())
     setError(null)
     if (sdk.isStandaloneWeb) {
-      setError('请在飞牛桌面内打开本应用后再选择目录。')
+      setError(t('debug.need_desktop_dir'))
       return
     }
     try {
@@ -347,21 +366,21 @@ function ACLCard() {
   return (
     <section className="card">
       <div className="card-header">
-        <h2>文件授权探针</h2>
+        <h2>{t('debug.acl_probe')}</h2>
         <button type="button" onClick={pick} disabled={standalone}>
-          选择飞牛目录
+          {t('debug.pick_fnos_dir')}
         </button>
       </div>
-      {standalone && <p className="muted">当前不在飞牛桌面内，目录选择不可用。</p>}
+      {standalone && <p className="muted">{t('debug.not_in_desktop')}</p>}
       {error && <p className="error">{error}</p>}
       {picked.length > 0 && (
         <p className="muted">
-          已选择：<span className="mono">{picked.join(', ')}</span>
+          {t('debug.picked')}<span className="mono">{picked.join(', ')}</span>
         </p>
       )}
       {result && (
         <>
-          <h3>该用户的授权目录</h3>
+          <h3>{t('debug.granted_dirs')}</h3>
           <ul className="mono">
             {result.folders.map((f) => (
               <li key={f}>{f}</li>
@@ -372,11 +391,11 @@ function ACLCard() {
           <table className="table">
             <thead>
               <tr>
-                <th>路径</th>
-                <th>可读</th>
-                <th>可写</th>
-                <th>可删</th>
-                <th>授权集合内</th>
+                <th>{t('debug.th_path')}</th>
+                <th>{t('debug.th_readable')}</th>
+                <th>{t('debug.th_writable')}</th>
+                <th>{t('debug.th_deletable')}</th>
+                <th>{t('debug.th_in_grants')}</th>
               </tr>
             </thead>
             <tbody>
@@ -392,7 +411,7 @@ function ACLCard() {
             </tbody>
           </table>
 
-          <h3>显示路径</h3>
+          <h3>{t('debug.semantic_paths')}</h3>
           {result.semantic_error && <p className="error">{result.semantic_error}</p>}
           <ul>
             {(result.semantic ?? []).map((s) => (
@@ -403,7 +422,7 @@ function ACLCard() {
           </ul>
 
           <p className={result.writable_ok ? 'ok' : 'error'}>
-            {result.writable_ok ? '可写：是（可以下载到这个目录）' : `可写：否（${result.writable_error}）`}
+            {result.writable_ok ? t('debug.writable_yes') : t('debug.writable_no').replace('{reason}', result.writable_error || '')}
           </p>
         </>
       )}
@@ -429,6 +448,7 @@ type UploadReport = {
 }
 
 function UploadCard({ refresh }: { refresh: number }) {
+  const t = makeT(getLang())
   const [config, setConfig] = useState<UploadConfig | null>(null)
   const [bound, setBound] = useState(false)
   const [parentId, setParentId] = useState('')
@@ -471,7 +491,7 @@ function UploadCard({ refresh }: { refresh: number }) {
   async function pickAndUpload() {
     setError(null)
     if (sdk.isStandaloneWeb) {
-      setError('请在飞牛桌面内打开本应用后再选择文件。')
+      setError(t('debug.need_desktop_file'))
       return
     }
     try {
@@ -487,14 +507,14 @@ function UploadCard({ refresh }: { refresh: number }) {
   return (
     <section className="card">
       <div className="card-header">
-        <h2>上传探针</h2>
+        <h2>{t('debug.upload_probe')}</h2>
       </div>
-      {!bound && <p className="muted">先绑定 PikPak 账号再上传。</p>}
+      {!bound && <p className="muted">{t('debug.bind_first')}</p>}
       {error && <p className="error">{error}</p>}
       {config && bound && (
         <>
           <label className="field">
-            <span>目标文件夹 id（留空为根目录）</span>
+            <span>{t('debug.parent_id_label')}</span>
             <input
               type="text"
               value={parentId}
@@ -504,43 +524,43 @@ function UploadCard({ refresh }: { refresh: number }) {
           </label>
           <div className="actions">
             <button type="button" onClick={() => upload(config.generated_path)} disabled={busy}>
-              {busy ? '上传中…' : `上传生成文件（${Math.round(config.generated_size / 1048576)} MiB）`}
+              {busy ? t('debug.uploading') : t('debug.upload_generated').replace('{mib}', String(Math.round(config.generated_size / 1048576)))}
             </button>
             <button type="button" onClick={pickAndUpload} disabled={busy || standalone}>
-              上传飞牛文件
+              {t('debug.upload_fnos_file')}
             </button>
           </div>
         </>
       )}
       {report && (
         <dl className="kv">
-          <dt>文件</dt>
+          <dt>{t('debug.dt_file')}</dt>
           <dd className="mono">{report.file?.name ?? report.local_path}</dd>
-          <dt>大小</dt>
-          <dd>{report.size} 字节</dd>
+          <dt>{t('files.th_size')}</dt>
+          <dd>{t('debug.byte_count').replace('{n}', String(report.size))}</dd>
           <dt>GCID</dt>
           <dd className="mono">{report.gcid}</dd>
-          <dt>GCID 耗时</dt>
+          <dt>{t('debug.dt_gcid_ms')}</dt>
           <dd>{report.gcid_ms} ms</dd>
-          <dt>秒传</dt>
-          <dd>{report.instant ? '是（无需上传）' : '否'}</dd>
+          <dt>{t('debug.dt_instant')}</dt>
+          <dd>{report.instant ? t('debug.instant_yes') : t('debug.instant_no')}</dd>
           {report.provider && (
             <>
               <dt>Provider</dt>
               <dd className="mono">{report.provider}</dd>
-              <dt>params 键</dt>
+              <dt>{t('debug.dt_param_keys')}</dt>
               <dd className="mono">{(report.param_keys ?? []).join(', ')}</dd>
             </>
           )}
-          <dt>上传耗时</dt>
+          <dt>{t('debug.dt_upload_ms')}</dt>
           <dd>{report.upload_ms} ms</dd>
-          <dt>等待完成</dt>
+          <dt>{t('debug.dt_wait_ms')}</dt>
           <dd>{report.wait_ms} ms</dd>
-          <dt>总耗时</dt>
+          <dt>{t('debug.th_total_ms')}</dt>
           <dd>{report.total_ms} ms</dd>
-          <dt>最终状态</dt>
+          <dt>{t('debug.dt_final')}</dt>
           <dd className="mono">
-            {report.file?.phase ?? '—'} {report.file?.id ? `（${report.file.id}）` : ''}
+            {report.file?.phase ?? '—'} {report.file?.id ? t('debug.id_paren').replace('{id}', report.file.id) : ''}
           </dd>
         </dl>
       )}
@@ -549,6 +569,7 @@ function UploadCard({ refresh }: { refresh: number }) {
 }
 
 export default function Debug() {
+  const t = makeT(getLang())
   const [health, setHealth] = useState<Health | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
@@ -577,19 +598,19 @@ export default function Debug() {
   return (
     <main className="page">
       <header className="page-header">
-        <h1>PikPak 调试</h1>
-        <span className="muted">M0 验证版</span>
+        <h1>{t('debug.title')}</h1>
+        <span className="muted">{t('debug.m0')}</span>
       </header>
 
       <section className="card">
-        <h2>服务状态</h2>
+        <h2>{t('debug.health')}</h2>
         {error && <p className="error">{error}</p>}
-        {!error && !health && <p className="muted">检查中…</p>}
+        {!error && !health && <p className="muted">{t('debug.checking')}</p>}
         {health && (
           <dl className="kv">
-            <dt>版本</dt>
+            <dt>{t('about.version')}</dt>
             <dd>{health.version}</dd>
-            <dt>飞牛用户 UID</dt>
+            <dt>{t('debug.dt_uid')}</dt>
             <dd>{health.uid}</dd>
           </dl>
         )}

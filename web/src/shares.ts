@@ -1,4 +1,5 @@
 import { formatSize, isFolder, type FileItem } from './files'
+import { getLang, makeT, type Lang } from './i18n'
 
 // onlyFolderEntry returns the folder a share browser should enter without
 // showing the root, when the root holds exactly one entry and that entry is a
@@ -37,9 +38,10 @@ export function favoriteSizeText(fav: ShareTotals): string {
   return fav.file_count === 0 ? '0 B' : '—'
 }
 
-export function favoriteStatsHint(fav: ShareTotals): string {
+export function favoriteStatsHint(fav: ShareTotals, lang?: Lang): string {
   if (fav.file_count >= 0) return ''
-  return fav.stats_checked ? '无法统计这个分享' : '进入分享后自动统计'
+  const t = makeT(lang ?? getLang())
+  return fav.stats_checked ? t('shares.stats_unavailable') : t('shares.stats_pending')
 }
 
 // 分享收藏夹 sorts the cached list in the browser: there is nothing to ask

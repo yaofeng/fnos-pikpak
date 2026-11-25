@@ -12,12 +12,15 @@ import {
   taskTitle,
   type OfflineTask,
 } from '../tasks'
+import { getLang, makeT } from '../i18n'
 
 type AccountError = { account_id: string; account_name?: string; error: string }
 
 const POLL_MS = 3000
 
 export default function Tasks() {
+  const lang = getLang()
+  const t = makeT(lang)
   const { byId } = useAccounts()
   const [items, setItems] = useState<OfflineTask[]>([])
   const [loading, setLoading] = useState(false)
@@ -80,7 +83,10 @@ export default function Tasks() {
         parent_id: '',
       })
       setLink('')
-      setNotice(`已通过账号 ${accountLabel(byId, res.account_id, res.account_name)} 创建离线任务`)
+      setNotice(
+        t('tasks.created_via')
+          .replace('{name}', accountLabel(byId, res.account_id, res.account_name, lang)),
+      )
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -95,7 +101,7 @@ export default function Tasks() {
       // The merged listing knows which account owns the task; retrying it
       // anywhere else would be a 404 on that account.
       await apiPost(`tasks/${task.id}/retry?account=${encodeURIComponent(task.account_id ?? '')}`, {})
-      setNotice('已提交重试')
+      setNotice(t('tasks.retry_submitted'))
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -105,8 +111,8 @@ export default function Tasks() {
   }
 
   async function remove(task: OfflineTask) {
-    const extra = deleteFiles ? '，并删除已下载的文件' : ''
-    if (!window.confirm(`删除任务「${taskTitle(task)}」${extra}？`)) return
+    const extra = deleteFiles ? t('tasks.confirm_delete_extra') : ''
+    if (!window.confirm(t('tasks.confirm_delete').replace('{name}', taskTitle(task)).replace('{extra}', extra))) return
     setBusy(`${task.id}:delete`)
     try {
       // groupByAccount keeps one request per owning account, each naming its
@@ -127,11 +133,11 @@ export default function Tasks() {
   }
 
   async function clearFinished() {
-    if (!window.confirm('清理所有已结束的任务记录？已下载的文件会保留。')) return
+    if (!window.confirm(t('tasks.confirm_clear'))) return
     setBusy('clear')
     try {
       const res = await apiPost<{ deleted?: number }>('tasks/clear', {})
-      setNotice(res.deleted ? `已清理 ${res.deleted} 个已结束任务` : '没有需要清理的已结束任务')
+      setNotice(res.deleted ? t('tasks.cleared').replace('{n}', String(res.deleted)) : t('tasks.nothing_to_clear'))
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -145,14 +151,14 @@ export default function Tasks() {
   return (
     <section className="card task-page">
       <div className="transfer-head">
-        <h2>离线任务</h2>
+        <h2>{t('tasks.title')}</h2>
         <div className="actions">
-          {active > 0 && <span className="muted small">{active} 个进行中</span>}
+          {active > 0 && <span className="muted small">{t('tasks.active_count').replace('{n}', String(active))}</span>}
           <button type="button" onClick={() => void load()} disabled={loading}>
-            刷新
+            {t('common.refresh')}
           </button>
           <button type="button" onClick={() => void clearFinished()} disabled={busy === 'clear'}>
-            清理已结束
+            {t('tasks.clear_finished')}
           </button>
         </div>
       </div>
@@ -166,18 +172,18 @@ export default function Tasks() {
       >
         <input
           type="text"
-          placeholder="粘贴磁力链接或下载链接"
+          placeholder={t('tasks.link_placeholder')}
           value={link}
           onChange={(e) => setLink(e.target.value)}
         />
         <button type="submit" disabled={busy === 'create' || !link.trim()}>
-          新建任务
+          {t('tasks.create')}
         </button>
       </form>
 
       <label className="muted small task-delete-flag">
         <input type="checkbox" checked={deleteFiles} onChange={(e) => setDeleteFiles(e.target.checked)} />
-        删除任务时同时删除已下载的文件
+        {t('tasks.delete_files_flag')}
       </label>
 
       {error && <p className="error">{error}</p>}
@@ -185,15 +191,19 @@ export default function Tasks() {
           simply missing, so the failure has to say itself. */}
       {accountErrors.length > 0 && (
         <p className="muted small">
-          部分账号的任务没有加载：
+          {t('tasks.account_errors')}
           {accountErrors
-            .map((e) => `账号 ${accountLabel(byId, e.account_id, e.account_name)}：${e.error}`)
-            .join('；')}
+            .map((e) =>
+              t('recent.account_error_line')
+                .replace('{name}', accountLabel(byId, e.account_id, e.account_name, lang))
+                .replace('{error}', e.error),
+            )
+            .join(lang === 'en' ? '; ' : '；')}
         </p>
       )}
       {notice && <p className="ok small">{notice}</p>}
 
-      {items.length === 0 && !loading && <p className="muted">还没有离线任务。粘贴链接即可创建。</p>}
+      {items.length === 0 && !loading && <p className="muted">{t('tasks.empty')}</p>}
 
       <ul className="transfer-list">
         {items.map((task) => (
@@ -203,7 +213,7 @@ export default function Tasks() {
                 {taskTitle(task)}
               </span>
               <span className={task.phase === 'PHASE_TYPE_ERROR' ? 'error small' : 'muted small'}>
-                {taskStatusText(task)}
+                {taskStatusText(task, lang)}
               </span>
             </div>
 
@@ -216,15 +226,15 @@ export default function Tasks() {
                 {taskPercent(task)}%{task.file_size ? ` · ${formatSize(task.file_size)}` : ''}
               </span>
               <span>
-                {accountLabel(byId, task.account_id)}
-                {task.type ? ` · ${task.type === 'offline' ? '离线下载' : task.type}` : ''}
+                {accountLabel(byId, task.account_id, undefined, lang)}
+                {task.type ? ` · ${task.type === 'offline' ? t('tasks.type_offline') : task.type}` : ''}
               </span>
             </div>
 
             <div className="transfer-actions">
               {canRetry(task) && (
                 <button type="button" disabled={busy === `${task.id}:retry`} onClick={() => void retry(task)}>
-                  重试
+                  {t('tasks.retry')}
                 </button>
               )}
               <button
@@ -233,14 +243,14 @@ export default function Tasks() {
                 disabled={busy === `${task.id}:delete`}
                 onClick={() => void remove(task)}
               >
-                删除
+                {t('common.delete')}
               </button>
             </div>
           </li>
         ))}
       </ul>
 
-      <p className="muted small">任务列表来自 PikPak，页面可见时每 3 秒刷新一次。</p>
+      <p className="muted small">{t('tasks.hint')}</p>
     </section>
   )
 }

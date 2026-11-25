@@ -9,8 +9,16 @@ import { CheckIcon, FileIcon, GridIcon, ListIcon, RefreshIcon, StarIcon, TrashIc
 import { formatSize, thumbPath, type FileItem } from '../files'
 import { iinaURL } from '../iina'
 import { useFileSelection } from '../useFileSelection'
-import { groupKeyOf, groupVideoFavorites, selectedFileIDs, type VideoFavorite, type VideoFavoriteGroup } from '../videoFavorites'
+import {
+  groupKeyOf,
+  groupVideoFavorites,
+  selectedFileIDs,
+  unknownShareKey,
+  type VideoFavorite,
+  type VideoFavoriteGroup,
+} from '../videoFavorites'
 import { waitForVideoJob } from '../videoPrepare'
+import { getLang, makeT } from '../i18n'
 
 type PlayTarget = { file_id: string; name: string; stream_url: string }
 
@@ -29,7 +37,15 @@ function toFileItem(f: VideoFavorite): FileItem {
   }
 }
 
+// openIINA navigates the whole window to the external player from module
+// scope — an assignment the render-purity rule should not inspect.
+function openIINA(directURL: string) {
+  window.location.href = iinaURL(directURL)
+}
+
 export default function VideoFavorites() {
+  const lang = getLang()
+  const t = makeT(lang)
   const [items, setItems] = useState<VideoFavorite[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -79,9 +95,9 @@ export default function VideoFavorites() {
 
   // handToIINA opens the external player with the original link the server
   // supplied for 播放器 = IINA; nothing goes through this app.
-  function handToIINA(directURL: string) {
-    window.location.href = iinaURL(directURL)
-    setNotice('已交给 IINA 打开；若没有打开，可能尚未安装 IINA（可在设置里改回内置播放器）')
+  function handToIINA(directURL: string, notice: string) {
+    openIINA(directURL)
+    setNotice(notice)
   }
 
   async function preview(f: VideoFavorite) {
@@ -93,7 +109,7 @@ export default function VideoFavorites() {
         video_favorite_id: f.id,
       })
       if (got.direct_url) {
-        handToIINA(got.direct_url)
+        handToIINA(got.direct_url, t('vfav.iina_hint'))
         return
       }
       playInline({ file_id: f.file_id, name: f.display_name || f.name, stream_url: got.stream_url })
@@ -107,15 +123,15 @@ export default function VideoFavorites() {
   async function fullPlay(f: VideoFavorite) {
     setBusy('prepare')
     setError('')
-    setNotice(f.restored ? '正在打开 Pack From Shared 中已转存的视频…' : '正在把视频转存到「Pack From Shared」…')
+    setNotice(f.restored ? t('vfav.opening_restored') : t('vfav.restoring'))
     try {
       const started = await apiPost<{ job_id: string }>('videos/prepare', { video_favorite_id: f.id })
       const job = await waitForVideoJob(started.job_id, {
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
-      if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
+      if (!job.stream_url) throw new Error(t('vfav.prepare_no_stream'))
       if (job.direct_url) {
-        handToIINA(job.direct_url)
+        handToIINA(job.direct_url, t('vfav.iina_hint'))
         void load()
         return
       }
@@ -140,7 +156,7 @@ export default function VideoFavorites() {
     if (list.length === 0) return
     setBusy('download')
     setError('')
-    setNotice(`正在转存 ${list.length} 个视频以便下载…`)
+    setNotice(t('vfav.restoring_for_download').replace('{n}', String(list.length)))
     try {
       // Each prepare job reports the account its restored copy lives on;
       // queue the download for exactly that account, so the job never
@@ -153,11 +169,11 @@ export default function VideoFavorites() {
         })
         if (job.file_id) copies.push({ file_id: job.file_id, account_id: job.account_id ?? '' })
       }
-      setNotice(await queueDownloads(copies))
+      setNotice(await queueDownloads(copies, lang))
       clear()
       void load()
     } catch (err) {
-      setError(downloadErrorMessage(err))
+      setError(downloadErrorMessage(err, lang))
       setNotice('')
     } finally {
       setBusy('')
@@ -167,7 +183,7 @@ export default function VideoFavorites() {
   // Groups are local: renaming one labels every video in it, and dragging a
   // video between groups writes its label. PikPak knows nothing about either.
   async function renameGroup(group: VideoFavoriteGroup) {
-    const next = window.prompt('分组名称（仅本机显示）', group.label)
+    const next = window.prompt(t('vfav.group_rename_prompt'), group.label)
     if (next === null) return
     const label = next.trim()
     if (!label || label === group.label) return
@@ -176,7 +192,7 @@ export default function VideoFavorites() {
     try {
       await apiPatch('video-favorites/groups', { from_key: group.key, label })
       await load()
-      setNotice(`分组已改为「${label}」`)
+      setNotice(t('vfav.group_renamed').replace('{label}', label))
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -195,7 +211,11 @@ export default function VideoFavorites() {
       setItems((prev) =>
         (prev ?? []).map((f) => (f.id === fav.id ? { ...f, group_label: target.label } : f)),
       )
-      setNotice(`「${fav.display_name || fav.name}」已移到「${target.label}」`)
+      setNotice(
+        t('vfav.moved_to')
+          .replace('{name}', fav.display_name || fav.name)
+          .replace('{target}', target.label),
+      )
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -206,14 +226,14 @@ export default function VideoFavorites() {
   // Renaming is local only: it changes how this list shows the video, never
   // the file in the share. An empty prompt restores the original name.
   async function rename(f: VideoFavorite) {
-    const next = window.prompt('新名称（留空恢复原名）', f.display_name || f.name)
+    const next = window.prompt(t('favorites.rename_prompt'), f.display_name || f.name)
     if (next === null) return
     setBusy('rename')
     setError('')
     try {
       await apiPatch(`video-favorites/${f.id}`, { name: next.trim() })
       patchLocal(f.id, next.trim())
-      setNotice(next.trim() ? '已重命名（仅本机显示）' : '已恢复原名')
+      setNotice(next.trim() ? t('favorites.renamed') : t('favorites.name_restored'))
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -223,15 +243,18 @@ export default function VideoFavorites() {
 
   async function remove(list: VideoFavorite[]) {
     if (list.length === 0) return
-    const label = list.length === 1 ? `「${list[0].display_name || list[0].name}」` : `${list.length} 个视频`
-    if (!window.confirm(`从视频收藏夹移除${label}？分享本身不会受影响。`)) return
+    const label =
+      list.length === 1
+        ? t('favorites.one_label').replace('{name}', list[0].display_name || list[0].name)
+        : t('vfav.count_label').replace('{n}', String(list.length))
+    if (!window.confirm(t('vfav.confirm_remove').replace('{label}', label))) return
     setBusy('remove')
     setError('')
     try {
       for (const f of list) await apiDelete(`video-favorites/${f.id}`)
       setItems((prev) => (prev ?? []).filter((f) => !list.some((gone) => gone.id === f.id)))
       clear()
-      setNotice(`已移除${label}`)
+      setNotice(t('favorites.removed').replace('{label}', label))
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -243,43 +266,43 @@ export default function VideoFavorites() {
     <section className="file-page">
       <div className="actions fm-actions">
         <button type="button" disabled={!one || busy !== ''} onClick={() => one && void preview(one)}>
-          <StarIcon /> 预览
+          <StarIcon /> {t('vfav.preview')}
         </button>
         <button
           type="button"
           disabled={!one || busy !== ''}
           onClick={() => one && void fullPlay(one)}
-          title="转存到「Pack From Shared」后播放，空间不足时自动清理最早的视频"
+          title={t('vfav.fullplay_title')}
         >
-          {busy === 'prepare' ? '准备中…' : '完整播放'}
+          {busy === 'prepare' ? t('vfav.preparing') : t('vfav.fullplay')}
         </button>
         <button
           type="button"
           disabled={picked.length === 0 || busy !== ''}
           onClick={() => void download(picked)}
-          title="先转存到「Pack From Shared」，再加入下载队列"
+          title={t('vfav.download_title')}
         >
-          {busy === 'download' ? '准备下载…' : '下载'}
+          {busy === 'download' ? t('vfav.preparing_download') : t('common.download')}
         </button>
         <button type="button" disabled={!one || busy !== ''} onClick={() => one && void rename(one)}>
-          重命名
+          {t('account.rename')}
         </button>
         <button type="button" className="danger" disabled={picked.length === 0 || busy !== ''} onClick={() => void remove(picked)}>
-          <TrashIcon size={14} /> 移除收藏
+          <TrashIcon size={14} /> {t('vfav.remove_favorite')}
         </button>
         <button type="button" disabled={loading} onClick={() => void load()}>
-          <RefreshIcon /> 刷新
+          <RefreshIcon /> {t('common.refresh')}
         </button>
 
         <span className="fm-spacer" />
 
-        <div className="segmented" role="group" aria-label="视图">
+        <div className="segmented" role="group" aria-label={t('vfav.view_label')}>
           <button
             type="button"
             className={view === 'list' ? 'active' : ''}
             onClick={() => setView('list')}
-            title="列表视图"
-            aria-label="列表视图"
+            title={t('vfav.view_list')}
+            aria-label={t('vfav.view_list')}
           >
             <ListIcon />
           </button>
@@ -287,8 +310,8 @@ export default function VideoFavorites() {
             type="button"
             className={view === 'grid' ? 'active' : ''}
             onClick={() => setView('grid')}
-            title="大图标视图"
-            aria-label="大图标视图"
+            title={t('vfav.view_grid')}
+            aria-label={t('vfav.view_grid')}
           >
             <GridIcon />
           </button>
@@ -299,12 +322,12 @@ export default function VideoFavorites() {
         {error && <p className="error">{error}</p>}
 
         {items === null || (loading && items.length === 0) ? (
-        <p className="muted">加载中…</p>
+        <p className="muted">{t('common.loading')}</p>
       ) : items.length === 0 ? (
         <div className="empty-state">
           <StarIcon size={28} />
-          <p>视频收藏夹还是空的。</p>
-          <p className="muted small">在分享里选中视频后点「收藏视频」，之后可以在这里直接预览或完整播放。</p>
+          <p>{t('vfav.empty')}</p>
+          <p className="muted small">{t('vfav.empty_hint')}</p>
         </div>
       ) : view === 'grid' ? (
         groups.map((group) => (
@@ -318,16 +341,16 @@ export default function VideoFavorites() {
             }}
           >
             <h3 className="vgroup-head">
-              {group.label}
-              <span className="muted small">{group.items.length} 个视频</span>
+              {group.label === unknownShareKey ? t('videoFavorites.unknown_share') : group.label}
+              <span className="muted small">{t('vfav.group_count').replace('{n}', String(group.items.length))}</span>
               <button
                 type="button"
                 className="link vgroup-rename"
                 disabled={busy !== ''}
-                title="重命名这个分组（仅本机显示）"
+                title={t('vfav.group_rename_title')}
                 onClick={() => void renameGroup(group)}
               >
-                重命名
+                {t('account.rename')}
               </button>
             </h3>
             <FileGrid
@@ -354,7 +377,7 @@ export default function VideoFavorites() {
                 f.restored
                   ? {
                       icon: <CheckIcon size={13} />,
-                      title: '已转存到 Pack From Shared',
+                      title: t('vfav.restored_badge'),
                       kind: 'restored' as const,
                     }
                   : null
@@ -369,9 +392,9 @@ export default function VideoFavorites() {
           <thead>
             <tr>
               <th className="col-open" />
-              <th>文件名</th>
-              <th className="col-size">大小</th>
-              <th className="col-time">收藏时间</th>
+              <th>{t('files.th_name')}</th>
+              <th className="col-size">{t('files.th_size')}</th>
+              <th className="col-time">{t('vfav.col_favorited')}</th>
             </tr>
           </thead>
           <tbody>
@@ -386,16 +409,16 @@ export default function VideoFavorites() {
                   }}
                 >
                   <td colSpan={4}>
-                    {group.label}
-                    <span className="muted small"> · {group.items.length} 个视频</span>
+                    {group.label === unknownShareKey ? t('videoFavorites.unknown_share') : group.label}
+                    <span className="muted small"> · {t('vfav.group_count').replace('{n}', String(group.items.length))}</span>
                     <button
                       type="button"
                       className="link vgroup-rename"
                       disabled={busy !== ''}
-                      title="重命名这个分组（仅本机显示）"
+                      title={t('vfav.group_rename_title')}
                       onClick={() => void renameGroup(group)}
                     >
-                      重命名
+                      {t('account.rename')}
                     </button>
                   </td>
                 </tr>
@@ -410,14 +433,18 @@ export default function VideoFavorites() {
                     <td>
                       <span className="shine-name">
                         {f.restored && (
-                          <span className="list-badge restored" title="已转存到 Pack From Shared">
+                          <span className="list-badge restored" title={t('vfav.restored_badge')}>
                             <CheckIcon size={14} />
                           </span>
                         )}
                         <FileIcon file={toFileItem(f)} size={20} />
                         <span title={f.name}>{f.display_name || f.name}</span>
                       </span>
-                      {f.display_name && <span className="muted small">（{f.name}）</span>}
+                      {f.display_name && (
+                        <span className="muted small">
+                          ({f.name})
+                        </span>
+                      )}
                     </td>
                     <td className="col-size muted small">{formatSize(f.size)}</td>
                     <td className="col-time muted small">

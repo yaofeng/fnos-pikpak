@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { favoriteCountText, favoriteSizeText, favoriteStatsHint, onlyFolderEntry, shareBadgeKind, sortShareFavorites } from './shares'
 import type { FileItem } from './files'
 
@@ -152,5 +152,12 @@ describe('sortShareFavorites', () => {
       fav({ share_id: 'a', owner_name: 'Alice' }),
     ]
     expect(sortShareFavorites(items, 'owner', 'asc').map((f) => f.share_id)).toEqual(['a', 'b', 'none'])
+  })
+})
+
+describe('favoriteStatsHint（en）', () => {
+  it('英文统计提示', () => {
+    const fav = { share_id: 's', file_count: -1, total_size: 0, stats_checked: true } as never
+    expect(favoriteStatsHint(fav, 'en')).toBe('This share could not be counted')
   })
 })

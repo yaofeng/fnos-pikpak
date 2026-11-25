@@ -127,3 +127,19 @@ describe('validateDisplayName（en）', () => {
     expect(validateDisplayName(' ', undefined)).toEqual({ ok: false, error: '账号名称不能为空' })
   })
 })
+
+describe('vipTypeLabel（en）', () => {
+  it('英文会员名', () => {
+    expect(vipTypeLabel('platinum', 'en')).toBe('Platinum member')
+    expect(vipTypeLabel('gold', 'en')).toBe('Gold member')
+    expect(vipTypeLabel('diamond', 'en')).toBe('VIP·diamond')
+  })
+})
+
+describe('accountLabel（en）', () => {
+  it('无 id 行回退英文默认标签', () => {
+    const byId = new Map([['a', { id: 'a', display_name: '主号' } as AccountInfo]])
+    expect(accountLabel(byId, 'a', undefined, 'en')).toBe('主号')
+    expect(accountLabel(undefined, '', undefined, 'en')).toBe('Default account')
+  })
+})

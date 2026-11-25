@@ -1,6 +1,7 @@
 import TrimApp from '@trimjs/web-app'
 
 import { pathsFrom } from './sdkPaths'
+import { getLang, makeT } from './i18n'
 
 let instance: TrimApp | null | undefined
 
@@ -63,7 +64,7 @@ export function askPath(label: string): string | null {
   const value = window.prompt(label)?.trim()
   if (!value) return null
   if (!value.startsWith('/')) {
-    window.alert('请填写绝对路径（以 / 开头）')
+    window.alert(makeT(getLang())('settings.ask_path_invalid'))
     return null
   }
   return value

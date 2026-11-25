@@ -1,3 +1,5 @@
+import { getLang, makeT, type Lang } from './i18n'
+
 type TransferStatus =
   | 'queued'
   | 'running'
@@ -64,34 +66,40 @@ export function etaSeconds(job: Progress, speed: number): number | null {
   return Math.ceil(remaining / speed)
 }
 
-export function formatDuration(seconds: number): string {
+// formatDuration renders a rounded duration; units come from the i18n table
+// and follow the process-wide language unless the caller passes one.
+export function formatDuration(seconds: number, lang?: Lang): string {
+  const t = makeT(lang ?? getLang())
   const s = Math.max(0, Math.round(seconds))
-  if (s < 60) return `${s} 秒`
+  if (s < 60) return t('time.seconds').replace('{n}', String(s))
   if (s < 3600) {
     const m = Math.floor(s / 60)
-    return `${m} 分 ${String(s % 60).padStart(2, '0')} 秒`
+    return t('time.min_sec').replace('{m}', String(m)).replace('{ss}', String(s % 60).padStart(2, '0'))
   }
   const h = Math.floor(s / 3600)
-  return `${h} 时 ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} 分`
+  return t('time.hour_min').replace('{h}', String(h)).replace('{mm}', String(Math.floor((s % 3600) / 60)).padStart(2, '0'))
 }
 
-export function statusText(job: TransferJob): string {
+// statusText names a transfer job's state. A failure carries its own upstream
+// reason after the label.
+export function statusText(job: TransferJob, lang?: Lang): string {
+  const t = makeT(lang ?? getLang())
   switch (job.status) {
     case 'queued':
-      return '排队中'
+      return t('status.queued')
     case 'running':
-      return '传输中'
+      return t('transfer.running')
     case 'paused':
-      return '已暂停'
+      return t('transfer.paused')
     case 'done':
-      return '已完成'
+      return t('status.done')
     case 'canceled':
-      return '已取消'
+      return t('status.canceled')
     case 'skipped':
-      return '已跳过（同名）'
+      return t('transfer.skipped')
     case 'failed': {
       const reason = job.error_message || job.error_code
-      return reason ? `失败：${reason}` : '失败'
+      return reason ? t('status.failed').replace('{reason}', reason) : t('status.failed_plain')
     }
     default:
       return job.status

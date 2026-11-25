@@ -332,7 +332,7 @@ function Shell() {
         </nav>
         <div className="sidebar-foot">
           {transfer && (
-            <div className="sidebar-transfer" title={`共 ${transfer.active} 个传输任务`}>
+            <div className="sidebar-transfer" title={t('app.transfer_title').replace('{n}', String(transfer.active))}>
               <div className="sidebar-transfer-bar">
                 <span
                   style={{
@@ -342,7 +342,7 @@ function Shell() {
               </div>
               <div className="sidebar-transfer-line">
                 <span>
-                  {transfer.active} 个任务 ·{' '}
+                  {t('app.transfer_line').replace('{n}', String(transfer.active))}{' '}
                   {transfer.size > 0
                     ? `${Math.min(100, Math.floor((transfer.bytes / transfer.size) * 100))}%`
                     : '—'}
@@ -444,7 +444,7 @@ function Shell() {
               <Route
                 path="/debug"
                 element={
-                  <Suspense fallback={<p className="muted">加载中…</p>}>
+                  <Suspense fallback={<p className="muted">{t('common.loading')}</p>}>
                     <Debug />
                   </Suspense>
                 }

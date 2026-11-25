@@ -7,6 +7,7 @@ import { iinaURL } from '../iina'
 import { waitForVideoJob } from '../videoPrepare'
 import { filterFiles, isFolder, isVideo, sortFiles, thumbPath, type FileItem, type SortDir, type SortKey } from '../files'
 import { onlyFolderEntry, shareBadgeKind } from '../shares'
+import { getLang, makeT } from '../i18n'
 import { useFileSelection } from '../useFileSelection'
 import FileGrid from './FileGrid'
 import FileTable from './FileTable'
@@ -60,12 +61,12 @@ export type ShareState = { title: string; passCode: string; protected: boolean; 
 
 // shareBadge marks the videos the app already knows. 已收藏 wins over
 // 已转存: see shareBadgeKind.
-function shareBadge(f: FileItem) {
+function shareBadge(f: FileItem, t: (key: string) => string) {
   switch (shareBadgeKind(Boolean(f.restored), Boolean(f.favorited))) {
     case 'star':
-      return { icon: <StarIcon size={13} filled />, title: '已在视频收藏夹', kind: 'star' as const }
+      return { icon: <StarIcon size={13} filled />, title: t('share.badge_star'), kind: 'star' as const }
     case 'restored':
-      return { icon: <CheckIcon size={13} />, title: '已转存到 Pack From Shared', kind: 'restored' as const }
+      return { icon: <CheckIcon size={13} />, title: t('vfav.restored_badge'), kind: 'restored' as const }
     default:
       return null
   }
@@ -92,9 +93,11 @@ export default function ShareBrowser({
   // favourites home. Search tabs have no such home, so they omit it.
   onHome?: () => void
 }) {
+  const lang = getLang()
+  const t = makeT(lang)
   const { byId } = useAccounts()
   const [shareId, setShareId] = useState('')
-  const [title, setTitle] = useState(initialTitle ?? '分享')
+  const [title, setTitle] = useState(initialTitle ?? t('share.fallback_title'))
   const [owner, setOwner] = useState('')
   const [passCode, setPassCode] = useState('')
   const [needPass, setNeedPass] = useState(false)
@@ -148,7 +151,7 @@ export default function ShareBrowser({
         // Opening a protected share answers pass_code_required first: that is
         // the form, not a failure to shout about.
         const info = await apiGetQuiet<ShareInfo>(base + suffix)
-        const name = info.title || fallbackTitle.current || '分享'
+        const name = info.title || fallbackTitle.current || t('share.fallback_title')
         const rootItems = info.items ?? []
         // A root that is a single folder is stepped through: the browser
         // opens that folder and offers no way back to the level above it.
@@ -234,7 +237,7 @@ export default function ShareBrowser({
   // supplied for 播放器 = IINA. Nothing is proxied through this app.
   function handToIINA(directURL: string) {
     window.location.href = iinaURL(directURL)
-    setNotice('已交给 IINA 打开；若没有打开，可能尚未安装 IINA（可在设置里改回内置播放器）')
+    setNotice(t('vfav.iina_hint'))
   }
 
   // preview plays the share's own stream: nothing is restored.
@@ -278,11 +281,11 @@ export default function ShareBrowser({
         'share/restore',
         { share_id: shareId, file_ids: list.map((f) => f.id) },
       )
-      const account = accountLabel(byId, res.account_id, res.account_name)
+      const account = accountLabel(byId, res.account_id, res.account_name, lang)
       setNotice(
         list.length === 1
-          ? `「${list[0].name}」已转存到账号 ${account}`
-          : `${list.length} 项已转存到账号 ${account}`,
+          ? t('share.restored_one').replace('{name}', list[0].name).replace('{account}', account)
+          : t('share.restored_many').replace('{n}', String(list.length)).replace('{account}', account),
       )
       clearSelection()
     } catch (err) {
@@ -300,7 +303,7 @@ export default function ShareBrowser({
     if (isFolder(f)) return
     setBusy('prepare')
     setError('')
-    setNotice('正在把视频转存到「Pack From Shared」…')
+    setNotice(t('vfav.restoring'))
     try {
       const started = await apiPost<{ job_id: string }>('videos/prepare', {
         share_id: shareId,
@@ -309,7 +312,7 @@ export default function ShareBrowser({
       const job = await waitForVideoJob(started.job_id, {
         get: (id) => apiGet(`videos/jobs/${encodeURIComponent(id)}`),
       })
-      if (!job.stream_url) throw new Error('视频准备失败，请稍后重试')
+      if (!job.stream_url) throw new Error(t('vfav.prepare_no_stream'))
       // The copy now sits in Pack From Shared, so the tile earns its check
       // without another listing.
       setItems((prev) => (prev ?? []).map((item) => (item.id === f.id ? { ...item, restored: true } : item)))
@@ -339,7 +342,7 @@ export default function ShareBrowser({
       if (favoriteID) {
         await apiDelete(`share-favorites/${favoriteID}`)
         setFavoriteID(0)
-        setNotice('已取消收藏')
+        setNotice(t('share.unfavorited'))
       } else {
         const created = await apiPost<{ id: number }>('share-favorites', {
           url: favoriteId ? undefined : url,
@@ -348,7 +351,7 @@ export default function ShareBrowser({
           pass_code: passCode,
         })
         setFavoriteID(created.id ?? 0)
-        setNotice('已收藏这个分享')
+        setNotice(t('share.favorited'))
       }
     } catch (err) {
       setError((err as Error).message)
@@ -364,7 +367,7 @@ export default function ShareBrowser({
     if (videos.length === 0) return
     setBusy('download')
     setError('')
-    setNotice(`正在转存 ${videos.length} 个视频以便下载…`)
+    setNotice(t('vfav.restoring_for_download').replace('{n}', String(videos.length)))
     try {
       // Each copy lands on whichever account accepted the restore, and the
       // prepare job reports that account: queue the download for exactly it,
@@ -380,10 +383,10 @@ export default function ShareBrowser({
         })
         if (job.file_id) copies.push({ file_id: job.file_id, account_id: job.account_id ?? '' })
       }
-      setNotice(await queueDownloads(copies))
+      setNotice(await queueDownloads(copies, lang))
       clearSelection()
     } catch (err) {
-      setError(downloadErrorMessage(err))
+      setError(downloadErrorMessage(err, lang))
       setNotice('')
     } finally {
       setBusy('')
@@ -413,7 +416,11 @@ export default function ShareBrowser({
       // star badge appears without a refresh.
       const added = new Set(list.map((f) => f.id))
       setItems((prev) => (prev ?? []).map((f) => (added.has(f.id) ? { ...f, favorited: true } : f)))
-      setNotice(list.length === 1 ? `「${list[0].name}」已加入视频收藏夹` : `${list.length} 个视频已加入视频收藏夹`)
+      setNotice(
+        list.length === 1
+          ? t('share.vfav_one').replace('{name}', list[0].name)
+          : t('share.vfav_many').replace('{n}', String(list.length)),
+      )
       clearSelection()
     } catch (err) {
       setError((err as Error).message)
@@ -438,17 +445,17 @@ export default function ShareBrowser({
             void open(passCode)
           }}
         >
-          <p className="muted">{openError || '该分享需要访问密码'}</p>
+          <p className="muted">{openError || t('share.need_pass')}</p>
           <div className="dir-row">
             <input
               value={passCode}
               onChange={(e) => setPassCode(e.target.value)}
-              placeholder="访问密码"
-              aria-label="访问密码"
+              placeholder={t('share.pass_placeholder')}
+              aria-label={t('share.pass_placeholder')}
               autoFocus
             />
             <button type="submit" className="primary" disabled={opening || !passCode.trim()}>
-              {opening ? '打开中…' : '打开'}
+              {opening ? t('share.opening') : t('share.open')}
             </button>
           </div>
         </form>
@@ -462,8 +469,8 @@ export default function ShareBrowser({
                 className="icon-btn"
                 type="button"
                 onClick={onHome}
-                title="收藏夹主页"
-                aria-label="收藏夹主页"
+                title={t('share.home_title')}
+                aria-label={t('share.home_title')}
               >
                 <HomeIcon />
               </button>
@@ -473,8 +480,8 @@ export default function ShareBrowser({
               type="button"
               onClick={() => goTo(stack.length - 2)}
               disabled={stack.length === 0 || (rootSkipped && stack.length === 1)}
-              title="上一级"
-              aria-label="上一级"
+              title={t('share.up_title')}
+              aria-label={t('share.up_title')}
             >
               ‹
             </button>
@@ -483,20 +490,20 @@ export default function ShareBrowser({
               type="button"
               onClick={() => void open(passCode)}
               disabled={opening}
-              title="刷新"
-              aria-label="刷新"
+              title={t('common.refresh')}
+              aria-label={t('common.refresh')}
             >
               <RefreshIcon />
             </button>
             <div className="crumb-box">
-              <nav className="share-crumbs" aria-label="分享目录">
+              <nav className="share-crumbs" aria-label={t('share.crumbs_label')}>
                 <button
                   type="button"
                   onClick={() => goTo(-1)}
                   disabled={stack.length === 0 || rootSkipped}
-                  title="分享根目录"
+                  title={t('share.root_title')}
                 >
-                  {title || '分享'}
+                  {title || t('share.fallback_title')}
                 </button>
                 {stack.map((c, i) => (
                   <span key={c.id} className="share-crumb">
@@ -506,7 +513,7 @@ export default function ShareBrowser({
                     </button>
                   </span>
                 ))}
-                {loading && <span className="muted small">加载中…</span>}
+                {loading && <span className="muted small">{t('common.loading')}</span>}
               </nav>
             </div>
             <button
@@ -514,8 +521,8 @@ export default function ShareBrowser({
               type="button"
               disabled={!shareId || busy === 'favorite'}
               onClick={() => void toggleFavorite()}
-              title={favoriteID ? '取消收藏这个分享' : '收藏这个分享'}
-              aria-label={favoriteID ? '取消收藏这个分享' : '收藏这个分享'}
+              title={favoriteID ? t('share.unfavorite_title') : t('share.favorite_title')}
+              aria-label={favoriteID ? t('share.unfavorite_title') : t('share.favorite_title')}
             >
               <StarIcon filled={favoriteID > 0} />
             </button>
@@ -523,7 +530,7 @@ export default function ShareBrowser({
               <SearchIcon />
               <input
                 type="search"
-                placeholder="在当前目录中筛选"
+                placeholder={t('share.filter_placeholder')}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -538,17 +545,17 @@ export default function ShareBrowser({
               onClick={() => singleVideo && void preview(singleVideo)}
             >
               <PlayIcon />
-              预览
+              {t('vfav.preview')}
             </button>
             <button
               className="btn-icon"
               type="button"
               disabled={!singleVideo || busy === 'prepare'}
               onClick={() => singleVideo && void fullPlay(singleVideo)}
-              title="转存到「Pack From Shared」后播放，空间不足时自动清理最早的视频"
+              title={t('vfav.fullplay_title')}
             >
               <DownloadIcon />
-              {busy === 'prepare' ? '准备中…' : '完整播放'}
+              {busy === 'prepare' ? t('vfav.preparing') : t('vfav.fullplay')}
             </button>
             <button
               className="btn-icon"
@@ -557,7 +564,7 @@ export default function ShareBrowser({
               onClick={() => void restore(picked)}
             >
               <RestoreIcon />
-              转存
+              {t('share.restore')}
             </button>
             <button
               className="btn-icon"
@@ -566,7 +573,7 @@ export default function ShareBrowser({
               onClick={() => void download(picked)}
             >
               <DownloadIcon />
-              {busy === 'download' ? '准备下载…' : '下载'}
+              {busy === 'download' ? t('vfav.preparing_download') : t('common.download')}
             </button>
             <button
               className="btn-icon"
@@ -575,7 +582,7 @@ export default function ShareBrowser({
               onClick={() => void addVideoFavorites(pickedFiles)}
             >
               <StarIcon />
-              收藏视频
+              {t('share.favorite_videos')}
             </button>
 
             <span className="fm-spacer" />
@@ -589,23 +596,23 @@ export default function ShareBrowser({
                   setSortKey(k as SortKey)
                   setSortDir(d as SortDir)
                 }}
-                aria-label="排序"
+                aria-label={t('favorites.sort_label')}
               >
-                <option value="name:asc">名称 ↑</option>
-                <option value="name:desc">名称 ↓</option>
-                <option value="modified:desc">时间 ↓</option>
-                <option value="modified:asc">时间 ↑</option>
-                <option value="size:desc">大小 ↓</option>
-                <option value="size:asc">大小 ↑</option>
+                <option value="name:asc">{t('share.sort_name')} ↑</option>
+                <option value="name:desc">{t('share.sort_name')} ↓</option>
+                <option value="modified:desc">{t('share.sort_time')} ↓</option>
+                <option value="modified:asc">{t('share.sort_time')} ↑</option>
+                <option value="size:desc">{t('files.th_size')} ↓</option>
+                <option value="size:asc">{t('files.th_size')} ↑</option>
               </select>
             </label>
-            <div className="segmented" role="group" aria-label="视图">
+            <div className="segmented" role="group" aria-label={t('vfav.view_label')}>
               <button
                 type="button"
                 className={view === 'list' ? 'active' : ''}
                 onClick={() => setView('list')}
-                title="列表视图"
-                aria-label="列表视图"
+                title={t('vfav.view_list')}
+                aria-label={t('vfav.view_list')}
               >
                 <ListIcon />
               </button>
@@ -613,8 +620,8 @@ export default function ShareBrowser({
                 type="button"
                 className={view === 'grid' ? 'active' : ''}
                 onClick={() => setView('grid')}
-                title="大图标视图"
-                aria-label="大图标视图"
+                title={t('vfav.view_grid')}
+                aria-label={t('vfav.view_grid')}
               >
                 <GridIcon />
               </button>
@@ -624,7 +631,7 @@ export default function ShareBrowser({
           {error && <p className="error">{error}</p>}
 
           {items !== null && shown.length === 0 && !loading && (
-            <p className="muted">{(items?.length ?? 0) === 0 ? '这个分享是空的。' : '没有匹配的条目。'}</p>
+            <p className="muted">{(items?.length ?? 0) === 0 ? t('share.empty') : t('files.no_match')}</p>
           )}
 
           <div className="file-body">
@@ -634,7 +641,7 @@ export default function ShareBrowser({
                 selected={selected}
                 onSelect={select}
                 onOpen={openFile}
-                badge={(f) => shareBadge(f)}
+                badge={(f) => shareBadge(f, t)}
               />
             ) : (
               <FileGrid
@@ -646,7 +653,7 @@ export default function ShareBrowser({
                 onMenu={() => undefined}
                 onDragStart={() => undefined}
                 onDropOn={() => undefined}
-                badge={(f) => shareBadge(f)}
+                badge={(f) => shareBadge(f, t)}
               />
             )}
           </div>

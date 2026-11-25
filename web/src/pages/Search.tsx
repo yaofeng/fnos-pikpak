@@ -13,6 +13,7 @@ import {
   type WebResult,
   type WebSearchPage,
 } from '../search'
+import { getLang, makeT } from '../i18n'
 import { afterClose, openTab, type WebTab } from '../webTabs'
 
 // The provider serves ten pages, each one a paid query.
@@ -25,6 +26,7 @@ const maxPage = 10
 // scrolled: there is no pager, and a short page keeps loading until the
 // window is filled or the keyword runs out.
 export default function Search() {
+  const t = makeT(getLang())
   const [q, setQ] = useState('')
   const [items, setItems] = useState<WebResult[] | null>(null)
   const [query, setQuery] = useState('')
@@ -231,7 +233,7 @@ export default function Search() {
         title: state?.title ?? tab.title,
         pass_code: state?.passCode ?? '',
       })
-      setTabNote('已加入收藏夹')
+      setTabNote(t('search.added_favorite'))
     } catch (err) {
       setError((err as Error).message)
     }
@@ -242,7 +244,7 @@ export default function Search() {
     if (await copyText(tab.url)) {
       setCopied(true)
     } else {
-      setError('复制地址失败，请打开标签页后手动复制')
+      setError(t('search.copy_failed'))
     }
   }
 
@@ -251,7 +253,7 @@ export default function Search() {
   return (
     <section className={active ? 'search-page viewer' : 'search-page'}>
       {tabs.length > 0 && (
-        <div className="wtabs" role="tablist" aria-label="搜索结果标签页">
+        <div className="wtabs" role="tablist" aria-label={t('search.tabs_label')}>
           <div
             role="tab"
             aria-selected={!active}
@@ -259,7 +261,7 @@ export default function Search() {
             onClick={() => setActiveId(null)}
           >
             <SearchIcon size={14} />
-            <span className="wtab-title">搜索结果</span>
+            <span className="wtab-title">{t('search.results_tab')}</span>
           </div>
           {tabs.map((tab) => (
             <div
@@ -279,7 +281,7 @@ export default function Search() {
               <button
                 type="button"
                 className="wtab-close"
-                aria-label="关闭标签页"
+                aria-label={t('search.close_tab')}
                 onClick={(e) => {
                   e.stopPropagation()
                   closeTab(tab.id)
@@ -289,7 +291,7 @@ export default function Search() {
               </button>
             </div>
           ))}
-          {(copied || tabNote) && <span className="wtab-note">{tabNote || '已复制地址'}</span>}
+          {(copied || tabNote) && <span className="wtab-note">{tabNote || t('search.address_copied')}</span>}
         </div>
       )}
 
@@ -306,48 +308,50 @@ export default function Search() {
         <div className={searched ? 'search-engine has-results' : 'search-engine'}>
           <form className="se-logo-form" onSubmit={(e) => void run(e)}>
             <h1 className="se-logo">
-              PikPak <span>搜索</span>
+              PikPak <span>{t('search.logo')}</span>
             </h1>
             <div className="se-field">
               <SearchIcon size={18} />
               <input
                 type="search"
                 value={q}
-                placeholder="搜索 mypikpak.com 上的分享内容"
+                placeholder={t('search.placeholder')}
                 onChange={(e) => setQ(e.target.value)}
-                aria-label="搜索关键词"
+                aria-label={t('search.keyword_label')}
               />
               <button type="submit" disabled={loading || !q.trim()}>
-                {loading ? '搜索中…' : '搜索'}
+                {loading ? t('search.searching') : t('search.search')}
               </button>
             </div>
           </form>
 
           {needKey && (
             <p className="se-count">
-              全网搜索需要先在 <Link to="/settings">参数设置</Link> 里填写搜索 API Key。
+              {t('search.need_key_a')} <Link to="/settings">{t('settings.title')}</Link> {t('search.need_key_b')}
             </p>
           )}
           {error && <p className="error se-error">{error}</p>}
 
           {searched && items.length > 0 && (
-            <p className="se-count">已加载 {items.length} 条结果</p>
+            <p className="se-count">{t('search.loaded_count').replace('{n}', String(items.length))}</p>
           )}
           {searched && scope === 'share' && firstKept > 0 && firstRaw > firstKept && (
             <p className="se-count">
-              搜索引擎返回 {firstRaw} 条原始结果，其中 {firstKept} 条是 PikPak 分享页或待解析的分享链接，
-              其余不是分享页，已忽略。
+              {t('search.dropped_hint')
+                .replace('{raw}', String(firstRaw))
+                .replace('{kept}', String(firstKept))}
             </p>
           )}
           {searched && scope === 'all' && (
             <p className="se-count">
-              搜索引擎返回 {firstRaw} 条结果，其中 {firstShares} 条是 PikPak 分享页（带分享图标）；其余不是分享页，
-              在浏览器中打开。
+              {t('search.all_hint')
+                .replace('{raw}', String(firstRaw))
+                .replace('{shares}', String(firstShares))}
             </p>
           )}
           {searched && items.length === 0 && page === 1 && (
             <p className="se-count">
-              没有找到「{query}」相关的分享页。搜索引擎只收录公开分享，未分享的文件和文件夹搜不到。
+              {t('search.no_results').replace('{query}', query)}
             </p>
           )}
 
@@ -357,7 +361,7 @@ export default function Search() {
                 <li key={hit.url}>
                   <p className="se-breadcrumb">
                     {resolving === hit.url
-                      ? '正在解析链接…'
+                      ? t('search.resolving')
                       : hit.display || crumbFromURL(hit.url)}
                   </p>
                   <div className="se-title-row">
@@ -379,7 +383,7 @@ export default function Search() {
                       {hit.title}
                     </a>
                     {scope === 'all' && hit.share && (
-                      <span className="se-share" title="PikPak 分享页">
+                      <span className="se-share" title={t('search.share_badge')}>
                         <ShareIcon size={13} />
                       </span>
                     )}
@@ -392,7 +396,7 @@ export default function Search() {
 
           {searched && items.length > 0 && (
             <div className="se-more" ref={sentinel} aria-live="polite">
-              {loadingMore ? '正在加载更多…' : hasMore ? '' : '没有更多结果了'}
+              {loadingMore ? t('search.loading_more') : hasMore ? '' : t('search.no_more')}
             </div>
           )}
         </div>
@@ -401,10 +405,10 @@ export default function Search() {
       {tabMenu && (
         <div className="context-menu" style={{ left: tabMenu.x, top: tabMenu.y }}>
           <button type="button" onClick={() => void copyTabAddress(tabMenu.tab)}>
-            复制地址
+            {t('search.copy_address')}
           </button>
           <button type="button" onClick={() => void addFavorite(tabMenu.tab)}>
-            加入收藏
+            {t('search.add_favorite')}
           </button>
           <button
             type="button"
@@ -414,7 +418,7 @@ export default function Search() {
               setTabMenu(null)
             }}
           >
-            关闭标签页
+            {t('search.close_tab')}
           </button>
         </div>
       )}
