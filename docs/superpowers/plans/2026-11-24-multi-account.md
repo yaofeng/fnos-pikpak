@@ -864,6 +864,89 @@ git add -A && git commit -m "fix: multi-account smoke fixes"   # 仅当有修复
 
 ---
 
+### Task 13: 前端页面状态保活（Activity）
+
+**执行顺序：Task 11 完成后、Task 12 之前执行**（Task 12 的全量验证与构建产物顺延覆盖本任务；规格：`docs/superpowers/specs/2026-11-25-page-keepalive-design.md`）。
+
+**Files:**
+- Create: `web/src/keepAlive.ts`（纯逻辑：路径归属、visited 集合、页面 key）
+- Modify: `web/src/App.tsx`（保活页移出 `<Routes>`、`<Activity>` 包装、visited 集合、账号 key）
+- Test: `web/src/keepAlive.test.ts`
+
+**Interfaces:**
+- Consumes: Task 9 `useAccounts()` 的 `currentId`；既有 `listCache`（不改动）。
+- Produces:
+  - `activePath(pathname: string): string | null` — pathname 归属的保活页路径（`/files` 与 `/files/*` 前缀匹配 → `'/files'`；其余 8 页整路径相等；未知 → `null`）
+  - `nextVisited(visited: ReadonlySet<string>, pathname: string): Set<string>` — 激活页加入集合；不可变更新（原 Set 不被突变；已 visited 则返回原集）
+  - `pageKey(page: string, accountID: string): string` — `page + '|' + accountID`；切账号换 key 即重挂载重置 UI 状态
+  - `KEEP_ALIVE_PATHS: readonly string[]` — 9 页清单（`/files`、`/recent`、`/tasks`、`/transfers`、`/trash`、`/favorites`、`/video-favorites`、`/search`、`/settings`）
+- 全局约束：不新增 npm 依赖（`<Activity>` 是 react 19 内置导出）；`npm test`、`npm run lint`、`npx tsc -b`、`go test ./...` 全绿。
+
+- [ ] **Step 1: 写失败测试**（`web/src/keepAlive.test.ts`）
+
+```ts
+describe('activePath', () => {
+  it('/files 与子路径归 /files', () => {
+    expect(activePath('/files')).toBe('/files')
+    expect(activePath('/files/folder-1')).toBe('/files')
+  })
+  it('整路径相等归该页', () => {
+    expect(activePath('/search')).toBe('/search')
+    expect(activePath('/video-favorites')).toBe('/video-favorites')
+  })
+  it('未知路径与 / 返回 null', () => {
+    expect(activePath('/')).toBeNull()
+    expect(activePath('/unknown')).toBeNull()
+  })
+})
+describe('nextVisited', () => {
+  it('激活页加入且原集不被突变', () => {
+    const prev = new Set(['/files'])
+    const next = nextVisited(prev, '/search')
+    expect(next.has('/search')).toBe(true)
+    expect(prev.has('/search')).toBe(false)
+  })
+  it('已 visited 不新建', () => {
+    const prev = new Set(['/files'])
+    expect(nextVisited(prev, '/files')).toBe(prev)
+  })
+})
+describe('pageKey', () => {
+  it('换账号换 key，同参幂等', () => {
+    expect(pageKey('/files', 'a')).not.toBe(pageKey('/files', 'b'))
+    expect(pageKey('/files', 'a')).toBe(pageKey('/files', 'a'))
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd web && npx vitest run keepAlive`
+Expected: FAIL（模块不存在）。
+
+- [ ] **Step 3: 实现 `keepAlive.ts` 四件套**
+
+- [ ] **Step 4: App.tsx 改造**
+
+1. 9 个保活页组件移出 `<Routes>`，按 `activePath(location.pathname)` 判定 `<Activity mode="visible"|"hidden">`；每个保活页 `key={pageKey(page, currentId)}`（Task 9 `useAccounts()`）。
+2. visited 集合（useState）：location 变化的 effect 里 `setVisited(nextVisited(...))`；未 visited 的保活页不渲染（首屏只挂当前页，首次激活后才进入保活）。
+3. `<Routes>` 为 9 个保活路径保留 `element={null}` 的占位路由（`/files/*` 用通配），使 catch-all 只捕真正未知路径；`/bind`、`/debug`（lazy+Suspense 不动）与 `"/"→"/files"` 重定向保持原样。
+4. 只读确认（不逐页改代码）：Transfers/Tasks 轮询页 hidden 时 Effects 卸载、定时器暂停，回显重跑由 `listCache` 兜底。
+
+- [ ] **Step 5: 运行确认通过**
+
+Run: `cd web && npm test && npm run lint && npx tsc -b && cd .. && go test ./...`
+Expected: 全绿。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add web/src/
+git commit -m "feat: keep page state alive across navigation"
+```
+
+---
+
 ## Self-Review 记录
 
 - **Spec 覆盖**：§5→T1+T4(Flow/DeriveDeviceID)；§6→T2+T4；§7→T3+T8；§8 新增/按账号/合并/写操作→T4/T5/T6；§9→T4(shuffle)+T6(分类)+T8(prepare)；§10→T7+T8；§11→T6；§12→T9/T10/T11；§13 迁移→T1；§14 测试点分布各任务 Step 1。备份（share/video favorites）账号无关——spec §2 非目标，无任务。

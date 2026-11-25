@@ -39,7 +39,7 @@ React 19.2+ 的 `<Activity>` 组件包裹各路由页面，配合"首次访问�
 
 - visited 集合与包装组件的实现位置（App.tsx 内部）。
 - 各页 useEffect 重跑行为确认（有 listCache 兜底，预期只读确认、不逐页改代码）。
-- 测试锚点：路由切走再切回，Search 输入值仍在；隐藏页轮询停触发（fake timers）；切账号后目录栈重置。现有 `npm test`、`npm run lint`、`npx tsc -b` 全绿；全局约束"每个任务 `go test ./...` 全绿"照常（后端未动）。
+- 测试锚点：`keepAlive.ts` 纯逻辑（路径归属、visited 集合、账号 key）走 vitest 单测（仓库无 DOM 测试栈、不新增依赖，组件级行为不单测）；路由切回状态保留、隐藏页轮询暂停、切账号目录栈重置归入 Task 12 的 dev 冒烟清单。现有 `npm test`、`npm run lint`、`npx tsc -b` 全绿；全局约束"每个任务 `go test ./...` 全绿"照常（后端未动）。
 
 ## 交付方式
 
