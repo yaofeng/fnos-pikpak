@@ -30,6 +30,7 @@ import { useMarquee } from '../useMarquee'
 import {
   filterFiles,
   filesQuery,
+  groupByAccount,
   isFolder,
   isVideo,
   sortFiles,
@@ -249,7 +250,9 @@ export default function Files() {
     if (!name?.trim() || name.trim() === f.name) return
     setBusy(true)
     try {
-      await apiPatch(withAccount(`files/${f.id}`, accountId), { name: name.trim() })
+      // The row's own account: merged listings stamp it, single-account rows
+      // fall back to the scope, which is the page's account there.
+      await apiPatch(withAccount(`files/${f.id}`, f.account_id || scope), { name: name.trim() })
       dropCachePrefix('files:')
       await fetchPage('', true)
     } catch (e) {
@@ -265,8 +268,21 @@ export default function Files() {
     setBusy(true)
     try {
       const plan = deletePlan(mode, lang)
-      const res = await apiPost<{ pending: boolean }>(withAccount(plan.path, accountId), { ids })
-      setNotice(res.pending ? t('common.submitted') : plan.notice)
+      // A merged selection spans accounts: split the rows by the account that
+      // served each one and send that account its own delete request; rows
+      // without a stamp land under the scope itself (single-account view),
+      // which is one request exactly like before.
+      const wanted = new Set(ids)
+      const groups = groupByAccount(
+        items.filter((f) => wanted.has(f.id)),
+        scope,
+      )
+      let pending = false
+      for (const [acct, acctIds] of groups) {
+        const res = await apiPost<{ pending: boolean }>(withAccount(plan.path, acct), { ids: acctIds })
+        if (res.pending) pending = true
+      }
+      setNotice(pending ? t('common.submitted') : plan.notice)
       clearSelection()
       dropCachePrefix('files:')
       await fetchPage('', true)
@@ -279,6 +295,9 @@ export default function Files() {
 
   async function applyMove(destId: string) {
     if (!move) return
+    // The move modal has no entry point in merged view (see the disabled
+    // menu entries); this guard keeps a stray open from writing anywhere.
+    if (merged) return
     setBusy(true)
     try {
       const res = await apiPost<{ pending: boolean }>(withAccount(`files/${move.mode}`, accountId), {
@@ -310,9 +329,16 @@ export default function Files() {
     try {
       // No directory in the request: downloads go to the folder configured in
       // settings, which the server validates against the user's grants. Every
-      // item names this page's account, so the queue acts on the same drive
-      // the listing came from.
-      setNotice(await queueDownloads(fileIDs.map((file_id) => ({ file_id, account_id: accountId })), lang))
+      // item names the account that served its row — merged rows carry the
+      // stamp, single-account rows fall back to the scope — so the queue acts
+      // on the same drives the listing came from.
+      const rowOf = new Map(items.map((f) => [f.id, f]))
+      setNotice(
+        await queueDownloads(
+          fileIDs.map((file_id) => ({ file_id, account_id: rowOf.get(file_id)?.account_id || scope })),
+          lang,
+        ),
+      )
       clearSelection()
     } catch (e) {
       setError(downloadErrorMessage(e, lang))
@@ -345,6 +371,13 @@ export default function Files() {
   }
 
   function handleDrop(destId: string | null) {
+    // Merged view is read-only for moves: rows cannot start a drag and drops
+    // cannot land, so a drop here is a no-op (the rows' parent ids are
+    // per-account and mean nothing shared anyway).
+    if (merged) {
+      dragged.current = null
+      return
+    }
     const f = dragged.current
     dragged.current = null
     if (!f) return
@@ -418,11 +451,23 @@ export default function Files() {
       </div>
 
       <div className="fm-actions">
-        <button className="btn-icon" type="button" onClick={() => void uploadFiles()} disabled={busy}>
+        <button
+          className="btn-icon"
+          type="button"
+          onClick={() => void uploadFiles()}
+          disabled={merged || busy}
+          title={merged ? t('files.merged_readonly') : undefined}
+        >
           <UploadIcon />
           {t('files.upload')}
         </button>
-        <button className="btn-icon" type="button" onClick={createFolder} disabled={busy}>
+        <button
+          className="btn-icon"
+          type="button"
+          onClick={createFolder}
+          disabled={merged || busy}
+          title={merged ? t('files.merged_readonly') : undefined}
+        >
           <FolderPlusIcon />
           {t('files.new_folder')}
         </button>
@@ -530,9 +575,15 @@ export default function Files() {
               e.preventDefault()
               setMenu({ x: e.clientX, y: e.clientY, file: f })
             }}
-            onDragStart={(f) => {
-              dragged.current = f
-            }}
+            // No drag source in merged view: rows carry no cross-account
+            // parent, so FileTable drops its draggable attribute entirely.
+            onDragStart={
+              merged
+                ? undefined
+                : (f) => {
+                    dragged.current = f
+                  }
+            }
             onDropOn={(id) => handleDrop(id)}
           />
         ) : (
@@ -546,9 +597,14 @@ export default function Files() {
               e.preventDefault()
               setMenu({ x: e.clientX, y: e.clientY, file: f })
             }}
-            onDragStart={(f) => {
-              dragged.current = f
-            }}
+            // Same as the table: merged tiles are not draggable.
+            onDragStart={
+              merged
+                ? undefined
+                : (f) => {
+                    dragged.current = f
+                  }
+            }
             onDropOn={(id) => handleDrop(id)}
           />
         )}
@@ -578,10 +634,24 @@ export default function Files() {
               <button type="button" onClick={() => void rename(menu.file!)}>
                 {t('account.rename')}
               </button>
-              <button type="button" onClick={() => setMove({ mode: 'move', ids: [menu.file!.id] })}>
+              <button
+                type="button"
+                disabled={merged}
+                onClick={() => {
+                  if (merged) return
+                  setMove({ mode: 'move', ids: [menu.file!.id] })
+                }}
+              >
                 {t('files.move_to')}
               </button>
-              <button type="button" onClick={() => setMove({ mode: 'copy', ids: [menu.file!.id] })}>
+              <button
+                type="button"
+                disabled={merged}
+                onClick={() => {
+                  if (merged) return
+                  setMove({ mode: 'copy', ids: [menu.file!.id] })
+                }}
+              >
                 {t('files.copy_to')}
               </button>
               {isVideo(menu.file) && (
@@ -608,8 +678,9 @@ export default function Files() {
             <>
               <button
                 type="button"
-                disabled={selectedIds.length === 0}
+                disabled={merged || selectedIds.length === 0}
                 onClick={() => {
+                  if (merged) return
                   setMenu(null)
                   setMove({ mode: 'move', ids: selectedIds })
                 }}
@@ -618,8 +689,9 @@ export default function Files() {
               </button>
               <button
                 type="button"
-                disabled={selectedIds.length === 0}
+                disabled={merged || selectedIds.length === 0}
                 onClick={() => {
+                  if (merged) return
                   setMenu(null)
                   setMove({ mode: 'copy', ids: selectedIds })
                 }}

@@ -620,6 +620,10 @@ const messages: Record<string, Entry> = {
   },
   'files.upload': { 'zh-CN': '上传', en: 'Upload' },
   'files.new_folder': { 'zh-CN': '新建文件夹', en: 'New folder' },
+  'files.merged_readonly': {
+    'zh-CN': '合并视图下不可用，请选择具体账号',
+    en: 'Not available in the all-accounts view. Pick a single account.',
+  },
   'files.more': { 'zh-CN': '更多', en: 'More' },
   'files.filter_label': { 'zh-CN': '筛选', en: 'Filter' },
   'files.kind_all': { 'zh-CN': '全部', en: 'All' },

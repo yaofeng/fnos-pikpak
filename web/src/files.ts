@@ -46,6 +46,20 @@ export function filesQuery(scope: string, segs: string[], folderId: string, kind
   return params.toString()
 }
 
+// groupByAccount splits selected rows into per-account id lists so a merged
+// view can route each row's mutation to the account that served it; rows
+// without a stamp fall under the scope itself (single-account listings).
+export function groupByAccount(items: FileItem[], scope: string): Map<string, string[]> {
+  const groups = new Map<string, string[]>()
+  for (const f of items) {
+    const key = f.account_id || scope
+    const ids = groups.get(key)
+    if (ids) ids.push(f.id)
+    else groups.set(key, [f.id])
+  }
+  return groups
+}
+
 // sortFiles orders folders first — that is what a file manager user expects
 // regardless of the chosen key — then applies the key to both groups.
 export function sortFiles(items: FileItem[], key: SortKey, dir: SortDir): FileItem[] {

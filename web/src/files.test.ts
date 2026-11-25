@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from 'vitest'
-import { fileKind, filesQuery, filterFiles, formatSize, isVideo, sortFiles, thumbPath, type FileItem } from './files'
+import { fileKind, filesQuery, filterFiles, formatSize, groupByAccount, isVideo, sortFiles, thumbPath, type FileItem } from './files'
 
 function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem {
   return { id, parent_id: '', name, kind: 'drive#file', size: 0, ...extra }
@@ -65,6 +65,20 @@ describe('filterFiles', () => {
     const items = [folder('1', 'dir'), file('2', 'a.txt')]
     expect(filterFiles(items, '', 'folder').map((f) => f.id)).toEqual(['1'])
     expect(filterFiles(items, '', 'file').map((f) => f.id)).toEqual(['2'])
+  })
+})
+
+describe('groupByAccount', () => {
+  test('groupByAccount splits merged rows and keeps unstamped under scope', () => {
+    const rows = [
+      { id: '1', account_id: 'a' },
+      { id: '2', account_id: 'b' },
+      { id: '3' }, // 单账号列表的无戳行
+    ] as never[]
+    const got = groupByAccount(rows as never, 'acct-a')
+    expect(got.get('a')).toEqual(['1'])
+    expect(got.get('b')).toEqual(['2'])
+    expect(got.get('acct-a')).toEqual(['3'])
   })
 })
 

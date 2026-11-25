@@ -8,7 +8,9 @@ type Props = {
   onSelect: (index: number, e: MouseEvent) => void
   onOpen: (f: FileItem) => void
   onMenu: (e: MouseEvent, f: FileItem) => void
-  onDragStart: (f: FileItem) => void
+  // Omitting onDragStart also drops the draggable attribute, the way
+  // FileTable treats it: a read-only page passes neither.
+  onDragStart?: (f: FileItem) => void
   onDropOn: (folderId: string) => void
   // thumbSrc maps a file to a thumbnail URL. A tile falls back to its icon
   // when the request fails (no thumbnail, expired link, offline).
@@ -37,8 +39,8 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
           role="option"
           aria-selected={selected.has(f.id)}
           className={selected.has(f.id) ? 'tile selected' : 'tile'}
-          draggable
-          onDragStart={() => onDragStart(f)}
+          draggable={Boolean(onDragStart)}
+          onDragStart={() => onDragStart?.(f)}
           onDragOver={(e) => {
             if (isFolder(f)) e.preventDefault()
           }}
