@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import StatusBar from '../components/StatusBar'
 import { apiGet, apiPatch, apiPost, basePath } from '../api'
+import { accountLabel } from '../accounts'
 import { downloadErrorMessage, queueDownloads } from '../downloads'
 import { useAccounts } from '../AccountContext'
 import AccountSwitcher from '../components/AccountSwitcher'
@@ -28,6 +29,7 @@ import { useFileSelection } from '../useFileSelection'
 import { useMarquee } from '../useMarquee'
 import {
   filterFiles,
+  filesQuery,
   isFolder,
   isVideo,
   sortFiles,
@@ -39,7 +41,8 @@ import {
 } from '../files'
 import { getLang, makeT } from '../i18n'
 
-type Page = { items: FileItem[]; next_page_token: string }
+type AccountError = { account_id: string; account_name?: string; error: string }
+type Page = { items: FileItem[]; next_page_token: string; account_errors?: AccountError[] }
 type Crumb = { id: string; name: string }
 type CachedList = { items: FileItem[]; token: string }
 
@@ -52,15 +55,24 @@ function withAccount(path: string, accountId: string): string {
 export default function Files() {
   const lang = getLang()
   const t = makeT(lang)
-  const { accounts, currentId: accountId, scope, setCurrent } = useAccounts()
+  const { accounts, byId, currentId: accountId, scope, setCurrent } = useAccounts()
+  // 'all' is the merged view: one listing across every account, walked by
+  // path names because folder ids only mean something inside one account.
+  const merged = scope === 'all'
   const [stack, setStack] = useState<Crumb[]>([])
   const folderId = stack.length ? stack[stack.length - 1].id : ''
+  // The merged listing address: crumb names JSON-packed so a name containing
+  // '/' cannot read as two levels in the cache key.
+  const folderKey = merged ? `path:${JSON.stringify(stack.map((c) => c.name))}` : folderId
 
   const [items, setItems] = useState<FileItem[]>([])
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // Accounts whose page of a merged listing failed; single-account listings
+  // leave it empty.
+  const [accountErrors, setAccountErrors] = useState<AccountError[]>([])
 
   const [view, setView] = useState<'list' | 'grid'>('grid')
   const [q, setQ] = useState('')
@@ -79,9 +91,9 @@ export default function Files() {
   const itemsRef = useRef<FileItem[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
   const dragged = useRef<FileItem | null>(null)
-  // The account the current listing came from; the switch effect below uses
-  // the delta to own the render in which the account changed.
-  const prevAccount = useRef(accountId)
+  // The scope the current listing came from; the switch effect below uses
+  // the delta to own the render in which the scope changed.
+  const prevScope = useRef(scope)
 
   const shown = sortFiles(filterFiles(items, q, kind), sortKey, sortDir)
   // Selection is by list position, like the Finder: click selects one,
@@ -103,19 +115,22 @@ export default function Files() {
       const id = ++reqId.current
       setLoading(true)
       setError('')
-      const params = new URLSearchParams({ parent_id: folderId, limit: '100' })
+      // filesQuery emits the scope's account/seg/parent_id/kind pairs; limit
+      // and the pagination token append after it, keeping the single-account
+      // parameter set identical to 2.0.0's.
+      const params = new URLSearchParams({ limit: '100' })
       if (pageToken) params.set('page_token', pageToken)
-      if (kind !== 'all') params.set('kind', kind === 'folder' ? 'drive#folder' : 'drive#file')
-      if (accountId) params.set('account', accountId)
+      const query = `${filesQuery(scope, stack.map((c) => c.name), folderId, kind)}&${params.toString()}`
       try {
-        const page = await apiGet<Page>(`files?${params.toString()}`)
+        const page = await apiGet<Page>(`files?${query}`)
         if (id !== reqId.current) return
         const nextItems = reset ? page.items : [...itemsRef.current, ...page.items]
         itemsRef.current = nextItems
         const nextToken = page.next_page_token || ''
         setItems(nextItems)
         setToken(nextToken)
-        writeCache<CachedList>(cacheKeys.files(accountId, folderId, kind), { items: nextItems, token: nextToken })
+        setAccountErrors(page.account_errors ?? [])
+        writeCache<CachedList>(cacheKeys.files(scope, folderKey, kind), { items: nextItems, token: nextToken })
       } catch (e) {
         if (id === reqId.current) setError((e as Error).message)
         // A stale request must not blank what a newer one already rendered.
@@ -124,19 +139,19 @@ export default function Files() {
         if (id === reqId.current) setLoading(false)
       }
     },
-    [accountId, folderId, kind],
+    [scope, stack, folderId, folderKey, kind],
   )
 
   useEffect(() => {
-    // The switch effect below owns the render in which the account changed:
+    // The switch effect below owns the render in which the scope changed:
     // it refetches from the root, so the pre-switch folder request is skipped
     // rather than sent (a foreign parent id would only 404).
-    if (prevAccount.current !== accountId) return
+    if (prevScope.current !== scope) return
     clearSelection()
     // Coming back to a folder shows the listing it had; 刷新 and the mutation
-    // paths replace it. Keys carry the account, so a cached listing can never
-    // be another account's rows.
-    const cached = readCache<CachedList>(cacheKeys.files(accountId, folderId, kind))
+    // paths replace it. Keys carry the scope, so a cached listing can never
+    // be another scope's rows.
+    const cached = readCache<CachedList>(cacheKeys.files(scope, folderKey, kind))
     if (cached) {
       itemsRef.current = cached.items
       setItems(cached.items)
@@ -147,7 +162,7 @@ export default function Files() {
     setItems([])
     setToken('')
     void fetchPage('', true)
-  }, [fetchPage, folderId, kind, accountId, clearSelection])
+  }, [fetchPage, scope, folderKey, kind, clearSelection])
 
   useEffect(() => {
     const el = sentinel.current
@@ -184,25 +199,28 @@ export default function Files() {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectAll, clearSelection])
 
-  // Switching accounts changes whose files everything is: drop every page's
+  // Switching scopes changes whose files everything is: drop every page's
   // cache, go back to the drive root with nothing selected, and refetch. The
-  // folder effect skips this same render (prevAccount delta), so only this
+  // folder effect skips this same render (prevScope delta), so only this
   // root request goes out; the reqId guard still drops anything stale.
   useEffect(() => {
-    if (prevAccount.current === accountId) return
-    prevAccount.current = accountId
+    if (prevScope.current === scope) return
+    prevScope.current = scope
     resetCache()
     setStack([])
     itemsRef.current = []
     setItems([])
     setToken('')
+    setAccountErrors([])
     clearSelection()
     void fetchPage('', true)
-  }, [accountId, fetchPage, clearSelection])
+  }, [scope, fetchPage, clearSelection])
 
   function openFile(f: FileItem) {
     if (!isFolder(f)) return
-    setStack((prev) => [...prev, { id: f.id, name: f.name }])
+    // Merged rows carry no folder id that means anything across accounts:
+    // the pushed crumb holds the name only, and the names are the path.
+    setStack((prev) => [...prev, merged ? { id: '', name: f.name } : { id: f.id, name: f.name }])
     setQ('')
   }
 
@@ -482,6 +500,20 @@ export default function Files() {
       </div>
 
       {error && <p className="error">{error}</p>}
+      {/* One line per account whose page of a merged listing failed: its rows
+          are simply missing, so the failure has to say itself. */}
+      {accountErrors.length > 0 && (
+        <p className="muted small">
+          {t('files.account_errors')}
+          {accountErrors
+            .map((e) =>
+              t('recent.account_error_line')
+                .replace('{name}', accountLabel(byId, e.account_id, e.account_name, lang))
+                .replace('{error}', e.error),
+            )
+            .join(lang === 'en' ? '; ' : '；')}
+        </p>
+      )}
 
       {!loading && shown.length === 0 && !error && (
         <p className="muted">{items.length === 0 ? t('files.empty_folder') : t('files.no_match')}</p>
@@ -505,7 +537,7 @@ export default function Files() {
           />
         ) : (
           <FileGrid
-            thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id, undefined, accountId)}`}
+            thumbSrc={(f) => `${basePath}/api/${thumbPath(f.id, undefined, f.account_id || accountId)}`}
             items={shown}
             selected={selected}
             onSelect={select}
@@ -605,7 +637,14 @@ export default function Files() {
         </div>
       )}
 
-      {playing && <Player fileId={playing.id} name={playing.name} account={accountId} onClose={() => setPlaying(null)} />}
+      {playing && (
+        <Player
+          fileId={playing.id}
+          name={playing.name}
+          account={playing.account_id || accountId}
+          onClose={() => setPlaying(null)}
+        />
+      )}
 
       {move && (
         <div className="modal-backdrop" onClick={() => setMove(null)}>

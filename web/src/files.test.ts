@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from 'vitest'
-import { fileKind, filterFiles, formatSize, isVideo, sortFiles, thumbPath, type FileItem } from './files'
+import { fileKind, filesQuery, filterFiles, formatSize, isVideo, sortFiles, thumbPath, type FileItem } from './files'
 
 function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem {
   return { id, parent_id: '', name, kind: 'drive#file', size: 0, ...extra }
@@ -8,6 +8,20 @@ function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem
 function folder(id: string, name: string): FileItem {
   return { id, parent_id: '', name, kind: 'drive#folder', size: 0 }
 }
+
+describe('filesQuery', () => {
+	test('merged scope walks by seg params, no parent_id', () => {
+		expect(filesQuery('all', ['电影', '动作'], '', 'all')).toBe(
+			'account=all&seg=' + encodeURIComponent('电影') + '&seg=' + encodeURIComponent('动作'),
+		)
+	})
+	test('single scope keeps the parent_id form byte-identical to 2.0.0', () => {
+		expect(filesQuery('acct-a', [], 'fld-1', 'all')).toBe('parent_id=fld-1&account=acct-a')
+	})
+	test('kind filter rides along in both modes', () => {
+		expect(filesQuery('all', [], '', 'folder')).toContain('kind=drive%23folder')
+	})
+})
 
 describe('sortFiles', () => {
   test('keeps folders before files whatever the sort key', () => {

@@ -11,6 +11,10 @@ export type FileItem = {
   // account_id stamps merged cross-account listings (最近) with the account
   // that served the row; single-account views leave it unset.
   account_id?: string
+  // account_name rides along on the same merged rows so the UI can say which
+  // account a tile came from without a byId lookup; unset on single-account
+  // listings.
+  account_name?: string
   // Local badges the share browser and 视频收藏夹 draw on a tile: a copy
   // already sits in Pack From Shared, or the video is in 视频收藏夹.
   restored?: boolean
@@ -23,6 +27,23 @@ export type KindFilter = 'all' | 'folder' | 'file'
 
 export function isFolder(f: FileItem): boolean {
   return f.kind === 'drive#folder'
+}
+
+// filesQuery builds the listing query for one scope: merged mode walks by
+// path segments, single-account mode keeps the 2.0.0 parent_id form. limit
+// and page_token are not here — fetchPage appends them, so the parameter set
+// per mode stays the 2.0.0 one (parent_id, limit, page_token?, kind?, account).
+export function filesQuery(scope: string, segs: string[], folderId: string, kind: KindFilter): string {
+  const params = new URLSearchParams()
+  if (scope === 'all') {
+    params.set('account', 'all')
+    for (const seg of segs) params.append('seg', seg)
+  } else {
+    params.set('parent_id', folderId)
+    params.set('account', scope)
+  }
+  if (kind !== 'all') params.set('kind', kind === 'folder' ? 'drive#folder' : 'drive#file')
+  return params.toString()
 }
 
 // sortFiles orders folders first — that is what a file manager user expects

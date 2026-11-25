@@ -278,6 +278,10 @@ const messages: Record<string, Entry> = {
   'files.th_size': { 'zh-CN': '大小', en: 'Size' },
   'files.th_modified': { 'zh-CN': '修改时间', en: 'Modified' },
   'files.open': { 'zh-CN': '打开', en: 'Open' },
+  'files.account_errors': {
+    'zh-CN': '部分账号的文件没有加载：',
+    en: "Some accounts' files did not load:",
+  },
   'statusbar.total': { 'zh-CN': '共 {n} 项', en: '{n} items' },
   'statusbar.selected_of': { 'zh-CN': '选中 {n} 项（共 {total} 项）', en: '{n} of {total} selected' },
 

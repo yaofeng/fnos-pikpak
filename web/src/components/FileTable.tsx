@@ -84,7 +84,9 @@ export default function FileTable({ items, selected, onSelect, onOpen, onMenu, o
                   <span className="file-icon">
                     <FileIcon file={f} />
                   </span>
-                  <span className="name-text">{f.name}</span>
+                  <span className="name-text" title={f.account_name ? `${f.name}@${f.account_name}` : f.name}>
+                    {f.name}
+                  </span>
                   {accountOf && <span className="muted small">{accountOf(f)}</span>}
                 </span>
               </td>

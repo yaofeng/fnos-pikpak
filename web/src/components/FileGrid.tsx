@@ -78,7 +78,7 @@ export default function FileGrid({ items, selected, onSelect, onOpen, onMenu, on
             {!isFolder(f) && <span className="tile-size">{formatSize(f.size)}</span>}
           </div>
           <div className="tile-label">
-            <span className="tile-name" title={f.name}>
+            <span className="tile-name" title={f.account_name ? `${f.name}@${f.account_name}` : f.name}>
               {f.name}
             </span>
             {accountOf && <span className="muted small">{accountOf(f)}</span>}

@@ -24,8 +24,10 @@ export default function Breadcrumb({ stack, onNavigate, onDropOn }: Props) {
       >
         {t('nav.files')}
       </button>
+      {/* Keyed by position: merged-mode crumbs all carry id '' (the names
+          are the path), so an id key would repeat across the stack. */}
       {stack.map((c, i) => (
-        <span key={c.id} className="crumb-wrap">
+        <span key={`${c.id}:${i}`} className="crumb-wrap">
           <span className="crumb-sep">/</span>
           <button
             type="button"
