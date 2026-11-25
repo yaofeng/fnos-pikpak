@@ -209,3 +209,234 @@ func TestRecentRequiresBinding(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+// TestTrashRouteMergedAll pins the all-accounts merged trash listing: every
+// active account's trash page merges into one response, each row stamped with
+// the account that served it, and the upstream still sees the trashed filter.
+func TestTrashRouteMergedAll(t *testing.T) {
+	// 一个监听地址按 bearer 扮演两个上游（照 files 合并测试的模式），各自的
+	// 回收站里有一行；同时记录每个上游收到的 filters。
+	var mu sync.Mutex
+	filters := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		filters[r.Header.Get("Authorization")] = r.URL.Query().Get("filters")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Header.Get("Authorization") {
+		case "Bearer at-acct-a":
+			_, _ = io.WriteString(w, `{"files":[{"id":"ta1","name":"a-old.mkv","kind":"drive#file","size":"1"}]}`)
+		case "Bearer at-acct-b":
+			_, _ = io.WriteString(w, `{"files":[{"id":"tb1","name":"b-old.mkv","kind":"drive#file","size":"2"}]}`)
+		default:
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/trash?account=all", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("items = %v, want one row per account", body["items"])
+	}
+	stamps := map[string]string{} // file id → account_id
+	names := map[string]string{}  // account_id → account_name
+	for _, raw := range items {
+		file, _ := raw.(map[string]any)
+		id, _ := file["account_id"].(string)
+		stamps[file["id"].(string)] = id
+		names[id] = file["account_name"].(string)
+	}
+	if stamps["ta1"] != "acct-a" || stamps["tb1"] != "acct-b" {
+		t.Fatalf("stamps = %v, want ta1→acct-a / tb1→acct-b", stamps)
+	}
+	if names["acct-a"] != "账号acct-a" || names["acct-b"] != "账号acct-b" {
+		t.Fatalf("names = %v, want 账号<id> on every row", names)
+	}
+	if _, ok := body["account_errors"]; ok {
+		t.Fatalf("account_errors = %v, want the key absent on a clean merge", body["account_errors"])
+	}
+	// 两个上游都必须带着 trashed 过滤器被问到（trashFilters 复用）。
+	mu.Lock()
+	defer mu.Unlock()
+	for bearer, raw := range filters {
+		var parsed struct {
+			Trashed struct{ Eq bool } `json:"trashed"`
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			t.Fatalf("%s filters %q: %v", bearer, raw, err)
+		}
+		if !parsed.Trashed.Eq {
+			t.Fatalf("%s filters = %q, want trashed eq true", bearer, raw)
+		}
+	}
+	if len(filters) != 2 {
+		t.Fatalf("upstreams asked = %v, want both accounts", filters)
+	}
+}
+
+// TestTrashMergedPaginationNoRepeat pins the merged trash page-token envelope:
+// an account whose listing ended is recorded in the token (pageDone) and never
+// asked again, so its first page cannot re-appear on later pages.
+func TestTrashMergedPaginationNoRepeat(t *testing.T) {
+	var mu sync.Mutex
+	// 每个 bearer 身份被请求过的上游 page_token，按顺序记录。
+	asked := map[string][]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		page := r.URL.Query().Get("page_token")
+		mu.Lock()
+		asked[token] = append(asked[token], page)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch token {
+		case "at-acct-a":
+			// 第一次回 next_page_token="p2"，第二次返回空 token。第 2、3 页的
+			// 信封都携带上游 token "p2"，所以按调用次数而非 token 值区分。
+			switch len(asked[token]) {
+			case 1:
+				_, _ = io.WriteString(w, `{"files":[{"id":"ta1","name":"ta1.mkv","kind":"drive#file","modified_time":"2026-01-02T00:00:00Z"}],"next_page_token":"p2"}`)
+			case 2:
+				_, _ = io.WriteString(w, `{"files":[{"id":"ta2","name":"ta2.mkv","kind":"drive#file","modified_time":"2026-01-01T00:00:00Z"}]}`)
+			default:
+				_, _ = io.WriteString(w, `{"files":[]}`)
+			}
+		default:
+			// acct-b 一页即尽：首页后就没了。
+			_, _ = io.WriteString(w, `{"files":[{"id":"tb1","name":"tb1.mkv","kind":"drive#file","modified_time":"2026-01-03T00:00:00Z"}]}`)
+		}
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	// 第一页：两个账号都有行，信封 token 非空。
+	rec, body := getJSON(t, h, "/api/trash?account=all", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	pageIDs := func(body map[string]any) []string {
+		t.Helper()
+		items, _ := body["items"].([]any)
+		var ids []string
+		for _, raw := range items {
+			item, _ := raw.(map[string]any)
+			id, _ := item["id"].(string)
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	if ids := pageIDs(body); len(ids) != 2 {
+		t.Fatalf("page 1 items = %v, want ta1 and tb1", ids)
+	}
+	token, _ := body["next_page_token"].(string)
+	if token == "" || token == "p2" {
+		t.Fatalf("next_page_token = %v, want the merged envelope", body["next_page_token"])
+	}
+
+	// 第二页：只含仍有页的账号；acct-b 已尽，tb1 不得重复，上游也不再被问。
+	rec, body = getJSON(t, h, "/api/trash?account=all&page_token="+token, "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page 2 status = %d body=%v", rec.Code, body)
+	}
+	if ids := pageIDs(body); len(ids) != 1 || ids[0] != "ta2" {
+		t.Fatalf("page 2 items = %v, want only ta2 (tb1 must not repeat)", ids)
+	}
+	mu.Lock()
+	if got := asked["at-acct-b"]; len(got) != 1 {
+		mu.Unlock()
+		t.Fatalf("exhausted account asked %v times, want exactly once", got)
+	}
+	mu.Unlock()
+
+	// 第三页带同样的 token：acct-b 由 pageDone 跳过，acct-a 再问已是空页 →
+	// items 为空、next_page_token 缺省。
+	rec, body = getJSON(t, h, "/api/trash?account=all&page_token="+token, "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page 3 status = %d body=%v", rec.Code, body)
+	}
+	if ids := pageIDs(body); len(ids) != 0 {
+		t.Fatalf("page 3 items = %v, want empty", ids)
+	}
+	if _, ok := body["next_page_token"]; ok {
+		t.Fatalf("page 3 carried next_page_token = %v, want it omitted", body["next_page_token"])
+	}
+	if errs, ok := body["account_errors"]; ok {
+		t.Fatalf("page 3 reported account_errors = %v", errs)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := asked["at-acct-b"]; len(got) != 1 {
+		t.Fatalf("exhausted account asked %v times total, want exactly once", got)
+	}
+}
+
+// TestTrashMergedAccountErrorIsolated pins error isolation in the merged
+// trash listing: one dead upstream cannot blank the healthy account's rows,
+// and the failure surfaces as exactly one account_errors entry naming the
+// dead one.
+func TestTrashMergedAccountErrorIsolated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") == "Bearer at-acct-b" {
+			// Retry-After: 0 keeps the client's 500-retry loop from sleeping.
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, `{"files":[{"id":"ta1","name":"a-old.mkv","kind":"drive#file","modified_time":"2026-01-02T00:00:00Z"}]}`)
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	rec, body := getJSON(t, h, "/api/trash?account=all", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %v, want acct-a's row despite acct-b's failure", body["items"])
+	}
+	first, _ := items[0].(map[string]any)
+	if first["account_id"] != "acct-a" {
+		t.Fatalf("stamp = %v, want acct-a", first["account_id"])
+	}
+	errs, _ := body["account_errors"].([]any)
+	if len(errs) != 1 {
+		t.Fatalf("account_errors = %v, want exactly one entry", body["account_errors"])
+	}
+	e, _ := errs[0].(map[string]any)
+	if e["account_id"] != "acct-b" {
+		t.Fatalf("account_errors[0].account_id = %v, want acct-b", e["account_id"])
+	}
+	if msg, _ := e["error"].(string); msg == "" {
+		t.Fatalf("account_errors[0].error = %v, want a message", e["error"])
+	}
+}

@@ -59,6 +59,10 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("GET /api/trash", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("account") == "all" {
+			handleMergedTrash(w, r, deps)
+			return
+		}
 		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
@@ -241,6 +245,41 @@ func handleMergedFiles(w http.ResponseWriter, r *http.Request, deps Deps) {
 		// applied to the loaded page only and the client is told so.
 		resp.Items = filterByName(items, q)
 		resp.QLocal = true
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMergedTrash serves GET /api/trash?account=all: every active account's
+// trash page is fetched in parallel and merged by modified time, each row
+// stamped with the account that served it. The trash lives at the drive root,
+// so every account lists parent "" with the shared trashFilters constant —
+// the same envelope shape as the merged files listing, minus q/kind, which
+// trash has none of.
+func handleMergedTrash(w http.ResponseWriter, r *http.Request, deps Deps) {
+	clients, ok := allAccountClients(w, r, deps)
+	if !ok {
+		return
+	}
+	tokens, err := decodePageToken(r.URL.Query().Get("page_token"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_page_token", "page_token 不合法")
+		return
+	}
+
+	// Every account's trash sits at its drive root, so the shared parent
+	// slice stays empty — the filter, not a parent id, selects the trash.
+	parentIDs := make([]string, len(clients))
+	pages, nexts, failures := fetchListPages(r.Context(), clients, parentIDs, trashFilters, defaultFileLimit, tokens)
+	items := mergeFilePages(pages, clients)
+	if items == nil {
+		items = []pikpak.File{}
+	}
+	resp := filesResponse{
+		Items:         items,
+		NextPageToken: nextPageToken(clients, nexts, failures),
+	}
+	if len(failures) > 0 {
+		resp.AccountErrors = accountErrorList(clients, failures)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
