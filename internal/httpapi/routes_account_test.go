@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -193,5 +194,65 @@ func TestBindingWritesAccountRecord(t *testing.T) {
 	}
 	if cred.AccessToken != "at-1" || cred.DeviceID != st.DeriveDeviceID(acct.ID) {
 		t.Fatalf("cred = %+v (want the derived device id)", cred)
+	}
+}
+
+func TestAccountRename(t *testing.T) {
+	var aboutCalls, vipCalls int32
+	srv := accountServer(t, &aboutCalls, &vipCalls)
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	deps.Accounts = newAccountCache(time.Minute)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	h := NewMux(deps)
+
+	// Rename trims whitespace and takes effect on the row and the listing.
+	rec, body := postJSON(t, h, "/api/accounts/acct-a/rename", "1000", `{"display_name":"  主力号  "}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename status = %d body=%v", rec.Code, body)
+	}
+	if item, _ := body["item"].(map[string]any); item["display_name"] != "主力号" {
+		t.Fatalf("item display_name = %v", item["display_name"])
+	}
+	if acct, err := st.GetAccount(context.Background(), 1000, "acct-a"); err != nil || acct.DisplayName != "主力号" {
+		t.Fatalf("store display_name = %q, %v", acct.DisplayName, err)
+	}
+	rec2, body2 := getJSON(t, h, "/api/accounts", "1000")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("list status = %d", rec2.Code)
+	}
+	items := body2["items"].([]any)
+	if items[0].(map[string]any)["display_name"] != "主力号" {
+		t.Fatalf("listing display_name = %v", items[0])
+	}
+
+	// Whitespace-only → 400 with the exact copy.
+	rec3, body3 := postJSON(t, h, "/api/accounts/acct-a/rename", "1000", `{"display_name":"   "}`)
+	errObj3, _ := body3["error"].(map[string]any)
+	if rec3.Code != http.StatusBadRequest || errObj3["message"] != "账号名称不能为空" {
+		t.Fatalf("empty rename = %d %v", rec3.Code, body3)
+	}
+
+	// Over the 50-rune cap → 400.
+	long := strings.Repeat("长", 51)
+	rec4, body4 := postJSON(t, h, "/api/accounts/acct-a/rename", "1000",
+		fmt.Sprintf(`{"display_name":%q}`, long))
+	errObj4, _ := body4["error"].(map[string]any)
+	if rec4.Code != http.StatusBadRequest || errObj4["message"] != "账号名称过长，最多 50 个字符" {
+		t.Fatalf("long rename = %d %v", rec4.Code, body4)
+	}
+
+	// Foreign uid and unknown id → 404, name untouched.
+	rec5, _ := postJSON(t, h, "/api/accounts/acct-a/rename", "1001", `{"display_name":"偷改"}`)
+	if rec5.Code != http.StatusNotFound {
+		t.Fatalf("foreign uid rename status = %d", rec5.Code)
+	}
+	rec6, _ := postJSON(t, h, "/api/accounts/no-such/rename", "1000", `{"display_name":"x"}`)
+	if rec6.Code != http.StatusNotFound {
+		t.Fatalf("unknown id rename status = %d", rec6.Code)
+	}
+	if acct, _ := st.GetAccount(context.Background(), 1000, "acct-a"); acct.DisplayName != "主力号" {
+		t.Fatalf("display_name changed by rejected attempts: %q", acct.DisplayName)
 	}
 }

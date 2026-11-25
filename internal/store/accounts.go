@@ -140,6 +140,28 @@ INSERT INTO pikpak_accounts(uid, status, bound_at, updated_at) VALUES(?,?,?,?)`,
 	return err
 }
 
+// SetAccountDisplayName stores the user-facing label for one account. An empty
+// name clears the stored label, so callers fall back to the account id. The
+// uid-scoped update reports ErrNotFound for rows the caller does not own —
+// renames never create rows, unlike SetAccountStatus.
+func (s *Store) SetAccountDisplayName(ctx context.Context, uid int, id, name string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE pikpak_accounts SET display_name = ?, updated_at = ? WHERE uid = ? AND id = ?`,
+		name, now, uid, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) DeleteAccount(ctx context.Context, uid int, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM pikpak_accounts WHERE uid = ? AND id = ?`, uid, id)

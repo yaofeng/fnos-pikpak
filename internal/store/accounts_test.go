@@ -269,3 +269,62 @@ func TestJobsCarryAccount(t *testing.T) {
 		t.Fatalf("QueuedUploadJobs = %+v, %v", jobs, err)
 	}
 }
+
+func TestSetAccountDisplayName(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+
+	a := PikPakAccount{ID: mustNewAccountID(t), UID: 1001, PikPakSub: "sub-a", DisplayName: "账号A"}
+	if err := s.PutAccount(ctx, a); err != nil {
+		t.Fatalf("PutAccount: %v", err)
+	}
+
+	// Rename takes effect for the owning uid.
+	if err := s.SetAccountDisplayName(ctx, 1001, a.ID, "我的主力号"); err != nil {
+		t.Fatalf("SetAccountDisplayName: %v", err)
+	}
+	got, err := s.GetAccount(ctx, 1001, a.ID)
+	if err != nil {
+		t.Fatalf("GetAccount: %v", err)
+	}
+	if got.DisplayName != "我的主力号" {
+		t.Fatalf("DisplayName = %q, want 我的主力号", got.DisplayName)
+	}
+
+	// Another uid's row is unreachable: ErrNotFound, and the name is untouched.
+	if err := s.SetAccountDisplayName(ctx, 1002, a.ID, "偷改"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign uid rename err = %v, want ErrNotFound", err)
+	}
+	if got, _ := s.GetAccount(ctx, 1001, a.ID); got.DisplayName != "我的主力号" {
+		t.Fatalf("DisplayName after foreign attempt = %q", got.DisplayName)
+	}
+
+	// Unknown id → ErrNotFound.
+	if err := s.SetAccountDisplayName(ctx, 1001, "no-such-id", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id err = %v, want ErrNotFound", err)
+	}
+
+	// Empty string clears the stored name (callers fall back to the id).
+	if err := s.SetAccountDisplayName(ctx, 1001, a.ID, ""); err != nil {
+		t.Fatalf("clear rename: %v", err)
+	}
+	if got, _ := s.GetAccount(ctx, 1001, a.ID); got.DisplayName != "" {
+		t.Fatalf("DisplayName after clear = %q, want empty", got.DisplayName)
+	}
+
+	// Rebind round-trips the row, so the user's rename survives re-authorization.
+	if err := s.SetAccountDisplayName(ctx, 1001, a.ID, "改回"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	cur, err := s.GetAccount(ctx, 1001, a.ID)
+	if err != nil {
+		t.Fatalf("GetAccount: %v", err)
+	}
+	cur.PikPakSub = "sub-a-new"
+	if err := s.PutAccount(ctx, cur); err != nil {
+		t.Fatalf("rebind PutAccount: %v", err)
+	}
+	if got, _ := s.GetAccount(ctx, 1001, a.ID); got.DisplayName != "改回" {
+		t.Fatalf("DisplayName after rebind = %q, want 改回", got.DisplayName)
+	}
+}

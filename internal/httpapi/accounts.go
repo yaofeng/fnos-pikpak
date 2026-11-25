@@ -3,12 +3,14 @@ package httpapi
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"fnos-pikpak/internal/fnos"
 	"fnos-pikpak/internal/pikpak"
@@ -225,6 +227,9 @@ func rotatingAccounts(w http.ResponseWriter, r *http.Request, deps Deps) ([]name
 	return out, true
 }
 
+// maxAccountNameRunes caps user-supplied account labels (rename endpoint).
+const maxAccountNameRunes = 50
+
 // registerAccountsRoute serves GET /api/accounts: one row per bound account,
 // with quotas and VIP probed per account in parallel (a handful of accounts,
 // so no semaphore) and cached by account id.
@@ -251,6 +256,46 @@ func registerAccountsRoute(mux *http.ServeMux, deps Deps) {
 		}
 		wg.Wait()
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	})
+
+	// POST /api/accounts/{id}/rename renames one of the caller's own accounts.
+	// The label is display-only (ids stay stable), so duplicates are allowed.
+	mux.HandleFunc("POST /api/accounts/{id}/rename", func(w http.ResponseWriter, r *http.Request) {
+		if !requireJSONBody(w, r) {
+			return
+		}
+		id, _ := fnos.IdentityFrom(r.Context())
+		var in struct {
+			DisplayName string `json:"display_name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "请求体无法解析")
+			return
+		}
+		name := strings.TrimSpace(in.DisplayName)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "账号名称不能为空")
+			return
+		}
+		if utf8.RuneCountInString(name) > maxAccountNameRunes {
+			writeError(w, http.StatusBadRequest, "bad_request", "账号名称过长，最多 50 个字符")
+			return
+		}
+		accountID := r.PathValue("id")
+		if err := deps.Store.SetAccountDisplayName(r.Context(), id.UID, accountID, name); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found", "账号不存在")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", "无法保存账号名称")
+			return
+		}
+		acct, err := deps.Store.GetAccount(r.Context(), id.UID, accountID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "无法读取账号")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"item": deps.accountItem(r.Context(), id.UID, acct)})
 	})
 }
 
