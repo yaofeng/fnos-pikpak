@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -302,8 +303,18 @@ func TestCreateTaskAllAccountsFail(t *testing.T) {
 	defer srv.Close()
 
 	deps, st := newAuthTestDeps(t, srv.URL)
-	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
-	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	// completeBind never persists a display name, so bind the way real rows
+	// are shaped: the refusal message can only fall back to the raw id.
+	acctA := bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	acctB := bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	acctA.DisplayName = ""
+	acctB.DisplayName = ""
+	if err := st.PutAccount(context.Background(), acctA); err != nil {
+		t.Fatalf("clear acct-a display name: %v", err)
+	}
+	if err := st.PutAccount(context.Background(), acctB); err != nil {
+		t.Fatalf("clear acct-b display name: %v", err)
+	}
 	h := NewMux(deps)
 
 	rec, body := postJSON(t, h, "/api/tasks", "1000", `{"link":"https://example.com/a.bin"}`)
@@ -315,8 +326,13 @@ func TestCreateTaskAllAccountsFail(t *testing.T) {
 		t.Fatalf("error = %v", body)
 	}
 	msg, _ := errObj["message"].(string)
-	if !strings.Contains(msg, "账号acct-a") || !strings.Contains(msg, "账号acct-b") {
-		t.Fatalf("message = %q, want every account named", msg)
+	// Without a display name each account is named by its id — never a
+	// dangling "账号：" that explains nothing.
+	if !strings.Contains(msg, "acct-a：") || !strings.Contains(msg, "acct-b：") {
+		t.Fatalf("message = %q, want every account named by id", msg)
+	}
+	if !strings.HasPrefix(msg, "acct-a：") && !strings.HasPrefix(msg, "acct-b：") {
+		t.Fatalf("message = %q, want it to open with an account id, not a dangling colon", msg)
 	}
 	mu.Lock()
 	defer mu.Unlock()

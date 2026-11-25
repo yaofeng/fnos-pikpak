@@ -89,7 +89,7 @@ func registerTaskRoutes(mux *http.ServeMux, deps Deps) {
 				return
 			}
 			refused = append(refused, refusal{
-				name:   nc.Account.DisplayName,
+				name:   accountLabel(nc.Account),
 				reason: strings.TrimSpace(probe.Redact(err.Error())),
 			})
 		}

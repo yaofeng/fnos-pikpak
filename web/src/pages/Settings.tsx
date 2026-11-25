@@ -285,7 +285,7 @@ export default function Settings() {
           </button>
         </div>
         <p className="muted small">
-          重新授权会用新的 PikPak 账号替换当前绑定，传输任务记录随之清除；已下载的文件保留。
+          重新授权将刷新该账号的授权状态，保留其传输任务记录；如需换绑其他 PikPak 账号，请先解绑。
         </p>
       </section>
 

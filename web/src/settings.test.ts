@@ -49,4 +49,9 @@ describe('unbindWarning', () => {
     expect(unbindWarning).toContain('凭据')
     expect(unbindWarning).toContain('任务记录')
   })
+
+  test('scopes the loss to the one account being unbound', () => {
+    expect(unbindWarning).toContain('其他账号不受影响')
+    expect(unbindWarning).not.toContain('本用户的全部')
+  })
 })

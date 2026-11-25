@@ -34,6 +34,7 @@ export function changedSettings(current: SettingValues, next: SettingValues): Se
 }
 
 // unbindWarning is shown before the account is dropped. It must name both
-// losses: the stored PikPak credentials and the local transfer records.
+// losses: the stored PikPak credentials and the local transfer records — and
+// scope both to the one account, now that a user can bind several.
 export const unbindWarning =
-  '解绑会删除本机保存的 PikPak 凭据，并清除本用户的全部传输任务记录（已下载的文件保留）。解绑后需要重新授权才能继续使用。'
+  '解绑会删除本机保存的该账号 PikPak 凭据，并清除该账号的传输任务记录（其他账号不受影响，已下载的文件保留）。解绑后需要重新授权才能继续使用。'
