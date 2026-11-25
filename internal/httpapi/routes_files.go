@@ -19,10 +19,14 @@ const (
 const trashFilters = `{"trashed":{"eq":true}}`
 
 type filesResponse struct {
-	Items         []pikpak.File `json:"items"`
-	NextPageToken string        `json:"next_page_token"`
-	Filters       string        `json:"filters,omitempty"`
-	QLocal        bool          `json:"q_local,omitempty"`
+	Items []pikpak.File `json:"items"`
+	// NextPageToken is omitted once empty: a merged listing ends by leaving
+	// the field out (the recent/tasks envelopes do the same), and the frontend
+	// reads it with "|| ''" either way.
+	NextPageToken string         `json:"next_page_token,omitempty"`
+	Filters       string         `json:"filters,omitempty"`
+	QLocal        bool           `json:"q_local,omitempty"`
+	AccountErrors []accountError `json:"account_errors,omitempty"`
 }
 
 func registerFileRoutes(mux *http.ServeMux, deps Deps) {
@@ -98,38 +102,19 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("GET /api/files", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("account") == "all" {
+			handleMergedFiles(w, r, deps)
+			return
+		}
 		client, _, ok := accountClient(w, r, deps)
 		if !ok {
 			return
 		}
 
-		limit := defaultFileLimit
-		if raw := r.URL.Query().Get("limit"); raw != "" {
-			n, err := strconv.Atoi(raw)
-			if err != nil || n < 0 {
-				writeError(w, http.StatusBadRequest, "bad_limit", "limit 必须是 0 到 200 的整数")
-				return
-			}
-			switch {
-			case n > maxFileLimit:
-				limit = maxFileLimit
-			case n > 0:
-				limit = n
-			}
-		}
-
-		// Trashed files are excluded explicitly: PikPak's default listing
-		// otherwise still returns items moved to the trash.
-		query := map[string]any{"trashed": map[string]any{"eq": false}}
-		if kind := r.URL.Query().Get("kind"); kind != "" {
-			query["kind"] = map[string]string{"eq": kind}
-		}
-		rawFilters, err := json.Marshal(query)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_kind", "kind 不合法")
+		limit, filters, ok := fileListParams(w, r)
+		if !ok {
 			return
 		}
-		filters := string(rawFilters)
 
 		page, err := client.ListFiles(r.Context(), r.URL.Query().Get("parent_id"), pikpak.ListOptions{
 			PageToken: r.URL.Query().Get("page_token"),
@@ -157,6 +142,88 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
+}
+
+// fileListParams parses the query GET /api/files shares across its
+// single-account and merged branches: the page size (default 100, hard cap
+// 200, the limit error copy identical in both) and the server-side filters
+// (live files, optional kind). It writes the 400 itself and returns ok=false
+// on a malformed limit.
+func fileListParams(w http.ResponseWriter, r *http.Request) (limit int, filters string, ok bool) {
+	limit = defaultFileLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "bad_limit", "limit 必须是 0 到 200 的整数")
+			return 0, "", false
+		}
+		switch {
+		case n > maxFileLimit:
+			limit = maxFileLimit
+		case n > 0:
+			limit = n
+		}
+	}
+
+	// Trashed files are excluded explicitly: PikPak's default listing
+	// otherwise still returns items moved to the trash.
+	query := map[string]any{"trashed": map[string]any{"eq": false}}
+	if kind := r.URL.Query().Get("kind"); kind != "" {
+		query["kind"] = map[string]string{"eq": kind}
+	}
+	rawFilters, err := json.Marshal(query)
+	if err != nil {
+		// json.Marshal of a static map cannot fail; the 400 is unreachable but
+		// kept for shape parity with the single-account path it came from.
+		writeError(w, http.StatusBadRequest, "bad_kind", "kind 不合法")
+		return 0, "", false
+	}
+	return limit, string(rawFilters), true
+}
+
+// handleMergedFiles serves GET /api/files?account=all: every active account's
+// page is fetched in parallel and merged by modified time, each row stamped
+// with the account that served it. A failed account cannot blank the others'
+// rows — it lands in account_errors instead — and the page token is the
+// handler's own per-account envelope, reusing the recent/tasks protocol.
+func handleMergedFiles(w http.ResponseWriter, r *http.Request, deps Deps) {
+	clients, ok := allAccountClients(w, r, deps)
+	if !ok {
+		return
+	}
+	tokens, err := decodePageToken(r.URL.Query().Get("page_token"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_page_token", "page_token 不合法")
+		return
+	}
+	limit, filters, ok := fileListParams(w, r)
+	if !ok {
+		return
+	}
+
+	// Every account starts at its root; Task 4 resolves the ?seg= name
+	// segments into a per-account parent id at this one line.
+	parentIDs := make([]string, len(clients))
+
+	pages, nexts, failures := fetchListPages(r.Context(), clients, parentIDs, filters, limit, tokens)
+	items := mergeFilePages(pages, clients)
+	if items == nil {
+		items = []pikpak.File{}
+	}
+	resp := filesResponse{
+		Items:         items,
+		NextPageToken: nextPageToken(clients, nexts, failures),
+	}
+	if len(failures) > 0 {
+		resp.AccountErrors = accountErrorList(clients, failures)
+	}
+	if q := r.URL.Query().Get("q"); q != "" {
+		// PikPak cannot filter by name (verified in M0), so the query is
+		// applied to the loaded page only and the client is told so.
+		resp.Items = filterByName(items, q)
+		resp.QLocal = true
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // writeUpstreamError maps a PikPak failure onto the HTTP error envelope.

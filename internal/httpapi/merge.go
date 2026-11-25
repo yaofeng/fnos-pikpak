@@ -211,6 +211,45 @@ func fetchTaskPages(ctx context.Context, clients []namedClient, tokens map[strin
 	return pages, nexts, failures
 }
 
+// fetchListPages is fetchFilePages for directory listings: one ListFiles page
+// per account in parallel, each account walking its own parentID. A failed
+// account leaves an empty page and a failure entry; it must not keep the
+// other accounts from loading. An account whose token says its listing
+// already ended is left alone — asking it again would re-serve its first
+// page and duplicate its rows.
+func fetchListPages(ctx context.Context, clients []namedClient, parentIDs []string, filters string, limit int, tokens map[string]string) (pages [][]pikpak.File, nexts []string, failures []error) {
+	pages = make([][]pikpak.File, len(clients))
+	nexts = make([]string, len(clients))
+	failures = make([]error, len(clients))
+	var wg sync.WaitGroup
+	for i, nc := range clients {
+		wg.Add(1)
+		go func(i int, nc namedClient) {
+			defer wg.Done()
+			if tokens[nc.Account.ID] == pageDone {
+				return
+			}
+			parent := ""
+			if i < len(parentIDs) {
+				parent = parentIDs[i]
+			}
+			page, err := nc.C.ListFiles(ctx, parent, pikpak.ListOptions{
+				PageToken: tokens[nc.Account.ID],
+				Limit:     limit,
+				Filters:   filters,
+			})
+			if err != nil {
+				failures[i] = err
+				return
+			}
+			pages[i] = page.Items
+			nexts[i] = page.NextPageToken
+		}(i, nc)
+	}
+	wg.Wait()
+	return pages, nexts, failures
+}
+
 // nextPageToken re-packs every account: those with another page carry its
 // upstream token, exhausted and failed ones carry the pageDone sentinel so
 // they are not restarted (and their rows not repeated) on the next request.
