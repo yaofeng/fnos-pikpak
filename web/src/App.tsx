@@ -1,4 +1,4 @@
-import { Activity, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Activity, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import { AccountProvider, useAccounts } from './AccountContext'
@@ -6,7 +6,7 @@ import { sumQuota } from './accounts'
 import Toaster from './components/Toaster'
 import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, StarIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
-import { activePath, KEEP_ALIVE_PATHS, nextVisited, pageKey } from './keepAlive'
+import { activePath, KEEP_ALIVE_PATHS, nextVisited, pageKey, restoreScroll, saveScroll } from './keepAlive'
 import { resetCache } from './listCache'
 import { formatSize } from './files'
 import { isActive, speedOf, transferred, type TransferJob } from './transfers'
@@ -155,13 +155,36 @@ function Shell() {
   // mounted — hidden while another page is up — so its UI state, DOM and
   // scroll position survive navigation. F5 starts a fresh session by design.
   const page = activePath(location.pathname)
-  const [visited, setVisited] = useState<ReadonlySet<string>>(() => {
-    const first = activePath(location.pathname)
-    return first ? new Set([first]) : new Set()
-  })
+  const [visited, setVisited] = useState<ReadonlySet<string>>(() => (page ? new Set([page]) : new Set()))
 
   useEffect(() => {
     if (page) setVisited((prev) => nextVisited(prev, page))
+  }, [page])
+
+  // Scroll memory for the five plain pages whose scroller is <main> itself
+  // (recent, tasks, transfers, trash, settings): hiding such a page's
+  // Activity removes its height and the browser clamps main.scrollTop to 0,
+  // so the offset is recorded while scrolling and replayed on return. The
+  // restore runs in a layout effect, before paint: a returning page's
+  // content is already mounted (hidden Activities keep their DOM) and a
+  // first-visit page's content mounts in the same commit, so the subtree is
+  // always measurable here — no requestAnimationFrame needed. Writing is
+  // guarded by `page`, which is only ever a keep-alive path.
+  const mainRef = useRef<HTMLElement | null>(null)
+  const scrollStore = useRef(new Map<string, number>())
+
+  useLayoutEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    const onScroll = () => {
+      if (page) saveScroll(scrollStore.current, page, main.scrollTop)
+    }
+    main.addEventListener('scroll', onScroll)
+    if (page) {
+      const top = restoreScroll(scrollStore.current, page)
+      if (main.scrollTop !== top) main.scrollTop = top
+    }
+    return () => main.removeEventListener('scroll', onScroll)
   }, [page])
 
   useEffect(() => {
@@ -382,6 +405,7 @@ function Shell() {
 
         {/* These pages fill the window: their file areas scroll, not the page. */}
         <main
+          ref={mainRef}
           className={
             location.pathname === '/search' ||
             location.pathname.startsWith('/files') ||
@@ -394,9 +418,12 @@ function Shell() {
           {/* Kept-alive pages live outside <Routes>: each visited page stays
               mounted in an Activity, visible only while it owns the current
               path. Hidden Activities unmount their effects, so polling pages
-              pause while out of sight and replay from listCache on return. */}
+              pause while out of sight and replay from listCache on return.
+              The `kept === page` arm mounts a never-visited page in the same
+              render that activates it — no blank frame before the visited
+              effect commits. */}
           {KEEP_ALIVE_PATHS.map((kept) => {
-            if (!visited.has(kept)) return null
+            if (!(visited.has(kept) || kept === page)) return null
             return (
               <Activity key={kept} mode={kept === page ? 'visible' : 'hidden'}>
                 {keepAliveElement(kept, currentId)}

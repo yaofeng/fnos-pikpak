@@ -49,3 +49,20 @@ export function nextVisited(visited: ReadonlySet<string>, pathname: string): Set
 export function pageKey(page: string, accountID: string): string {
   return `${page}|${accountID}`
 }
+
+// Scroll offsets for the plain pages whose scroller is the shared <main>
+// element (recent, tasks, transfers, trash, settings). Hiding such a page's
+// Activity removes its height from main, so the browser clamps main's
+// scrollTop toward 0 — the live value is lost the moment the page hides and
+// must be replayed from this store when the page returns. The fill-page
+// scrollers (files, favorites, video-favorites, search) scroll inside their
+// own hidden subtree and keep their offset without help.
+export type ScrollStore = Map<string, number>
+
+export function saveScroll(store: ScrollStore, page: string, top: number): void {
+  store.set(page, top)
+}
+
+export function restoreScroll(store: ScrollStore, page: string): number {
+  return store.get(page) ?? 0
+}
