@@ -1,18 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAccounts } from '../AccountContext'
-import { apiDownload, apiGet, apiPost, apiPut, apiUploadJSON } from '../api'
+import { apiDownload, apiGet, apiPut, apiUploadJSON } from '../api'
 import { restoreSummary, type RestoreResult } from '../backup'
 import { formatSize } from '../files'
 import { askPath, hostAvailable, pickDirectory } from '../fnosSdk'
-import {
-  changedSettings,
-  globalSettingKeys,
-  pickSettings,
-  unbindWarning,
-  userSettingKeys,
-  type SettingValues,
-} from '../settings'
+import { changedSettings, globalSettingKeys, pickSettings, userSettingKeys, type SettingValues } from '../settings'
+import { AccountSection } from '../components/AccountSection'
 
 type Me = { uid: number; bound: boolean; display_name: string }
 
@@ -82,10 +74,6 @@ function kindLabel(kind: string): string {
 }
 
 export default function Settings() {
-  const navigate = useNavigate()
-  // 解绑 names one account now; the page speaks of the default binding, which
-  // is the context's current account.
-  const { current } = useAccounts()
   const [me, setMe] = useState<Me | null>(null)
   const [globalSettings, setGlobalSettings] = useState<SettingValues>({})
   const [userSettings, setUserSettings] = useState<SettingValues>({})
@@ -94,7 +82,6 @@ export default function Settings() {
   const [saving, setSaving] = useState('')
   const [saved, setSaved] = useState('')
   const [error, setError] = useState('')
-  const [confirmUnbind, setConfirmUnbind] = useState(false)
   const [backupBusy, setBackupBusy] = useState('')
   const [backupNote, setBackupNote] = useState('')
   const backupFile = useRef<HTMLInputElement>(null)
@@ -161,22 +148,6 @@ export default function Settings() {
         if ('download_concurrency' in globalPatch) notes.push('并发数在服务重启后生效')
       }
       setSaved(notes.join('；'))
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setSaving('')
-    }
-  }
-
-  async function unbind() {
-    if (!current) return
-    setError('')
-    setSaving('unbind')
-    try {
-      await apiPost('auth/logout', { account_id: current.id })
-      setConfirmUnbind(false)
-      window.dispatchEvent(new Event('pikpak:account-changed'))
-      navigate('/bind')
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -266,28 +237,10 @@ export default function Settings() {
       {error && <p className="error">{error}</p>}
       {saved && <p className="ok muted small">{saved}</p>}
 
-      <section className="card">
-        <div className="card-header">
-          <h2>账号</h2>
-          <span className={me?.bound ? 'tag tag-pass' : 'tag tag-warn'}>
-            {me?.bound ? `已绑定${me.display_name ? '：' + me.display_name : ''}` : '未绑定'}
-          </span>
-        </div>
-        <p className="muted">
-          绑定只属于当前飞牛用户（UID {me?.uid ?? '—'}）。其他飞牛用户看不到这里的账号、文件和任务。
-        </p>
-        <div className="actions">
-          <button type="button" onClick={() => navigate('/bind')}>
-            重新授权
-          </button>
-          <button type="button" className="danger" disabled={!me?.bound} onClick={() => setConfirmUnbind(true)}>
-            解绑
-          </button>
-        </div>
-        <p className="muted small">
-          重新授权将刷新该账号的授权状态，保留其传输任务记录；如需换绑其他 PikPak 账号，请先解绑。
-        </p>
-      </section>
+      <p className="muted small">
+        绑定只属于当前飞牛用户（UID {me?.uid ?? '—'}）。其他飞牛用户看不到你的账号、文件和任务。
+      </p>
+      <AccountSection />
 
       <section className="card">
         <div className="card-header">
@@ -540,23 +493,6 @@ export default function Settings() {
           </table>
         )}
       </section>
-
-      {confirmUnbind && (
-        <div className="modal-backdrop" onClick={() => setConfirmUnbind(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>确认解绑</h2>
-            <p>{unbindWarning}</p>
-            <div className="actions">
-              <button type="button" className="danger" disabled={saving === 'unbind'} onClick={() => void unbind()}>
-                确认解绑
-              </button>
-              <button type="button" onClick={() => setConfirmUnbind(false)}>
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountLabel, resolveCurrentId, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
+import { accountLabel, resolveCurrentId, validateDisplayName, sumQuota, vipTypeLabel, worstStatus, type AccountInfo } from './accounts'
 
 const base: AccountInfo = {
   id: 'a',
@@ -95,5 +95,20 @@ describe('accountLabel', () => {
   it('空 id 的旧行显示默认账号', () => {
     expect(accountLabel(byId, '')).toBe('默认账号')
     expect(accountLabel(byId, undefined)).toBe('默认账号')
+  })
+})
+
+describe('validateDisplayName', () => {
+  it('去首尾空格并通过合法名称', () => {
+    expect(validateDisplayName('  主力号  ')).toEqual({ ok: true, name: '主力号' })
+  })
+  it('纯空格拒绝且提示不能为空', () => {
+    expect(validateDisplayName('   ')).toEqual({ ok: false, error: '账号名称不能为空' })
+  })
+  it('超过 50 字拒绝', () => {
+    expect(validateDisplayName('长'.repeat(51))).toEqual({ ok: false, error: '账号名称过长，最多 50 个字符' })
+  })
+  it('恰好 50 字通过', () => {
+    expect(validateDisplayName('长'.repeat(50)).ok).toBe(true)
   })
 })

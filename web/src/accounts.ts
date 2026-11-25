@@ -1,3 +1,5 @@
+import { apiPost } from './api'
+
 // AccountInfo is one row of GET /api/accounts: identity and VIP fields from
 // the stored account, quota from the cached probe snapshot, and a non-empty
 // error when that account's probe or session failed (its quotas are then zero
@@ -62,6 +64,16 @@ export function resolveCurrentId(items: AccountInfo[], currentId: string): strin
   return items[0]?.id ?? ''
 }
 
+// validateDisplayName mirrors the rename endpoint's rules so the inline
+// rename edit rejects before the request: trim, non-empty, at most 50 code
+// points. The error strings are the endpoint's own wording.
+export function validateDisplayName(raw: string): { ok: true; name: string } | { ok: false; error: string } {
+  const name = raw.trim()
+  if (!name) return { ok: false, error: '账号名称不能为空' }
+  if ([...name].length > 50) return { ok: false, error: '账号名称过长，最多 50 个字符' }
+  return { ok: true, name }
+}
+
 // accountLabel names the account one merged row or mutation response refers
 // to, the same way everywhere: a name that arrived with the response wins,
 // then the bound account's display name, then the id's first six characters
@@ -75,4 +87,14 @@ export function accountLabel(
   if (name) return name
   if (!id) return '默认账号'
   return byId?.get(id)?.display_name || id.slice(0, 6)
+}
+
+// renameAccount POSTs the rename endpoint and returns the refreshed row, so
+// the caller can patch one entry of its list without a full reload.
+export async function renameAccount(id: string, displayName: string): Promise<AccountInfo> {
+  const body = await apiPost<{ item: AccountInfo }>(
+    `accounts/${encodeURIComponent(id)}/rename`,
+    { display_name: displayName },
+  )
+  return body.item
 }

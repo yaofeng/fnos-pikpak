@@ -366,11 +366,6 @@ function Shell() {
               </span>
             </span>
           )}
-          {accounts.length === 0 && (
-            <NavLink to="/bind" className="nav-item">
-              {t('action.bind')}
-            </NavLink>
-          )}
           <NavLink to="/settings" className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
             {navIcons['/settings']}
             <span>{t('nav.settings')}</span>
@@ -386,18 +381,18 @@ function Shell() {
 
       <div className="content">
 
-        {me && !me.bound && location.pathname !== '/bind' && (
+        {me && !me.bound && location.pathname !== '/settings' && (
           <div className="notice">
-            {t('state.unbound')} · <NavLink to="/bind">{t('action.bind')}</NavLink>
+            {t('state.unbound')} · <NavLink to="/settings">{t('action.bind')}</NavLink>
           </div>
         )}
 
-        {/* One banner per account whose authorization died; the bind page
-            re-authorizes rows one by one. */}
+        {/* One banner per account whose authorization died; the settings
+            account section re-authorizes rows one by one. */}
         {reauthAccounts.map((a) => (
           <div className="notice danger" key={a.id}>
             <span>{t('state.reauth_account').replace('{name}', a.display_name || a.id)}</span>
-            <button type="button" className="notice-action" onClick={() => navigate('/bind')}>
+            <button type="button" className="notice-action" onClick={() => navigate('/settings')}>
               {t('action.rebind')}
             </button>
           </div>

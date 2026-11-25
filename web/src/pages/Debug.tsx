@@ -1,7 +1,7 @@
 import { TrimApp } from '@trimjs/web-app'
 import { useCallback, useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api'
-import { BindCard } from '../components/BindCard'
+import { AccountSection } from '../components/AccountSection'
 
 type Health = { ok: boolean; version: string; uid: number }
 
@@ -563,8 +563,8 @@ export default function Debug() {
     loadHealth()
   }, [loadHealth])
 
-  // BindCard no longer takes an onChange prop: the same refresh now rides the
-  // account-changed event the bind flow dispatches.
+  // AccountSection no longer takes an onChange prop: the same refresh rides
+  // the account-changed event the bind flow dispatches.
   useEffect(() => {
     const onAccount = () => {
       loadHealth()
@@ -595,7 +595,7 @@ export default function Debug() {
         )}
       </section>
 
-      <BindCard />
+      <AccountSection />
       <GatewayCard />
       <RangeCard />
       <UploadCard refresh={refresh} />
