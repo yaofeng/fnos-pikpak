@@ -6,6 +6,7 @@ import {
   formatSize,
   groupByAccount,
   isVideo,
+  mergeFolderRows,
   sortFiles,
   thumbPath,
   trashQuery,
@@ -101,6 +102,83 @@ describe('groupByAccount', () => {
     expect(got.get('a')).toEqual(['1'])
     expect(got.get('b')).toEqual(['2'])
     expect(got.get('acct-a')).toEqual(['3'])
+  })
+})
+
+describe('mergeFolderRows', () => {
+  test('同名跨账号目录合并为一行且无戳', () => {
+    // 截图场景：合并视图根目录下三个 My Pack 各占一行 → 应合并为一行，
+    // 悬浮提示纯名字、无 @后缀（无单一目标账号，行内操作由守卫禁用）。
+    const got = mergeFolderRows([
+      folder('f1', 'My Pack'),
+      { ...folder('f2', 'My Pack'), account_id: 'acct-a', account_name: '主号' },
+      { ...folder('f3', 'My Pack'), account_id: 'acct-b', account_name: '副号' },
+    ])
+    expect(got).toHaveLength(1)
+    expect(got[0].id).toBe('f1')
+    expect(got[0].name).toBe('My Pack')
+    expect(got[0].account_id).toBeUndefined()
+    expect(got[0].account_name).toBeUndefined()
+  })
+
+  test('同名同账号目录保留戳与首行 id（行内操作照常可用）', () => {
+    const got = mergeFolderRows([
+      { ...folder('f1', 'test'), account_id: 'acct-a', account_name: '主号' },
+      { ...folder('f5', 'test'), account_id: 'acct-a', account_name: '主号' },
+    ])
+    expect(got).toHaveLength(1)
+    expect(got[0].id).toBe('f1')
+    expect(got[0].account_id).toBe('acct-a')
+    expect(got[0].account_name).toBe('主号')
+  })
+
+  test('同名文件不受影响（各占一行）', () => {
+    const got = mergeFolderRows([
+      { ...file('d1', 'a.mkv', { size: 10 }), account_id: 'acct-a', account_name: '主号' },
+      { ...file('d2', 'a.mkv', { size: 20 }), account_id: 'acct-b', account_name: '副号' },
+    ])
+    expect(got.map((f) => f.id)).toEqual(['d1', 'd2'])
+    expect(got[0].account_id).toBe('acct-a')
+    expect(got[1].account_id).toBe('acct-b')
+  })
+
+  test('同名目录与同名文件互不合并', () => {
+    const got = mergeFolderRows([
+      folder('f1', '同名'),
+      { ...file('d1', '同名'), account_id: 'acct-b' },
+    ])
+    expect(got.map((f) => f.id)).toEqual(['f1', 'd1'])
+  })
+
+  test('不同名目录不动', () => {
+    const got = mergeFolderRows([
+      { ...folder('f1', '电影'), account_id: 'acct-a' },
+      { ...folder('f2', '剧集'), account_id: 'acct-b' },
+    ])
+    expect(got.map((f) => f.id)).toEqual(['f1', 'f2'])
+    expect(got.every((f) => f.account_id)).toBe(true)
+  })
+
+  test('空数组与单行恒等，且不改动输入', () => {
+    const single = { ...folder('f1', 'test'), account_id: 'acct-a' }
+    expect(mergeFolderRows([])).toEqual([])
+    expect(mergeFolderRows([single])).toEqual([single])
+    const items = [
+      { ...folder('f1', 'My Pack'), account_id: 'acct-a' },
+      { ...folder('f2', 'My Pack'), account_id: 'acct-b' },
+    ]
+    mergeFolderRows(items)
+    expect(items.map((f) => f.account_id)).toEqual(['acct-a', 'acct-b'])
+  })
+
+  test('合并行落在首个同名目录出现的位置', () => {
+    const got = mergeFolderRows([
+      { ...folder('f1', 'My Pack'), account_id: 'acct-a' },
+      { ...file('d1', 'a.mkv'), account_id: 'acct-a' },
+      { ...folder('f2', 'My Pack'), account_id: 'acct-b' },
+    ])
+    // 排序随后由 sortFiles 接管；函数自身保持首现顺序。
+    expect(got.map((f) => f.id)).toEqual(['f1', 'd1'])
   })
 })
 

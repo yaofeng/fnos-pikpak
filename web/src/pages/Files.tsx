@@ -33,6 +33,7 @@ import {
   groupByAccount,
   isFolder,
   isVideo,
+  mergeFolderRows,
   sortFiles,
   thumbPath,
   type FileItem,
@@ -96,7 +97,11 @@ export default function Files() {
   // the delta to own the render in which the scope changed.
   const prevScope = useRef(scope)
 
-  const shown = sortFiles(filterFiles(items, q, kind), sortKey, sortDir)
+  // Merged mode folds same-name folders into one row before render — table
+  // and grid share this one deduped source (跨页同名目录也合并：去重吃的是
+  // 累计已加载 items). Single-account listings pass through untouched.
+  const visible = merged ? mergeFolderRows(items) : items
+  const shown = sortFiles(filterFiles(visible, q, kind), sortKey, sortDir)
   // Selection is by list position, like the Finder: click selects one,
   // Command/Control adds or removes, Shift takes the range, and a drag on the
   // background rubber-bands over whatever it touches. Declared before the
@@ -639,7 +644,16 @@ export default function Files() {
                   {t('files.open')}
                 </button>
               )}
-              <button type="button" onClick={() => void rename(menu.file!)}>
+              {/* A stamp-less row in merged view is a folded multi-account
+                  folder: no single target account, so rename/delete are
+                  disabled here — the row's own `f.account_id || scope`
+                  fallback would wrongly send them to the 'all' scope. */}
+              <button
+                type="button"
+                disabled={merged && !menu.file.account_id}
+                title={merged && !menu.file.account_id ? t('files.merged_readonly') : undefined}
+                onClick={() => void rename(menu.file!)}
+              >
                 {t('account.rename')}
               </button>
               <button
@@ -678,7 +692,13 @@ export default function Files() {
                   {t('common.download')}
                 </button>
               )}
-              <button type="button" className="danger" onClick={() => void remove([menu.file!.id], 'trash')}>
+              <button
+                type="button"
+                className="danger"
+                disabled={merged && !menu.file.account_id}
+                title={merged && !menu.file.account_id ? t('files.merged_readonly') : undefined}
+                onClick={() => void remove([menu.file!.id], 'trash')}
+              >
                 {t('files.trash_it')}
               </button>
             </>

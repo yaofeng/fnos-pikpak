@@ -70,6 +70,46 @@ export function groupByAccount(items: FileItem[], scope: string): Map<string, st
   return groups
 }
 
+// mergeFolderRows folds same-name folder rows into one — the merged view's
+// rendering-layer dedup: three accounts each showing a "My Pack" folder read
+// as one folder a user can enter (same-path navigation already merges the
+// contents inside). Files never fold: same-name files stay one row each,
+// told apart by the @account tooltip suffix. A folder group whose rows all
+// came from one account keeps that row's stamp and first id, so its inline
+// rename/delete keep working (a single-account folder's abilities do not
+// regress); a group spanning accounts merges onto the first row stripped of
+// its stamp — no single target account, the merged-view guards disable those
+// ops. The function is scope-blind: callers apply it only in merged mode.
+// Output keeps first-occurrence order; callers re-sort afterwards as usual.
+export function mergeFolderRows(items: FileItem[]): FileItem[] {
+  const out: FileItem[] = []
+  // Output position and accumulated rows of each folder-name group; the
+  // first row of a group sits in the output as the merge target.
+  const groupAt = new Map<string, number>()
+  const rowsOf = new Map<number, FileItem[]>()
+  for (const f of items) {
+    if (!isFolder(f)) {
+      out.push(f)
+      continue
+    }
+    const at = groupAt.get(f.name)
+    if (at !== undefined) {
+      rowsOf.get(at)!.push(f)
+      continue
+    }
+    groupAt.set(f.name, out.length)
+    rowsOf.set(out.length, [f])
+    out.push(f)
+  }
+  for (const [at, rows] of rowsOf) {
+    const first = rows[0]
+    if (!rows.every((r) => r.account_id === first.account_id)) {
+      out[at] = { ...first, account_id: undefined, account_name: undefined }
+    }
+  }
+  return out
+}
+
 // sortFiles orders folders first — that is what a file manager user expects
 // regardless of the chosen key — then applies the key to both groups.
 export function sortFiles(items: FileItem[], key: SortKey, dir: SortDir): FileItem[] {
