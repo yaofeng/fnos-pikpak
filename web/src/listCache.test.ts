@@ -23,6 +23,7 @@ describe('listCache', () => {
   it('cacheKeys 含账号段', () => {
     expect(cacheKeys.files('a1', 'root', 'all')).toBe('files:a1:root|all')
     expect(cacheKeys.trash('a1')).toBe('trash:a1')
-    expect(cacheKeys.recent()).toBe('recent:merged')
+    expect(cacheKeys.recent('all')).toBe('recent:all')
+    expect(cacheKeys.recent('a1')).toBe('recent:a1')
   })
 })

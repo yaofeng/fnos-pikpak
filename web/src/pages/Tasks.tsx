@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../api'
 import { accountLabel } from '../accounts'
 import { useAccounts } from '../AccountContext'
+import AccountSwitcher from '../components/AccountSwitcher'
 import { formatSize } from '../files'
 import {
   canRetry,
@@ -18,10 +19,17 @@ type AccountError = { account_id: string; account_name?: string; error: string }
 
 const POLL_MS = 3000
 
+// withScope pins a request to the picked account; 'all' keeps the bare path,
+// so a merged create goes through the server's account rotation and a merged
+// list/clear acts on every account.
+function withScope(path: string, scope: string): string {
+  return scope === 'all' ? path : `${path}?account=${encodeURIComponent(scope)}`
+}
+
 export default function Tasks() {
   const lang = getLang()
   const t = makeT(lang)
-  const { byId } = useAccounts()
+  const { accounts, byId, scope, setCurrent } = useAccounts()
   const [items, setItems] = useState<OfflineTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -30,11 +38,16 @@ export default function Tasks() {
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState('')
   const [deleteFiles, setDeleteFiles] = useState(false)
+  // The scope the current listing came from; the switch effect below uses
+  // the delta to own the render in which the scope changed.
+  const prevScope = useRef(scope)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const page = await apiGet<{ items?: OfflineTask[]; account_errors?: AccountError[] }>('tasks')
+      const page = await apiGet<{ items?: OfflineTask[]; account_errors?: AccountError[] }>(
+        withScope('tasks', scope),
+      )
       setItems(page.items ?? [])
       setAccountErrors(page.account_errors ?? [])
       setError('')
@@ -43,7 +56,7 @@ export default function Tasks() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [scope])
 
   // Poll every three seconds while the page is visible; a hidden tab stops.
   useEffect(() => {
@@ -70,15 +83,28 @@ export default function Tasks() {
     }
   }, [load])
 
+  // Switching scopes changes whose tasks everything is: clear what is on
+  // screen so the old account's rows never linger. This render's poll effect
+  // restart (load depends on the scope) issues the new scope's first fetch,
+  // so no second request goes out here.
+  useEffect(() => {
+    if (prevScope.current === scope) return
+    prevScope.current = scope
+    setItems([])
+    setAccountErrors([])
+  }, [scope])
+
   async function create() {
     const text = link.trim()
     if (!text) return
     setBusy('create')
     setError('')
     try {
-      // The server picks the account for us (random rotation among the
-      // healthy ones), so the success notice names whoever accepted it.
-      const res = await apiPost<{ account_id?: string; account_name?: string }>('tasks', {
+      // A concrete scope pins the new task to that account; 'all' leaves the
+      // path bare, so the server picks the account for us (random rotation
+      // among the healthy ones) and the success notice names whoever accepted
+      // it.
+      const res = await apiPost<{ account_id?: string; account_name?: string }>(withScope('tasks', scope), {
         link: text,
         parent_id: '',
       })
@@ -136,7 +162,9 @@ export default function Tasks() {
     if (!window.confirm(t('tasks.confirm_clear'))) return
     setBusy('clear')
     try {
-      const res = await apiPost<{ deleted?: number }>('tasks/clear', {})
+      // Same shape as the list: a concrete scope clears only that account's
+      // finished tasks, 'all' keeps the bare path for every account.
+      const res = await apiPost<{ deleted?: number }>(withScope('tasks/clear', scope), {})
       setNotice(res.deleted ? t('tasks.cleared').replace('{n}', String(res.deleted)) : t('tasks.nothing_to_clear'))
       await load()
     } catch (e) {
@@ -153,6 +181,7 @@ export default function Tasks() {
       <div className="transfer-head">
         <h2>{t('tasks.title')}</h2>
         <div className="actions">
+          <AccountSwitcher accounts={accounts} scope={scope} onChange={setCurrent} />
           {active > 0 && <span className="muted small">{t('tasks.active_count').replace('{n}', String(active))}</span>}
           <button type="button" onClick={() => void load()} disabled={loading}>
             {t('common.refresh')}

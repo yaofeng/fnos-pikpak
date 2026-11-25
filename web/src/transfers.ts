@@ -125,3 +125,13 @@ export function canCancel(job: TransferJob): boolean {
 export function jobName(job: TransferJob): string {
   return job.file_name || job.remote_name || job.id
 }
+
+// visibleJobs keeps the rows the current scope shows. The listing itself is
+// always the merged one — the fetch never carries a scope — so a concrete
+// scope is a display filter: only rows stamped with that account. A row
+// queued before accounts existed has no stamp and cannot be attributed, so it
+// shows only in the merged view ('all').
+export function visibleJobs(jobs: TransferJob[], scope: string): TransferJob[] {
+  if (scope === 'all') return jobs
+  return jobs.filter((j) => j.account_id === scope)
+}

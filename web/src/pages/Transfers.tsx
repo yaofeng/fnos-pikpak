@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../api'
 import { accountLabel } from '../accounts'
 import { useAccounts } from '../AccountContext'
+import AccountSwitcher from '../components/AccountSwitcher'
 import { formatSize } from '../files'
 import { hostAvailable, openFolder } from '../fnosSdk'
 import {
@@ -16,6 +17,7 @@ import {
   speedOf,
   statusText,
   transferred,
+  visibleJobs,
   type Sample,
   type TransferJob,
 } from '../transfers'
@@ -28,7 +30,7 @@ const POLL_MS = 2000
 export default function Transfers() {
   const lang = getLang()
   const t = makeT(lang)
-  const { byId } = useAccounts()
+  const { accounts, byId, scope, setCurrent } = useAccounts()
   const [tab, setTab] = useState<Kind>('downloads')
   const [downloads, setDownloads] = useState<TransferJob[]>([])
   const [uploads, setUploads] = useState<TransferJob[]>([])
@@ -122,7 +124,11 @@ export default function Transfers() {
     }
   }
 
-  const items = tab === 'downloads' ? downloads : uploads
+  // The listing is always the merged one — the fetch names no scope — so the
+  // switcher filters on the way in: both lists, and the tab counts with them.
+  const shownDownloads = visibleJobs(downloads, scope)
+  const shownUploads = visibleJobs(uploads, scope)
+  const items = tab === 'downloads' ? shownDownloads : shownUploads
   const active = items.filter(isActive).length
 
   return (
@@ -130,13 +136,14 @@ export default function Transfers() {
       <div className="transfer-head">
         <div className="tabs">
           <button type="button" className={tab === 'downloads' ? 'tab active' : 'tab'} onClick={() => setTab('downloads')}>
-            {t('common.download')} {downloads.length ? `(${downloads.length})` : ''}
+            {t('common.download')} {shownDownloads.length ? `(${shownDownloads.length})` : ''}
           </button>
           <button type="button" className={tab === 'uploads' ? 'tab active' : 'tab'} onClick={() => setTab('uploads')}>
-            {t('common.upload')} {uploads.length ? `(${uploads.length})` : ''}
+            {t('common.upload')} {shownUploads.length ? `(${shownUploads.length})` : ''}
           </button>
         </div>
         <div className="actions">
+          <AccountSwitcher accounts={accounts} scope={scope} onChange={setCurrent} />
           {active > 0 && <span className="muted small">{t('tasks.active_count').replace('{n}', String(active))}</span>}
           <button type="button" onClick={() => void load(tab)} disabled={loading}>
             {t('common.refresh')}

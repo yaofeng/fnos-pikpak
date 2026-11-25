@@ -28,6 +28,6 @@ export function resetCache() {
 // other account's key is the one way stale rows could cross accounts.
 export const cacheKeys = {
   files: (acct: string, folderId: string, kind: string) => `files:${acct}:${folderId}|${kind}`,
-  recent: () => 'recent:merged',
+  recent: (scope: string) => `recent:${scope}`,
   trash: (acct: string) => `trash:${acct}`,
 }

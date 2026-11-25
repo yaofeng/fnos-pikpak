@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from 'vitest'
-import { etaSeconds, formatDuration, percent, speedOf, statusText, transferred } from './transfers'
+import { etaSeconds, formatDuration, percent, speedOf, statusText, transferred, visibleJobs } from './transfers'
 
 function job(extra: Record<string, unknown> = {}) {
   return { id: 'j1', status: 'running', size: 100, downloaded: 40, ...extra } as never
@@ -113,5 +113,33 @@ describe('statusText（en）', () => {
       'Failed: disk full',
     )
     expect(statusText({ id: '1', status: 'failed', size: 0 }, 'en')).toBe('Failed')
+  })
+})
+
+describe('visibleJobs', () => {
+  const jobs = [
+    job({ id: 'a', account_id: 'acct1' }),
+    job({ id: 'b', account_id: 'acct2' }),
+    // Rows queued before accounts existed carry no stamp.
+    job({ id: 'old' }),
+  ]
+
+  test('keeps only the scoped account under a concrete scope', () => {
+    expect(visibleJobs(jobs, 'acct1').map((j) => j.id)).toEqual(['a'])
+    expect(visibleJobs(jobs, 'acct2').map((j) => j.id)).toEqual(['b'])
+  })
+
+  test('hides an unstamped row only when the scope is concrete', () => {
+    // No stamp means the row cannot be attributed to one account, so a
+    // single-account view has to leave it out.
+    expect(visibleJobs(jobs, 'acct1').map((j) => j.id)).not.toContain('old')
+  })
+
+  test("keeps everything, unstamped rows included, under 'all'", () => {
+    expect(visibleJobs(jobs, 'all').map((j) => j.id)).toEqual(['a', 'b', 'old'])
+  })
+
+  test('returns the list untouched under all', () => {
+    expect(visibleJobs([], 'all')).toEqual([])
   })
 })
