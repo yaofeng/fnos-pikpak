@@ -34,7 +34,7 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	registerFileOperationRoutes(mux, deps)
 
 	mux.HandleFunc("GET /api/recent", func(w http.ResponseWriter, r *http.Request) {
-		clients, ok := allAccountClients(w, r, deps)
+		clients, ok := recentScopeClients(w, r, deps)
 		if !ok {
 			return
 		}
@@ -147,6 +147,22 @@ func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
+}
+
+// recentScopeClients resolves the ?account= scope of GET /api/recent. A
+// concrete account id pins the listing to that one account's events feed —
+// the same one-element clients slice the offline-task routes build — while
+// absent or "all" keeps every active account merged as before. On failure the
+// response is already written and ok is false.
+func recentScopeClients(w http.ResponseWriter, r *http.Request, deps Deps) ([]namedClient, bool) {
+	if param := r.URL.Query().Get("account"); param != "" && param != "all" {
+		client, acct, ok := accountClient(w, r, deps)
+		if !ok {
+			return nil, false
+		}
+		return []namedClient{{Account: acct, C: client}}, true
+	}
+	return allAccountClients(w, r, deps)
 }
 
 // fileListParams parses the query GET /api/files shares across its

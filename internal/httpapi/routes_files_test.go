@@ -375,6 +375,68 @@ func TestFilesRouteMergedAll(t *testing.T) {
 	}
 }
 
+// TestRecentRouteSingleAccountParam pins the recent listing's ?account= scope:
+// a named account lists only that account's events rows, while an absent or
+// "all" parameter keeps every active account merged.
+func TestRecentRouteSingleAccountParam(t *testing.T) {
+	// 一个监听地址按 bearer 扮演两个上游，events 端点各答一行，合并列表因此
+	// 恰好两行（照 TestTasksRouteSingleAccountParam 的模式）。
+	var mu sync.Mutex
+	events := map[string][]map[string]any{
+		"at-acct-a": {{"file": map[string]any{"id": "ra1", "name": "a.mkv", "modified_time": "2026-01-02T00:00:00Z"}}},
+		"at-acct-b": {{"file": map[string]any{"id": "rb1", "name": "b.mkv", "modified_time": "2026-01-01T00:00:00Z"}}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/drive/v1/events" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		// 共享 map 的读取也在锁内：fetchFilePages 并发请求两个账号。
+		mu.Lock()
+		rows := events[token]
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": rows})
+	}))
+	defer srv.Close()
+
+	deps, st := newAuthTestDeps(t, srv.URL)
+	bindAccount(t, st, 1000, "acct-a", "sub-a", "active")
+	bindAccount(t, st, 1000, "acct-b", "sub-b", "active")
+	h := NewMux(deps)
+
+	// ?account=acct-a → 恰好 acct-a 的一行。
+	rec, body := getJSON(t, h, "/api/recent?account=acct-a", "1000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%v", rec.Code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("scoped listing returned %d rows: %v", len(items), body["items"])
+	}
+	row, _ := items[0].(map[string]any)
+	if row["id"] != "ra1" || row["account_id"] != "acct-a" {
+		t.Fatalf("row = %v, want acct-a's ra1", row)
+	}
+
+	// "all" 与缺省都保持合并两行（"all" 绝不能当作账号 id 去查询而 404）。
+	for _, scope := range []string{"", "all"} {
+		path := "/api/recent"
+		if scope != "" {
+			path += "?account=" + scope
+		}
+		rec, body = getJSON(t, h, path, "1000")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%v", path, rec.Code, body)
+		}
+		items, _ = body["items"].([]any)
+		if len(items) != 2 {
+			t.Fatalf("%s returned %d rows: %v", path, len(items), body["items"])
+		}
+	}
+}
+
 // TestFilesMergedPaginationNoRepeat pins the merged page-token envelope: an
 // account whose listing ended is recorded in the token (pageDone) and never
 // asked again, so its first page cannot re-appear on later pages.
