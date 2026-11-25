@@ -46,6 +46,16 @@ export function filesQuery(scope: string, segs: string[], folderId: string, kind
   return params.toString()
 }
 
+// trashQuery builds the trash listing query for one scope: merged mode asks
+// for every account, single-account mode pins the 2.0.0 account param.
+// page_token appends only when there is one, so a first page's request keeps
+// the 2.0.0 parameter set (account, then the token when paging).
+export function trashQuery(scope: string, pageToken: string): string {
+  const params = new URLSearchParams({ account: scope })
+  if (pageToken) params.set('page_token', pageToken)
+  return params.toString()
+}
+
 // groupByAccount splits selected rows into per-account id lists so a merged
 // view can route each row's mutation to the account that served it; rows
 // without a stamp fall under the scope itself (single-account listings).

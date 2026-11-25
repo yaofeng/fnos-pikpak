@@ -1,5 +1,16 @@
 import { describe, expect, it, test } from 'vitest'
-import { fileKind, filesQuery, filterFiles, formatSize, groupByAccount, isVideo, sortFiles, thumbPath, type FileItem } from './files'
+import {
+  fileKind,
+  filesQuery,
+  filterFiles,
+  formatSize,
+  groupByAccount,
+  isVideo,
+  sortFiles,
+  thumbPath,
+  trashQuery,
+  type FileItem,
+} from './files'
 
 function file(id: string, name: string, extra: Partial<FileItem> = {}): FileItem {
   return { id, parent_id: '', name, kind: 'drive#file', size: 0, ...extra }
@@ -66,6 +77,17 @@ describe('filterFiles', () => {
     expect(filterFiles(items, '', 'folder').map((f) => f.id)).toEqual(['1'])
     expect(filterFiles(items, '', 'file').map((f) => f.id)).toEqual(['2'])
   })
+})
+
+describe('trashQuery', () => {
+	test('merged scope asks the backend for every account', () => {
+		expect(trashQuery('all', '')).toBe('account=all')
+		expect(trashQuery('all', 'tok-1')).toBe('account=all&page_token=tok-1')
+	})
+	test('single scope keeps the account param byte-identical to 2.0.0', () => {
+		expect(trashQuery('acct-a', '')).toBe('account=acct-a')
+		expect(trashQuery('acct-a', 'tok-2')).toBe('account=acct-a&page_token=tok-2')
+	})
 })
 
 describe('groupByAccount', () => {
