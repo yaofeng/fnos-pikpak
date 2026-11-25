@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Activity, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
 import { AccountProvider, useAccounts } from './AccountContext'
@@ -6,6 +6,7 @@ import { sumQuota } from './accounts'
 import Toaster from './components/Toaster'
 import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, StarIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
+import { activePath, KEEP_ALIVE_PATHS, nextVisited, pageKey } from './keepAlive'
 import { resetCache } from './listCache'
 import { formatSize } from './files'
 import { isActive, speedOf, transferred, type TransferJob } from './transfers'
@@ -97,6 +98,35 @@ function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(Math.round(bytesPerSec))}/s`
 }
 
+// keepAliveElement maps a keep-alive page path to its component, keyed by
+// page|account: switching the PikPak account changes the key, which remounts
+// the page so its UI state (folder stack, search terms) resets and the data
+// is re-queried for the new account.
+function keepAliveElement(page: string, currentId: string): ReactNode {
+  switch (page) {
+    case '/files':
+      return <Files key={pageKey(page, currentId)} />
+    case '/recent':
+      return <Recent key={pageKey(page, currentId)} />
+    case '/tasks':
+      return <Tasks key={pageKey(page, currentId)} />
+    case '/transfers':
+      return <Transfers key={pageKey(page, currentId)} />
+    case '/trash':
+      return <Trash key={pageKey(page, currentId)} />
+    case '/favorites':
+      return <Favorites key={pageKey(page, currentId)} />
+    case '/video-favorites':
+      return <VideoFavorites key={pageKey(page, currentId)} />
+    case '/search':
+      return <Search key={pageKey(page, currentId)} />
+    case '/settings':
+      return <Settings key={pageKey(page, currentId)} />
+    default:
+      return null
+  }
+}
+
 // The provider sits above the shell so the sidebar, the banners and every
 // page read one account list.
 export default function App() {
@@ -108,7 +138,7 @@ export default function App() {
 }
 
 function Shell() {
-  const { accounts, reload } = useAccounts()
+  const { accounts, reload, currentId } = useAccounts()
   const [lang, setLanguage] = useState<Lang>(() => detectLang())
   const t = makeT(lang)
   setLang(lang)
@@ -118,6 +148,21 @@ function Shell() {
   const [transfer, setTransfer] = useState<transferSummary | null>(null)
   // The previous poll's active bytes, turned into a rate by the next one.
   const transferSample = useRef<{ at: number; down: number; up: number } | null>(null)
+
+  // Keep-alive: the page owning the current pathname, and the set of pages
+  // that have ever been active. A page mounts into its Activity on first
+  // activation only (the first paint mounts just the entry page), then stays
+  // mounted — hidden while another page is up — so its UI state, DOM and
+  // scroll position survive navigation. F5 starts a fresh session by design.
+  const page = activePath(location.pathname)
+  const [visited, setVisited] = useState<ReadonlySet<string>>(() => {
+    const first = activePath(location.pathname)
+    return first ? new Set([first]) : new Set()
+  })
+
+  useEffect(() => {
+    if (page) setVisited((prev) => nextVisited(prev, page))
+  }, [page])
 
   useEffect(() => {
     const load = () => {
@@ -346,17 +391,32 @@ function Shell() {
               : 'page'
           }
         >
+          {/* Kept-alive pages live outside <Routes>: each visited page stays
+              mounted in an Activity, visible only while it owns the current
+              path. Hidden Activities unmount their effects, so polling pages
+              pause while out of sight and replay from listCache on return. */}
+          {KEEP_ALIVE_PATHS.map((kept) => {
+            if (!visited.has(kept)) return null
+            return (
+              <Activity key={kept} mode={kept === page ? 'visible' : 'hidden'}>
+                {keepAliveElement(kept, currentId)}
+              </Activity>
+            )
+          })}
+          {/* Placeholder routes keep the URL semantics (NavLink highlighting,
+              "/" and catch-all redirects) without mounting pages here; only
+              truly unknown paths reach the catch-all. */}
           <Routes>
             <Route path="/" element={<Navigate to="/files" replace />} />
-            <Route path="/files/*" element={<Files />} />
-            <Route path="/recent" element={<Recent />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/transfers" element={<Transfers />} />
-            <Route path="/trash" element={<Trash />} />
-            <Route path="/favorites" element={<Favorites />} />
-            <Route path="/video-favorites" element={<VideoFavorites />} />
-            <Route path="/search" element={<Search />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/files/*" element={null} />
+            <Route path="/recent" element={null} />
+            <Route path="/tasks" element={null} />
+            <Route path="/transfers" element={null} />
+            <Route path="/trash" element={null} />
+            <Route path="/favorites" element={null} />
+            <Route path="/video-favorites" element={null} />
+            <Route path="/search" element={null} />
+            <Route path="/settings" element={null} />
             <Route path="/bind" element={<Bind />} />
             {me?.debug && (
               <Route
