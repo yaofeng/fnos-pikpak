@@ -64,8 +64,8 @@ describe('resolveCurrentId', () => {
     const items = [{ ...base }, { ...base, id: 'b' }]
     // 既有语义回归：空串落到第一个账号
     expect(resolveCurrentId(items, '')).toBe('a')
-    // AccountContext 的 scope 推导是组件内一行；可测的是它的组成材料：
-    // 'all' 不得被 resolveCurrentId 兜底吞掉——它永远不该流进来。
+    // scope 推导已提取为 resolveScope 纯函数（web/src/accounts.ts）；可测的是它的组成材料：
+    // 'all' 不得流入 resolveCurrentId——它不是真实 id，不能被兜底吞掉。
     expect(resolveCurrentId(items, 'all')).toBe('a')
   })
 })
