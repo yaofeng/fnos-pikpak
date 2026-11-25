@@ -301,15 +301,17 @@ func TestTrashMergedPaginationNoRepeat(t *testing.T) {
 		}
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		page := r.URL.Query().Get("page_token")
+		// 并发 handler 共享这张表：计数必须在锁内取，解锁后再读就是数据竞争。
 		mu.Lock()
 		asked[token] = append(asked[token], page)
+		n := len(asked[token])
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch token {
 		case "at-acct-a":
 			// 第一次回 next_page_token="p2"，第二次返回空 token。第 2、3 页的
 			// 信封都携带上游 token "p2"，所以按调用次数而非 token 值区分。
-			switch len(asked[token]) {
+			switch n {
 			case 1:
 				_, _ = io.WriteString(w, `{"files":[{"id":"ta1","name":"ta1.mkv","kind":"drive#file","modified_time":"2026-01-02T00:00:00Z"}],"next_page_token":"p2"}`)
 			case 2:
