@@ -2,7 +2,7 @@
 
 面向 fnOS（飞牛）x86 设备的安装说明。应用装在飞牛上，通过桌面图标打开；每个飞牛用户绑定自己的 PikPak 账号，互相看不到对方的文件。
 
-安装包：`pikpak-<版本>-x86.fpk`（例如 `pikpak-1.0.2-x86.fpk`），来自 [Releases](../../releases) 或本地 `make fpk`。
+安装包：`pikpak-<版本>-x86.fpk`（例如 `pikpak-2.0.0-x86.fpk`），来自 [Releases](../../releases) 或本地 `make fpk`。
 
 ## 1. 把安装包传到飞牛
 
@@ -12,7 +12,7 @@
 - **SSH / scp**（如已开启 SSH）：
 
   ```bash
-  scp dist/pikpak-1.0.2-x86.fpk <用户名>@<飞牛地址>:/tmp/
+  scp dist/pikpak-2.0.0-x86.fpk <用户名>@<飞牛地址>:/tmp/
   ```
 
 ## 2. 安装
