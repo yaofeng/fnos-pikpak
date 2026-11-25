@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { apiGet } from './api'
+import { AccountProvider, useAccounts } from './AccountContext'
+import { sumQuota } from './accounts'
 import Toaster from './components/Toaster'
 import { BookmarkIcon, ClockIcon, FolderIcon, GearIcon, GlobeIcon, MagnetIcon, StarIcon, TransferIcon, TrashIcon, WrenchIcon } from './components/icons'
 import { detectLang, makeT, setLang, type Lang } from './i18n'
@@ -22,22 +24,18 @@ import VideoFavorites from './pages/VideoFavorites'
 // is loaded only when someone opens it.
 const Debug = lazy(() => import('./pages/Debug'))
 
+// Me is the app shell's first response: who the fnOS user is, whether any
+// PikPak account is linked, and what this session may do. `accounts` is the
+// count; the rows themselves come from the account context.
 type Me = {
   uid: number
   bound: boolean
   status: string
   display_name: string
   vip_type: string
+  accounts: number
   debug?: boolean
   capabilities: Record<string, boolean>
-}
-
-type Account = {
-  quota_limit: number
-  quota_usage: number
-  vip_type: string
-  vip_expire: string
-  cached_at: string
 }
 
 // applyTileSize scales the icon view through one CSS variable; the option is
@@ -99,14 +97,24 @@ function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(Math.round(bytesPerSec))}/s`
 }
 
+// The provider sits above the shell so the sidebar, the banners and every
+// page read one account list.
 export default function App() {
+  return (
+    <AccountProvider>
+      <Shell />
+    </AccountProvider>
+  )
+}
+
+function Shell() {
+  const { accounts, reload } = useAccounts()
   const [lang, setLanguage] = useState<Lang>(() => detectLang())
   const t = makeT(lang)
   setLang(lang)
   const location = useLocation()
   const navigate = useNavigate()
   const [me, setMe] = useState<Me | null>(null)
-  const [account, setAccount] = useState<Account | null>(null)
   const [transfer, setTransfer] = useState<transferSummary | null>(null)
   // The previous poll's active bytes, turned into a rate by the next one.
   const transferSample = useRef<{ at: number; down: number; up: number } | null>(null)
@@ -114,20 +122,14 @@ export default function App() {
   useEffect(() => {
     const load = () => {
       apiGet<Me>('me')
-        .then((m) => {
-          setMe(m)
-          if (m.bound) {
-            apiGet<Account>('account').then(setAccount).catch(() => setAccount(null))
-          } else {
-            setAccount(null)
-          }
-        })
+        .then(setMe)
         .catch(() => setMe(null))
     }
     load()
     // Binding, rebinding or unbinding changes whose files everything is. The
     // page caches are module-global, so they would otherwise keep showing the
     // previous PikPak account's listing until something forced a refresh.
+    // The account context hears the same event and refetches the list.
     const onAccount = () => {
       resetCache()
       load()
@@ -136,15 +138,14 @@ export default function App() {
     return () => window.removeEventListener('pikpak:account-changed', onAccount)
   }, [])
 
-  // The quota pill follows the account: a restore, download or upload on the
-  // NAS changes it, so it is re-read every 10 seconds while bound.
+  // The quota pill follows the accounts: a restore, download or upload on the
+  // NAS changes usage, so the list is re-read every 10 seconds while bound.
+  // The server serves cached per-account snapshots, so the poll is cheap.
   useEffect(() => {
     if (!me?.bound) return
-    const timer = window.setInterval(() => {
-      apiGet<Account>('account').then(setAccount).catch(() => undefined)
-    }, 10_000)
+    const timer = window.setInterval(() => void reload(), 10_000)
     return () => window.clearInterval(timer)
-  }, [me?.bound])
+  }, [me?.bound, reload])
 
   // 传输 reports every running upload and download, so the sidebar can show
   // one combined progress and both speeds from any page. It polls only while
@@ -243,9 +244,11 @@ export default function App() {
     }
   }, [])
 
-  const pct = account && account.quota_limit > 0
-    ? Math.min(100, (account.quota_usage / account.quota_limit) * 100)
-    : 0
+  // Every account's quota together: rows with a failed probe carry no
+  // trustworthy numbers and stay out of the total.
+  const { usage, limit } = sumQuota(accounts)
+  const pct = limit > 0 ? Math.min(100, (usage / limit) * 100) : 0
+  const reauthAccounts = accounts.filter((a) => a.status === 'reauth_required')
 
   return (
     <div className="app">
@@ -283,7 +286,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {account && (
+          {accounts.length > 0 && (
             <span className="quota-pill sidebar-quota" title={`${pct.toFixed(1)}%`}>
               <span
                 className="quota-fill"
@@ -291,11 +294,11 @@ export default function App() {
                 style={{ width: pct > 0 ? `max(${pct}%, 4px)` : '0' }}
               />
               <span className="quota-text">
-                {formatBytes(account.quota_usage)} / {formatBytes(account.quota_limit)}
+                {formatBytes(usage)} / {formatBytes(limit)}
               </span>
             </span>
           )}
-          {!me?.bound && (
+          {accounts.length === 0 && (
             <NavLink to="/bind" className="nav-item">
               {t('action.bind')}
             </NavLink>
@@ -321,14 +324,16 @@ export default function App() {
           </div>
         )}
 
-        {me?.bound && me.status === 'reauth_required' && (
-          <div className="notice danger">
-            <span>{t('state.reauth')}</span>
+        {/* One banner per account whose authorization died; the bind page
+            re-authorizes rows one by one. */}
+        {reauthAccounts.map((a) => (
+          <div className="notice danger" key={a.id}>
+            <span>{t('state.reauth_account').replace('{name}', a.display_name || a.id)}</span>
             <button type="button" className="notice-action" onClick={() => navigate('/bind')}>
               {t('action.rebind')}
             </button>
           </div>
-        )}
+        ))}
 
         {/* These pages fill the window: their file areas scroll, not the page. */}
         <main

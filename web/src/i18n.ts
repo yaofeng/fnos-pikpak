@@ -18,6 +18,10 @@ const messages: Record<string, Entry> = {
     'zh-CN': 'PikPak 授权已失效，请重新绑定账号后继续。',
     en: 'Your PikPak authorization expired. Link the account again to continue.',
   },
+  'state.reauth_account': {
+    'zh-CN': '账号 {name} 需要重新授权',
+    en: 'Account {name} needs to be authorized again',
+  },
   'action.bind': { 'zh-CN': '绑定账号', en: 'Link account' },
   'action.rebind': { 'zh-CN': '重新登录', en: 'Sign in again' },
   'error.details': { 'zh-CN': '详情', en: 'Details' },
@@ -30,6 +34,16 @@ const errorMessages: Record<string, Entry> = {
   pikpak_reauth_required: {
     'zh-CN': 'PikPak 授权已失效，请重新绑定账号',
     en: 'PikPak authorization expired. Link the account again.',
+  },
+  no_active_account: {
+    'zh-CN': '没有可用的 PikPak 账号，请重新授权或绑定',
+    en: 'No usable PikPak account. Authorize or link one again.',
+  },
+  // The server's message for this code lists each account's own reason; the
+  // toast shows this summary and keeps that list under 详情.
+  all_accounts_failed: {
+    'zh-CN': '所有账号都无法完成该操作',
+    en: 'None of the linked accounts could complete this action.',
   },
   not_bound: { 'zh-CN': '尚未绑定 PikPak 账号', en: 'No PikPak account linked' },
   daily_limit_reached: {

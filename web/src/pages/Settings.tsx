@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAccounts } from '../AccountContext'
 import { apiDownload, apiGet, apiPost, apiPut, apiUploadJSON } from '../api'
 import { restoreSummary, type RestoreResult } from '../backup'
 import { formatSize } from '../files'
@@ -82,6 +83,9 @@ function kindLabel(kind: string): string {
 
 export default function Settings() {
   const navigate = useNavigate()
+  // 解绑 names one account now; the page speaks of the default binding, which
+  // is the context's current account.
+  const { current } = useAccounts()
   const [me, setMe] = useState<Me | null>(null)
   const [globalSettings, setGlobalSettings] = useState<SettingValues>({})
   const [userSettings, setUserSettings] = useState<SettingValues>({})
@@ -165,10 +169,11 @@ export default function Settings() {
   }
 
   async function unbind() {
+    if (!current) return
     setError('')
     setSaving('unbind')
     try {
-      await apiPost('auth/logout', {})
+      await apiPost('auth/logout', { account_id: current.id })
       setConfirmUnbind(false)
       window.dispatchEvent(new Event('pikpak:account-changed'))
       navigate('/bind')

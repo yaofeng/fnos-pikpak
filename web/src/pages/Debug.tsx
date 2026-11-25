@@ -563,6 +563,17 @@ export default function Debug() {
     loadHealth()
   }, [loadHealth])
 
+  // BindCard no longer takes an onChange prop: the same refresh now rides the
+  // account-changed event the bind flow dispatches.
+  useEffect(() => {
+    const onAccount = () => {
+      loadHealth()
+      setRefresh((n) => n + 1)
+    }
+    window.addEventListener('pikpak:account-changed', onAccount)
+    return () => window.removeEventListener('pikpak:account-changed', onAccount)
+  }, [loadHealth])
+
   return (
     <main className="page">
       <header className="page-header">
@@ -584,7 +595,7 @@ export default function Debug() {
         )}
       </section>
 
-      <BindCard onChange={() => { loadHealth(); setRefresh((n) => n + 1) }} />
+      <BindCard />
       <GatewayCard />
       <RangeCard />
       <UploadCard refresh={refresh} />
