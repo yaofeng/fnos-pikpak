@@ -2,14 +2,12 @@
 
 飞牛 NAS 的原生 PikPak 应用：用飞牛账号打开网页，即可浏览/管理自己的 PikPak 文件、离线下载、上传下载与在线播放。每个飞牛用户绑定自己的一个或多个 PikPak 账号，互相看不到对方的文件、任务与设置。
 
-当前版本：**2.0.0**。
-
 ## 功能
 
-- **文件**：浏览、搜索、类型筛选、新建文件夹、重命名、移动（拖拽）、复制、删除。
-- **离线任务**：磁力/URL 新建任务，按状态筛选、重试、删除（可选同时删除文件）。
-- **传输**：PikPak → 飞牛下载（只能写授权目录）、飞牛 → PikPak 上传；进度、速度、暂停/继续/取消、重名策略。
-- **回收站**：还原、永久删除、清空。
+- **文件**：浏览、搜索、类型筛选、新建文件夹、重命名、移动（拖拽）、复制、删除；多账号下拉切换，「-全部帐号-」合并视图（子目录按同路径合并、同名目录折叠为一行、同名文件以 @帐号名 提示区分；合并视图下创建型操作禁用）。
+- **离线任务**：磁力/URL 新建任务，按状态筛选、重试、删除（可选同时删除文件）；账号下拉决定列表/创建/清除作用域（合并时创建由服务器轮换并提示命中账号）。
+- **传输**：PikPak → 飞牛下载（只能写授权目录）、飞牛 → PikPak 上传；进度、速度、暂停/继续/取消、重名策略；按账号筛选。
+- **回收站**：还原、永久删除、清空；支持合并视图（按行账号执行操作，合并视图禁用清空）。
 - **播放**：内置播放器，Range 代理让拖动进度条直接由 CDN 响应；签名下载地址不出后端。不转码，编码不支持时提示下载后本地播放。
 - **设置与诊断**：重名策略、播放模式、界面语言（中文/English）、全局并发、授权目录、版本与最近错误摘要。
 
@@ -58,6 +56,8 @@ make fpk VERSION=1.2.3 FN_KEY=dev.key FN_CERT=dev.crt   # 签名
 ## 设计文档
 
 - 设计：[`docs/superpowers/specs/2026-11-21-fnos-pikpak-design.md`](docs/superpowers/specs/2026-11-21-fnos-pikpak-design.md)
+- 多账号设计：[`docs/superpowers/specs/2026-11-24-multi-account-design.md`](docs/superpowers/specs/2026-11-24-multi-account-design.md)
+- 统一账号作用域设计：[`docs/superpowers/specs/2026-11-25-unified-account-scope-design.md`](docs/superpowers/specs/2026-11-25-unified-account-scope-design.md)
 - v1 实现计划：[`docs/superpowers/plans/2026-11-22-fnos-pikpak-v1.md`](docs/superpowers/plans/2026-11-22-fnos-pikpak-v1.md)
 - PikPak 接口记录：[`docs/pikpak-api.md`](docs/pikpak-api.md)
 - 早期 M0 验证：[`docs/m0-report.md`](docs/m0-report.md)
